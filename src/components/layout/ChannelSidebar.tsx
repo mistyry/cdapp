@@ -1,11 +1,12 @@
 import { For, Show, createSignal, onCleanup } from "solid-js";
-import { CircleHelp, Headphones, HeadphoneOff, Menu, Mic, MicOff, PhoneOff, Settings, UserPlus, Volume2, X } from "lucide-solid";
+import { CircleHelp, Headphones, HeadphoneOff, Menu, Mic, MicOff, PhoneOff, Settings, UserPlus, X } from "lucide-solid";
 import type { Channel } from "../../stores/types";
-import { accessState, enterVoice, loadDms, retryAccess, selectChannel, selectDm, session, visible, voiceBlock } from "../../stores/session";
+import { accessState, enterVoice, loadDms, permsOf, retryAccess, selectChannel, selectDm, session, visible, voiceBlock } from "../../stores/session";
 import { canRejoin, deviceSummary, dismissVoice, isSpeaking, leaveVoice, mic, micFailed, micHint, micText, output, qualityText, setPeerVolume, toggleDeafen, toggleMic, voice, voiceActive, voiceStatusText, volumeOf, type VoicePeer } from "../../stores/voice";
 import { DM_VIEW, currentChannelId, currentChatCode, ui, setUi } from "../../stores/ui";
 import Avatar from "../common/Avatar";
-import { Caret, KookHash } from "../common/icons";
+import { Caret, KookHash, LockIcon, VoiceIcon } from "../common/icons";
+import { channelIcon } from "../../lib/channelIcon";
 
 // 语音成员。说话时头像高亮，点击或右键其他成员可调节音量。
 function RoomMember(p: { peer: VoicePeer }) {
@@ -47,7 +48,8 @@ function ChannelItem(p: { c: Channel }) {
   const unread = () => session.unread[p.c.id];
   // 可查看但不能连接的语音频道保留显示，并说明原因。
   const noConnect = () => p.c.type === "voice" && voiceBlock(p.c.id) === "denied";
-  const hint = () => (p.c.type === "unknown" ? "暂不支持此类频道" : noConnect() ? "没有连接该语音频道的权限" : p.c.password && p.c.type === "voice" ? "需要密码" : undefined);
+  const icon = () => channelIcon(p.c, permsOf(p.c.id));
+  const hint = () => icon().label;
   return (
     <>
       <div
@@ -62,7 +64,12 @@ function ChannelItem(p: { c: Channel }) {
         }}
       >
         <div class="channel-row">
-          <span class="type">{p.c.type === "text" ? <KookHash /> : p.c.type === "voice" ? <Volume2 size={16} stroke-width={1.8} /> : <CircleHelp size={16} stroke-width={1.8} />}</span>
+          <span class="type" role="img" aria-label={icon().label}>
+            {icon().base === "text" ? <KookHash restricted={icon().restricted} />
+              : icon().lock ? <LockIcon restricted={icon().restricted} />
+              : icon().base === "voice" ? <VoiceIcon restricted={icon().restricted} />
+              : <CircleHelp size={16} stroke-width={1.8} aria-hidden="true" />}
+          </span>
           <span class="label">{p.c.name}</span>
           <Show when={p.c.type === "text"}>
             <span class="ctrl"><UserPlus size={16} stroke-width={1.6} /><Settings size={16} stroke-width={1.6} /></span>
