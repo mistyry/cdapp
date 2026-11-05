@@ -3,6 +3,9 @@ import { CirclePlus, FileText, Image, Search, Smile, Users, X } from "lucide-sol
 import { canSend, cancelUpload, dmKey, dmOf, loadDmHistory, loadDmOlder, discard, stageFiles, submit as submitAll, unstage, loadAccess, loadGuilds, sendBlock, jumpLatest, loadHistory, loadNewer, loadOlder, retry, selectGuild, session, verify } from "../../stores/session";
 import { DM_VIEW, currentChatCode, currentKey, currentMsgKey, ui, setUi } from "../../stores/ui";
 import MessageList from "../message/MessageList";
+import EmojiInput, { type EmojiInputApi } from "../message/EmojiInput";
+import EmojiPicker from "../message/EmojiPicker";
+import Kmd from "../message/Kmd";
 import { KookHash } from "../common/icons";
 import { sizeText } from "../../lib/content";
 
@@ -69,6 +72,11 @@ export default function ChatPane() {
     if (sendable()) addFiles([...(e.dataTransfer?.files ?? [])]);
   };
 
+  let input: EmojiInputApi | undefined;
+  const [picking, setPicking] = createSignal(false);
+  let emojiBtn: HTMLButtonElement | undefined;
+  // 切换会话时关闭选择器，避免插入到另一会话的草稿。
+  createEffect(on(currentKey, () => setPicking(false), { defer: true }));
   const onKey = (e: KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
@@ -84,7 +92,7 @@ export default function ChatPane() {
                 {(o) => (
                   <div class={`outgoing ${o.status}`}>
                     <Show when={o.reply}>{(q) => <div class="quote"><b>{q().author}</b><span>{q().text}</span></div>}</Show>
-                    <Show when={o.file} fallback={<div class="text">{o.text}</div>}>
+                    <Show when={o.file} fallback={<div class="text"><Kmd text={o.text} /></div>}>
                       {(f) => (
                         <div class="text file">
                           {f().image ? <Image size={16} /> : <FileText size={16} />} {f().name} <span class="size">{sizeText(f().size)}</span>
@@ -127,7 +135,7 @@ export default function ChatPane() {
         {(r) => (
           <div class="reply-bar">
             <span>回复 <b>{r().author}</b>：{r().text}</span>
-            <button class="icon-btn" title="取消回复" onClick={clearReply}><X size={16} /></button>
+            <button class="icon-btn" data-tip="取消回复" aria-label="取消回复" onClick={clearReply}><X size={16} /></button>
           </div>
         )}
       </Show>
@@ -137,7 +145,7 @@ export default function ChatPane() {
             {(f) => (
               <span class="chip">
                 {f.image ? <Image size={14} /> : <FileText size={14} />} {f.name} <span class="size">{sizeText(f.size)}</span>
-                <button class="icon-btn" title="移除" onClick={() => unstage(currentKey(), f.id)}><X size={14} /></button>
+                <button class="icon-btn" data-tip="移除" aria-label="移除" onClick={() => unstage(currentKey(), f.id)}><X size={14} /></button>
               </span>
             )}
           </For>
@@ -148,19 +156,28 @@ export default function ChatPane() {
         <div class="reply-bar"><span>无法确认发送权限</span><button class="retry" onClick={() => ui.target.kind === "channel" && loadAccess(ui.target.guildId)}>重试</button></div>
       </Show>
       <div class="send-wrap">
-        <div class="left"><button class="icon-btn" title="表情"><Smile size={22} stroke-width={1.6} /></button></div>
-        <textarea
-          rows={1}
+        <div class="left">
+          <button ref={emojiBtn} class={`icon-btn ${picking() ? "on" : ""}`} data-tip="表情" aria-label="表情" aria-haspopup="dialog" aria-expanded={picking()}
+            disabled={!sendable()} onClick={() => setPicking((v) => !v)}><Smile size={22} stroke-width={1.6} /></button>
+        </div>
+        <Show when={picking() && sendable()}>
+          <EmojiPicker class="composer-picker" trigger={() => emojiBtn}
+            purpose={{ use: "send", guildId: ui.target.kind === "channel" ? ui.target.guildId : null }}
+            onPick={(x) => input?.insert(x)}
+            onClose={(refocus) => { setPicking(false); if (refocus) input?.focus(); }} />
+        </Show>
+        <EmojiInput
+          ref={(a) => (input = a)}
           disabled={!sendable()}
           placeholder={sendable() ? placeholder() : blocked()}
           value={text()}
-          onInput={(e) => setUi("drafts", currentKey(), e.currentTarget.value)}
+          onInput={(v) => currentKey() && setUi("drafts", currentKey(), v)}
           onKeyDown={onKey}
           onPaste={onPaste}
         />
         <div class="right">
           <input ref={picker} type="file" multiple hidden onChange={(e) => { addFiles([...(e.currentTarget.files ?? [])]); e.currentTarget.value = ""; }} />
-          <button class="icon-btn" title="上传文件（5 MB 以内）" disabled={!sendable()} onClick={() => picker?.click()}><CirclePlus size={22} stroke-width={1.6} /></button>
+          <button class="icon-btn" data-tip="上传文件（5 MB 以内）" aria-label="上传文件（5 MB 以内）" disabled={!sendable()} onClick={() => picker?.click()}><CirclePlus size={22} stroke-width={1.6} /></button>
         </div>
       </div>
     </div>
@@ -203,8 +220,8 @@ export default function ChatPane() {
               <span class="title">{c().name}</span>
               <span class="topic" />
               <div class="tools">
-                <button class="icon-btn" title="搜索"><Search size={20} /></button>
-                <button class={`icon-btn ${ui.showMembers ? "on" : ""}`} title="成员列表" onClick={() => setUi("showMembers", (v) => !v)}>
+                <button class="icon-btn" data-tip="搜索" aria-label="搜索"><Search size={20} /></button>
+                <button class={`icon-btn ${ui.showMembers ? "on" : ""}`} data-tip="成员列表" aria-label="成员列表" onClick={() => setUi("showMembers", (v) => !v)}>
                   <Users size={20} />
                 </button>
               </div>

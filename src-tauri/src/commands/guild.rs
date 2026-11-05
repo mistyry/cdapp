@@ -106,3 +106,9 @@ pub async fn activate_guild(
     })
     .await
 }
+
+/// 当前账号可见的服务器表情与个人表情。
+#[tauri::command]
+pub async fn emojis(state: State<'_, Mutex<AppState>>) -> AppResult<crate::kook::emoji::EmojiSet> {
+    with_api(&state, move |a| async move { a.emojis().await }).await
+}

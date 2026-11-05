@@ -22,7 +22,8 @@ export type Block =
 export const MAX_PARSE = 20_000;
 const MAX_DEPTH = 6;
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
-const EMOJI_ID = /^[A-Za-z0-9_-]{1,64}\/[A-Za-z0-9_-]{1,64}$/;
+// 服务器表情为两段（服务器ID/随机串），个人表情为三段。
+const EMOJI_ID = /^[A-Za-z0-9_-]{1,64}(\/[A-Za-z0-9_-]{1,64}){1,2}$/;
 const ESCAPABLE = "\\`*_~()[]>-#+.!|{}<";
 
 // 只允许 http / https 链接，其余（javascript:、data:、相对路径等）返回 null。
@@ -171,7 +172,7 @@ export function inline(s: string, depth = 0): Inline[] {
         const name = j < 0 ? "" : s.slice(i + 5, j);
         if (m && name && name.length <= 64 && !name.includes("\n")) {
           if (EMOJI_ID.test(m[1])) push({ t: "emj", name, id: m[1] });
-          else push({ t: "text", v: `:${name}:` });
+          else push({ t: "text", v: name });
           i = j + 5 + m[0].length;
           continue;
         }
@@ -296,7 +297,7 @@ export function toPlain(blocks: Block[], names: Names): string {
         case "code": parts.push(n.v); break;
         case "spl": parts.push("[隐藏内容]"); break;
         case "link": walk(n.c); break;
-        case "emj": parts.push(`:${n.name}:`); break;
+        case "emj": parts.push(n.name); break;
         case "met": case "rol": case "chn": parts.push(mentionLabel(n, names)); break;
         default: walk(n.c);
       }

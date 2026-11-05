@@ -16,7 +16,7 @@ mock.module("@tauri-apps/api/core", () => ({
 }));
 mock.module("@tauri-apps/api/event", () => ({ listen: async () => () => {} }));
 
-const { retryAccess, enterVoice, voiceBlock, visible, pwPrompt, cancelPassword, session, setSession, selectGuild, selectChannel, openDm, send, canSend, logout, enter, retry, verify, discard, boot, skipRestore, loadGuilds, loadOlder, loadHistory, onGatewayStatus, onEvent, reconnectNow, ensureMembers, loadMoreMembers, refreshMembers, sendBlock, loadAccess, jumpTo, loadNewer, jumpLatest, plainContent, editMessage, deleteMessage, toggleReaction, canEdit, canDelete, canReact, stageFiles, submit, cancelUpload, unstage, onUploadProgress, cardFileSrcs, loadDms, selectDm, openDmWith, loadDmOlder, loadDmHistory, dmKey, dmUnreadTotal, readCurrent, msgKey } = await import("../session");
+const { retryAccess, enterVoice, voiceBlock, visible, pwPrompt, cancelPassword, session, setSession, selectGuild, selectChannel, openDm, send, canSend, logout, enter, retry, verify, discard, boot, skipRestore, loadGuilds, loadOlder, loadHistory, onGatewayStatus, onEvent, reconnectNow, ensureMembers, loadMoreMembers, refreshMembers, sendBlock, loadAccess, jumpTo, loadNewer, jumpLatest, plainContent, editMessage, deleteMessage, toggleReaction, isReacting, reactFailed, canEdit, canDelete, canReact, stageFiles, submit, cancelUpload, unstage, onUploadProgress, cardFileSrcs, loadDms, selectDm, openDmWith, loadDmOlder, loadDmHistory, dmKey, dmUnreadTotal, readCurrent, msgKey } = await import("../session");
 const { ui, setUi, currentKey } = await import("../ui");
 
 const VIEW = 1 << 11, SEND = 1 << 12;
@@ -1486,6 +1486,22 @@ test("回应失败回滚计数与 me；进行中不重复提交", async () => {
   expect(msgOf("other")!.reactions![0]).toMatchObject({ count: 2, me: true });
   expect(await toggleReaction("A-t1", "other", { id: "🙃", name: "x" })).toBe(false);
   expect(msgOf("other")!.reactions!.map((r) => r.id)).toEqual(["👍"]);
+});
+
+test("回应请求期间可见进行中，失败后标记失败，成功后清除", async () => {
+  await setupMsgs();
+  hold.add("reaction");
+  const p = toggleReaction("A-t1", "other", { id: "👍", name: "thumbsup" });
+  expect(isReacting("A-t1", "other", "👍")).toBe(true);
+  release("reaction", Promise.reject({ kind: "rejected", message: "x" }));
+  expect(await p).toBe(false);
+  expect(isReacting("A-t1", "other", "👍")).toBe(false);
+  expect(reactFailed("A-t1", "other", "👍")).toBe(true);
+  hold.clear();
+  auto.reaction = () => ({});
+  expect(await toggleReaction("A-t1", "other", { id: "👍", name: "thumbsup" })).toBe(true);
+  expect(reactFailed("A-t1", "other", "👍")).toBe(false);
+  expect(isReacting("A-t1", "other", "👍")).toBe(false);
 });
 
 test("退出登录后迟到的编辑、删除、回应结果不修改新会话", async () => {

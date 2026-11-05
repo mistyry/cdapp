@@ -42,6 +42,7 @@ pub fn run() {
             commands::channels,
             commands::activate_guild,
             commands::guild_access,
+            commands::emojis,
             commands::members,
             commands::subscribe_members,
             commands::messages,

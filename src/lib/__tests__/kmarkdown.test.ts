@@ -47,7 +47,7 @@ test("异常链接不可点击", () => {
 
 test("表情与引用块", () => {
   expect(inline("(emj)赞(emj)[123/abc]")).toEqual([{ t: "emj", name: "赞", id: "123/abc" }]);
-  expect(inline("(emj)赞(emj)[bad/id!]")).toEqual([{ t: "text", v: ":赞:" }]);
+  expect(inline("(emj)赞(emj)[bad/id!]")).toEqual([{ t: "text", v: "赞" }]);
   expect(parse("> 引用\n> 二行\n\n正文")[0]).toEqual({ t: "quote", c: [{ t: "p", c: [{ t: "text", v: "引用" }, { t: "br" }, { t: "text", v: "二行" }] }] });
 });
 

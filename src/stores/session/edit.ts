@@ -1,4 +1,4 @@
-import { produce } from "solid-js/store";
+import { createStore, produce, reconcile } from "solid-js/store";
 import { api, type Raw } from "../../lib/api";
 import { has, Perm } from "../../lib/perms";
 import type { Message } from "../types";
@@ -152,33 +152,46 @@ export async function deleteMessage(channelId: string, id: string): Promise<bool
   }
 }
 
-// 进行中的回应请求，键为 频道/消息/表情。同一回应同时只允许一个请求。
-export const reacting = new Set<string>();
-export const isReacting = (channelId: string, msgId: string, emoji: string) => reacting.has(`${channelId}/${msgId}/${emoji}`);
+// 回应请求状态，键为 频道/消息/表情。pending 为等待服务端确认，failed 为最近一次失败（已回滚）。
+// 用响应式 store 保存，界面能立刻显示进行中与失败结果。同一回应同时只允许一个请求。
+const [reactState, setReactState] = createStore<Record<string, "pending" | "failed" | undefined>>({});
+const failTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const rkey = (channelId: string, msgId: string, emoji: string) => `${channelId}/${msgId}/${emoji}`;
+export const isReacting = (channelId: string, msgId: string, emoji: string) => reactState[rkey(channelId, msgId, emoji)] === "pending";
+export const reactFailed = (channelId: string, msgId: string, emoji: string) => reactState[rkey(channelId, msgId, emoji)] === "failed";
 
-// 切换本人回应：先在本地生效，失败时反向回滚计数与 me。重复添加或取消不存在的回应由后端视为成功。
+// 切换本人回应：先在本地生效，失败时反向回滚计数与 me，并短暂标记失败。重复添加或取消不存在的回应由后端视为成功。
 export async function toggleReaction(channelId: string, msgId: string, emoji: { id: string; name: string }, add?: boolean): Promise<boolean> {
   const me = session.me?.id;
   const m = findMsg(channelId, msgId);
-  const key = `${channelId}/${msgId}/${emoji.id}`;
-  if (!me || !m || m.pending === "deleting" || reacting.has(key) || !canReact(channelId)) return false;
+  const key = rkey(channelId, msgId, emoji.id);
+  if (!me || !m || m.pending === "deleting" || reactState[key] === "pending" || !canReact(channelId)) return false;
   const want = add ?? !m.reactions?.find((r) => r.id === emoji.id)?.me;
   const gen = st.account;
-  reacting.add(key);
+  clearTimeout(failTimers.get(key));
+  failTimers.delete(key);
+  setReactState(key, "pending");
   applyReaction(channelId, msgId, emoji, me, want);
   try {
     await (isDmKey(channelId) ? api.dmReaction(msgId, emoji.id, want) : api.reaction(msgId, emoji.id, want));
-    return gen === st.account;
+    if (gen !== st.account) return false;
+    setReactState(key, undefined);
+    return true;
   } catch (e) {
     if (gen !== st.account) return false;
     applyReaction(channelId, msgId, emoji, me, !want);
+    setReactState(key, "failed");
+    failTimers.set(key, setTimeout(() => {
+      failTimers.delete(key);
+      if (reactState[key] === "failed") setReactState(key, undefined);
+    }, 4000));
     report(e);
     return false;
-  } finally {
-    if (gen === st.account) reacting.delete(key);
   }
 }
 
 export function resetEdit() {
-  reacting.clear();
+  for (const t of failTimers.values()) clearTimeout(t);
+  failTimers.clear();
+  setReactState(reconcile({}));
 }

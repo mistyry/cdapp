@@ -121,7 +121,7 @@ export function DeviceMenu(p: { kind: AudioKind; x: number; onClose: (refocus: b
 
   const title = isIn ? "输入设备" : "输出设备";
   const item = (id: string | null, label: string, tip: string) => (
-    <button class="audio-item" role="menuitemradio" aria-checked={list().selected === id} title={tip} onClick={() => select(id)}>
+    <button class="audio-item" role="menuitemradio" aria-checked={list().selected === id} data-tip={tip} aria-label={tip} onClick={() => select(id)}>
       <span class="audio-name">{label}</span>
       <span class="audio-radio" />
     </button>

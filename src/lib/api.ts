@@ -63,6 +63,10 @@ export type DmPageDto = { items: DmChatDto[]; page: number; pageTotal: number; t
 // 后端 kook::model::DmSent。id 为消息 ID，code 为 chat_code。
 export type DmSentDto = { id: string; code: string; createAt: number };
 
+// 后端 kook::emoji::EmojiSet。服务器表情按服务器分组；个人表情读取失败时 personalFailed 为 true。
+export type EmojiItemDto = { id: string; name: string; animated: boolean };
+export type EmojiSetDto = { guilds: Array<{ guildId: string; name: string; icon: string; items: EmojiItemDto[] }>; personal: EmojiItemDto[]; personalFailed: boolean; joined: string[] | null };
+
 export const MsgType = { TEXT: 1, IMAGE: 2, FILE: 4, KMARKDOWN: 9 } as const;
 
 // 后端 kook::model::Asset。上传进度事件 upload://progress 为 {id, sent, total}。
@@ -82,6 +86,7 @@ export const api = {
   channels: (guildId: string) => invoke<ChannelDto[]>("channels", { guildId }),
   activateGuild: (guildId: string) => invoke<Raw>("activate_guild", { guildId }),
   guildAccess: (guildId: string) => invoke<GuildAccess>("guild_access", { guildId }),
+  emojis: () => invoke<EmojiSetDto>("emojis"),
   members: (guildId: string, channelId: string | undefined, page: number) => invoke<MemberPageDto>("members", { guildId, channelId, page }),
   subscribeMembers: (channelId: string, start: number, end: number) => invoke<void>("subscribe_members", { channelId, start, end }),
   messages: (channelId: string, before?: string) => invoke<HistoryPage>("messages", { channelId, before }),

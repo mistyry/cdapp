@@ -21,12 +21,12 @@ function RoomMember(p: { peer: VoicePeer }) {
   };
   return (
     <>
-      <div class={`voice-member ${isSpeaking(p.peer.id) ? "speaking" : ""}`} onContextMenu={toggle} onClick={toggle} title={self() ? undefined : "调节音量"}>
+      <div class={`voice-member ${isSpeaking(p.peer.id) ? "speaking" : ""}`} onContextMenu={toggle} onClick={toggle} data-tip={self() ? undefined : "调节音量"}>
         <Avatar user={user()} size={20} />
         <span class="voice-name">{user().name}</span>
         <Show when={!self() && volumeOf(p.peer.id) !== 100}><span class="voice-vol">{volumeOf(p.peer.id)}%</span></Show>
-        <Show when={p.peer.micOff || p.peer.serverMute}><span title={p.peer.serverMute ? "已被服务器禁麦" : "已关闭麦克风"}><MicOff size={14} /></span></Show>
-        <Show when={p.peer.headsetOff}><span title="已关闭耳机"><HeadphoneOff size={14} /></span></Show>
+        <Show when={p.peer.micOff || p.peer.serverMute}><span data-tip={p.peer.serverMute ? "已被服务器禁麦" : "已关闭麦克风"} aria-label={p.peer.serverMute ? "已被服务器禁麦" : "已关闭麦克风"} role="img"><MicOff size={14} /></span></Show>
+        <Show when={p.peer.headsetOff}><span data-tip="已关闭耳机" aria-label="已关闭耳机" role="img"><HeadphoneOff size={14} /></span></Show>
       </div>
       <Show when={open() && !self()}>
         <div class="voice-member-volume" onClick={(e) => e.stopPropagation()}>
@@ -54,7 +54,7 @@ function ChannelItem(p: { c: Channel }) {
   return (
     <>
       <div
-        title={hint()}
+        aria-label={`${p.c.name}，${hint()}`}
         aria-disabled={noConnect() || undefined}
         class={`channel ${p.c.type === "unknown" || noConnect() ? "unsupported" : ""} ${active() ? "active" : ""} ${preview() ? "has-preview" : ""} ${!active() && !unread() && p.c.type === "text" ? "muted" : ""}`}
         onClick={() => {
@@ -80,8 +80,8 @@ function ChannelItem(p: { c: Channel }) {
           </Show>
           <Show when={unread() && !active() ? unread() : undefined}>
             {(u) => (
-              <Show when={u().mentions > 0} fallback={<span class="dot" title="有未读消息" />}>
-                <span class="badge at" title={`${u().mentions} 条提及`}>@{u().mentions > 1 ? u().mentions : ""}</span>
+              <Show when={u().mentions > 0} fallback={<span class="dot" data-tip="有未读消息" aria-label="有未读消息" role="img" />}>
+                <span class="badge at" data-tip={`${u().mentions} 条提及`} aria-label={`${u().mentions} 条提及`}>@{u().mentions > 1 ? u().mentions : ""}</span>
               </Show>
             )}
           </Show>
@@ -183,13 +183,13 @@ function VoiceBox() {
               {voiceStatusText()}
               <Show when={wait() > 0}><span class="voice-wait">{` ${wait()} 秒后重试`}</span></Show>
               <Show when={voice.phase === "connected" && qualityText()}>
-                {(q) => <span class={`voice-quality ${voice.quality}`} title="链路质量">{`质量${q()}`}</span>}
+                {(q) => <span class={`voice-quality ${voice.quality}`} data-tip="链路质量" aria-label={`链路质量 ${q()}`}>{`质量${q()}`}</span>}
               </Show>
             </div>
-            <div class="voice-channel" title={voice.message ?? undefined}>{name()}</div>
+            <div class="voice-channel" data-tip={voice.message ?? undefined} aria-description={voice.message ?? undefined}>{name()}</div>
             <Show when={voice.phase === "reconnecting" || voice.phase === "disconnected" ? voice.message : null}>{(m) => <div class="voice-note">{m()}</div>}</Show>
             <Show when={canRejoin()}>
-              <button class="rejoin-btn" onClick={() => canRejoin() && void enterVoice(voice.channelId)} title="重新加入该语音频道">重新加入</button>
+              <button class="rejoin-btn" onClick={() => canRejoin() && void enterVoice(voice.channelId)} data-tip="重新加入该语音频道">重新加入</button>
             </Show>
             <Show when={noSay()}><div class="voice-note">当前设备没有发言权限，其他人听不到你</div></Show>
             <Show when={voiceActive() && !noSay() && (micHint() ?? (mic.status === "muted" ? null : mic.message))}>
@@ -202,19 +202,19 @@ function VoiceBox() {
             </Show>
             <Show when={voiceActive() && output.message}>{(m) => <div class="voice-note">{m()}</div>}</Show>
             <Show when={voiceActive() && mic.status === "active"}>
-              <div class="mic-meter" title={mic.device ?? undefined}><div style={{ width: `${mic.level}%` }} /></div>
+              <div class="mic-meter" data-tip={mic.device ?? undefined} role="meter" aria-label="麦克风输入电平" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(mic.level)} aria-description={mic.device ?? undefined}><div style={{ width: `${mic.level}%` }} /></div>
             </Show>
             <Show when={voice.phase === "connected" ? deviceSummary() : null}>
-              {(d) => <div class={`voice-devices ${d().ok ? "" : "warn"}`} title={d().title}>{d().text}</div>}
+              {(d) => <div class={`voice-devices ${d().ok ? "" : "warn"}`} data-tip={d().title} aria-description={d().title}>{d().text}</div>}
             </Show>
           </div>
-          <Show when={voiceActive()} fallback={<button class="icon-btn" title="关闭提示" onClick={dismissVoice}><X size={18} /></button>}>
-            <button class="icon-btn danger" title="断开语音" onClick={() => void leaveVoice()}><PhoneOff size={18} /></button>
+          <Show when={voiceActive()} fallback={<button class="icon-btn" data-tip="关闭提示" aria-label="关闭提示" onClick={dismissVoice}><X size={18} /></button>}>
+            <button class="icon-btn danger" data-tip="断开语音" aria-label="断开语音" onClick={() => void leaveVoice()}><PhoneOff size={18} /></button>
           </Show>
         </div>
       </Show>
       <div class="voice-ctrls" ref={ctrls}>
-        <button class="mode" disabled title="语音感应与按键说话尚未实现，当前为持续开麦。没有回声消除，建议使用耳机">语音感应</button>
+        <button class="mode" disabled data-tip="语音感应与按键说话尚未实现，当前为持续开麦。没有回声消除，建议使用耳机" aria-label="语音感应" aria-description="语音感应与按键说话尚未实现，当前为持续开麦。没有回声消除，建议使用耳机">语音感应</button>
         <div class="ctrls">
           <div class="ctrl-wrap" {...hoverProps("input")} onContextMenu={(e) => openMenu(e, "input")}>
             <button
@@ -244,7 +244,7 @@ function VoiceBox() {
             </button>
             <Show when={hover() === "output" && !menu()}><VolumePop kind="output" onDrag={setDragging} /></Show>
           </div>
-          <button class="icon-btn" title="语音设置" onClick={() => setUi("settings", "voice")}><Settings size={20} /></button>
+          <button class="icon-btn" data-tip="语音设置" aria-label="语音设置" onClick={() => setUi("settings", "voice")}><Settings size={20} /></button>
         </div>
         <Show when={menu()} keyed>
           {(m) => <DeviceMenu kind={m.kind} x={m.x} onClose={(refocus) => { const b = m.kind === "input" ? inBtn : outBtn; setMenu(null); if (refocus) b?.focus(); }} />}
@@ -261,7 +261,7 @@ export default function ChannelSidebar() {
       <div class="sidebar-top">
         <div class="sidebar-title">
           <span>{ui.view === DM_VIEW ? "私信" : guild().name}</span>
-          <button class="icon-btn" title="服务器菜单"><Menu size={22} /></button>
+          <button class="icon-btn" data-tip="服务器菜单" aria-label="服务器菜单"><Menu size={22} /></button>
         </div>
       </div>
       <div class="sidebar-line" />

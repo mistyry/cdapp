@@ -9,6 +9,7 @@ import Login from "./components/auth/Login";
 import Settings from "./components/settings/Settings";
 import PasswordPrompt from "./components/layout/PasswordPrompt";
 import ConnectionBar from "./components/common/ConnectionBar";
+import { TipLayer } from "./components/common/Tip";
 import { loadAudioPrefs } from "./stores/voice";
 import "./styles/theme.css";
 import "./styles/layout.css";
@@ -33,6 +34,7 @@ export default function App() {
   createEffect(on(() => ui.settings, (v) => !v && readCurrent(), { defer: true }));
   return (
     <div class="app">
+      <TipLayer />
       <Switch>
         <Match when={session.phase === "boot"}><div class="boot">加载中</div></Match>
         <Match when={session.phase === "restore_failed"}>

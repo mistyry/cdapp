@@ -112,6 +112,22 @@ impl Api {
         Self::send(self.request(Method::DELETE, path)).await
     }
 
+    /// 带 JSON 请求体的 DELETE。
+    async fn delete_json<B: Serialize + ?Sized>(&self, path: &str, body: &B) -> AppResult<Value> {
+        Self::send(self.request(Method::DELETE, path).json(body)).await
+    }
+
+    /// 个人表情回应只能走 v2 接口：v3 对个人表情返回 500，v2 返回 204。
+    /// v2 重复添加与取消不存在的回应同样返回 204；v2 不接受 Unicode 表情。
+    async fn reaction_v2(&self, path: &str, msg_id: &str, emoji: &str, add: bool) -> AppResult<()> {
+        let body = json!({ "id": msg_id, "emoji": emoji });
+        if add {
+            self.post(path, &body).await.map(drop)
+        } else {
+            self.delete_json(path, &body).await.map(drop)
+        }
+    }
+
     /// GET 并附带网关会话头，用于激活服务器推送。
     async fn get_with_session(
         &self,
@@ -137,6 +153,11 @@ impl Api {
     ) -> AppResult<T> {
         Ok(serde_json::from_value(self.get(path, query).await?)?)
     }
+}
+
+/// 个人表情 ID 为三段（用户/日期/随机串），服务器表情为两段，Unicode 表情不含斜杠。
+fn is_personal_emoji(emoji: &str) -> bool {
+    emoji.split('/').count() == 3
 }
 
 fn unwrap(body: Value) -> AppResult<Value> {
@@ -328,6 +349,50 @@ impl Api {
         GuildAccess::from_raw(&data).map_err(AppError::Format)
     }
 
+    /// 服务器表情与个人表情。个人表情失败时仍返回服务器表情。
+    ///
+    /// # Errors
+    ///
+    /// 服务器表情请求失败或格式异常时返回错误。
+    pub async fn emojis(&self) -> AppResult<super::emoji::EmojiSet> {
+        let (g, p, j) = tokio::join!(
+            self.get("/api/v3/vip-expression/get-all-emojis", &()),
+            self.get("/api/v3/user-emoji/all", &()),
+            self.get("/api/v3/vip-expression/join-list", &())
+        );
+        let guilds = super::emoji::parse_guilds(&g?).map_err(AppError::Format)?;
+        let personal = match p.map(|v| super::emoji::parse_personal(&v)) {
+            Ok(Ok(list)) => Some(list),
+            Ok(Err(e)) => {
+                log::warn!("个人表情格式异常：{e}");
+                None
+            }
+            Err(AppError::Unauthorized(m)) => return Err(AppError::Unauthorized(m)),
+            Err(e) => {
+                log::warn!("个人表情读取失败：{e}");
+                None
+            }
+        };
+        let joined = match j.map(|v| super::emoji::parse_joined(&v)) {
+            Ok(Ok(list)) => Some(list),
+            Ok(Err(e)) => {
+                log::warn!("已添加表情组格式异常：{e}");
+                None
+            }
+            Err(AppError::Unauthorized(m)) => return Err(AppError::Unauthorized(m)),
+            Err(e) => {
+                log::warn!("已添加表情组读取失败：{e}");
+                None
+            }
+        };
+        Ok(super::emoji::EmojiSet {
+            guilds,
+            joined,
+            personal_failed: personal.is_none(),
+            personal: personal.unwrap_or_default(),
+        })
+    }
+
     /// 一页服务器成员。传入频道时只返回可查看该频道的成员。页大小固定为 50。
     ///
     /// # Errors
@@ -490,6 +555,11 @@ impl Api {
     ///
     /// 请求失败时返回错误，例如表情无效（code 40000）或消息已删除（HTTP 404）。
     pub async fn reaction(&self, msg_id: &str, emoji: &str, add: bool) -> AppResult<()> {
+        if is_personal_emoji(emoji) {
+            return self
+                .reaction_v2("/api/v2/messages/reaction", msg_id, emoji, add)
+                .await;
+        }
         let path = if add {
             "/api/v3/message/add-reaction"
         } else {
@@ -652,6 +722,11 @@ impl Api {
     ///
     /// 请求失败时返回错误，例如消息已删除（HTTP 404）。
     pub async fn dm_reaction(&self, msg_id: &str, emoji: &str, add: bool) -> AppResult<()> {
+        if is_personal_emoji(emoji) {
+            return self
+                .reaction_v2("/api/v2/user-chats/reaction", msg_id, emoji, add)
+                .await;
+        }
         let path = if add {
             "/api/v3/direct-message/add-reaction"
         } else {
@@ -805,5 +880,12 @@ mod tests {
                 message: "你已经点过该表情".into()
             }
         ));
+    }
+
+    #[test]
+    fn personal_emoji_detection() {
+        assert!(super::is_personal_emoji("1/22/abc"));
+        assert!(!super::is_personal_emoji("100/abc"));
+        assert!(!super::is_personal_emoji("👍"));
     }
 }

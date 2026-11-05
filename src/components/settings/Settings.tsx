@@ -40,7 +40,7 @@ export default function Settings() {
         <div class="settings-page" hidden={ui.settings !== "account"}>
           <header class="settings-header">
             <h1>账号设置</h1>
-            <button class="settings-close" title="关闭" onClick={close}><X size={20} /></button>
+            <button class="settings-close" data-tip="关闭" aria-label="关闭" onClick={close}><X size={20} /></button>
           </header>
           <h2 class="settings-panel-title">个人信息</h2>
           <Show when={session.me}>
@@ -89,7 +89,7 @@ function VoiceSettings(p: { close: () => void }) {
     <div class="settings-page">
       <header class="settings-header">
         <h1>语音设置</h1>
-        <button class="settings-close" title="关闭" onClick={p.close}><X size={20} /></button>
+        <button class="settings-close" data-tip="关闭" aria-label="关闭" onClick={p.close}><X size={20} /></button>
       </header>
       <h2 class="settings-panel-title">输入</h2>
       <section class="settings-panel">

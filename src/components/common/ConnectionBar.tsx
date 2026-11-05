@@ -30,7 +30,7 @@ export default function ConnectionBar() {
         <div class="conn-bar" role="status">正在连接…</div>
       </Match>
       <Match when={session.gateway === "reconnecting"}>
-        <div class="conn-bar warn" role="status" title={session.gatewayInfo?.reason}>
+        <div class="conn-bar warn" role="status" data-tip={session.gatewayInfo?.reason} aria-description={session.gatewayInfo?.reason}>
           连接已断开，{wait() > 0 ? `${wait()} 秒后重连` : "正在重连…"}
           <Show when={wait() > 0}><button onClick={reconnectNow}>立即重连</button></Show>
         </div>

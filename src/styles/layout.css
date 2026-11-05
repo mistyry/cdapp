@@ -2,7 +2,8 @@
 
 /* ── 服务器栏 80px ── */
 .guildbar { width: 80px; flex: none; display: flex; flex-direction: column; }
-.guild-scroll { flex: 1; overflow-y: auto; }
+.guild-scroll { flex: 1; overflow-x: hidden; overflow-y: auto; scrollbar-width: none; }
+.guild-scroll::-webkit-scrollbar { display: none; }
 .guild-item { position: relative; height: 64px; display: flex; align-items: center; justify-content: center; }
 .guild-btn {
   width: 48px; height: 48px; clip-path: var(--squircle); background: var(--c-fill);
@@ -10,6 +11,8 @@
   font-size: 20px; font-weight: 700; cursor: pointer;
 }
 .guild-btn img { width: 100%; height: 100%; object-fit: cover; }
+.guild-icon { display: block; flex: none; overflow: hidden; }
+.guild-icon .guild-btn { flex: none; }
 .guild-item .ring { position: absolute; width: 52px; height: 52px; border-radius: 16px; box-shadow: inset 0 0 0 2px var(--c-brand); pointer-events: none; display: none; }
 .guild-item.active .ring { display: block; }
 .guild-item::before {
@@ -147,7 +150,6 @@ button.quote:hover { background: var(--c-fill); }
 .msg-menu.open { display: flex; }
 .msg-pop { position: absolute; right: 0; top: 40px; z-index: 3; display: flex; flex-direction: column; min-width: 120px; padding: 6px;
   background: var(--c-float); border-radius: 10px; box-shadow: var(--shadow); }
-.msg-pop.emoji-pop { flex-direction: row; min-width: 0; font-size: 20px; }
 .msg-pop > button:not(.icon-btn) { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 0; border-radius: 6px;
   background: none; color: var(--c-text); font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
 .msg-pop > button:hover { background: var(--c-hover); }
@@ -164,6 +166,8 @@ button.quote:hover { background: var(--c-fill); }
 .reaction.me { border-color: var(--c-brand); color: var(--c-brand-text); }
 .reaction:disabled { cursor: default; opacity: .7; }
 .reaction .emoji { width: 18px; height: 18px; }
+.reaction.sending { opacity: .6; cursor: progress; }
+.react-error { margin: 2px 0; font-size: 12px; color: var(--c-danger); }
 
 .new-line { display: flex; align-items: center; margin: 17px 24px 0; font-size: 12px; line-height: 18px; color: var(--c-brand-text); }
 .new-line::after { content: ""; flex: 1; height: 1px; margin-left: 6px; background: var(--c-text-2); }
@@ -216,7 +220,7 @@ button.quote:hover { background: var(--c-fill); }
 .kmd-quote { margin: 2px 0; padding-left: 10px; border-left: 4px solid var(--c-text-3); color: var(--c-text-2); }
 .msg-content a.link { color: var(--c-brand-text); text-decoration: none; overflow-wrap: anywhere; }
 .msg-content a.link:hover { text-decoration: underline; }
-.emoji { width: 22px; height: 22px; vertical-align: -5px; object-fit: contain; }
+.emoji { width: 20px; height: 20px; vertical-align: -4px; object-fit: contain; }
 .spoiler { border-radius: 4px; background: var(--c-text-3); color: transparent; cursor: pointer; }
 .spoiler * { visibility: hidden; }
 .spoiler.shown { background: var(--c-hover); color: inherit; cursor: auto; }
@@ -237,7 +241,8 @@ button.quote:hover { background: var(--c-fill); }
 .outgoing .state button { margin-left: 8px; padding: 0; border: 0; background: none; color: var(--c-brand-text); font-size: 12px; cursor: pointer; }
 
 /* 设置页：网页端“个人设置”实测值 */
-.me-entry { cursor: pointer; }
+.me-entry { cursor: pointer; border-radius: 50%; }
+.guild-item:focus-visible, .me-entry:focus-visible { outline: 2px solid var(--c-brand); outline-offset: -2px; }
 .settings { position: fixed; inset: 0; z-index: 20; display: flex; background: var(--c-app); }
 .settings-nav { flex: 1 0 218px; display: flex; justify-content: flex-end; padding: 40px 16px 40px 0; border-right: 1px solid var(--c-line); overflow-y: auto; }
 .settings-nav-inner { width: 200px; }
@@ -343,3 +348,44 @@ button.quote:hover { background: var(--c-fill); }
 .audio-note { padding: 4px 10px; font-size: 12px; line-height: 18px; color: var(--c-text-2); }
 .audio-note.warn { color: var(--c-danger); }
 .audio-line { flex: none; height: 1px; margin: 6px 4px; background: var(--c-line); }
+
+/* ── 表情 ── */
+/* 单个表情：Unicode 50px；自定义表情 120px，原图更小时按原图尺寸（与官方网页端一致）。 */
+.kmd-jumbo .kmd-p { font-size: 50px; line-height: 60px; }
+.kmd-jumbo .emoji { width: min(120px, var(--emoji-natural, 120px)); height: min(120px, var(--emoji-natural, 120px)); vertical-align: bottom; }
+.composer-input { flex: 1; min-width: 0; margin: 3px 0; max-height: 220px; overflow-y: auto; outline: 0; color: var(--c-text);
+  font: 16px/22px var(--font); white-space: pre-wrap; overflow-wrap: anywhere; cursor: text; }
+.composer-input.empty::before { content: attr(data-placeholder); float: left; height: 0; color: var(--c-placeholder); pointer-events: none; }
+.composer-input.disabled { cursor: not-allowed; }
+.composer-input .emoji { width: 20px; height: 20px; vertical-align: -4px; }
+.composer-input .emoji.broken { width: auto; height: auto; }
+.composer-input .emoji.broken::after { content: attr(alt); }
+.emoji-picker { position: absolute; z-index: 5; display: flex; flex-direction: column; width: 360px; height: 320px;
+  background: var(--c-float); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
+.composer-picker { left: 8px; bottom: calc(100% + 8px); }
+.react-picker { position: fixed; }
+.ep-search { display: flex; align-items: center; gap: 6px; margin: 8px 8px 4px; padding: 5px 10px; border-radius: 8px; background: var(--c-fill); color: var(--c-text-3); }
+.ep-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; color: var(--c-text); font: inherit; font-size: 14px; }
+.ep-body { flex: 1; overflow-y: auto; padding: 0 8px 8px; }
+.ep-body h4 { position: sticky; top: 0; margin: 0; padding: 6px 4px; background: var(--c-float); font-size: 12px; font-weight: 400; color: var(--c-text-3); }
+.ep-grid { display: grid; grid-template-columns: repeat(var(--ep-cols), var(--ep-cell)); justify-content: space-between; }
+.ep-cell { display: flex; align-items: center; justify-content: center; width: var(--ep-cell); height: var(--ep-cell); padding: 0;
+  border: 0; border-radius: 8px; background: none; cursor: pointer; content-visibility: auto; contain-intrinsic-size: 36px; }
+.ep-cell:hover, .ep-cell.active { background: var(--c-hover); }
+.ep-cell.off { opacity: .35; cursor: not-allowed; }
+.ep-cell img { object-fit: contain; }
+.ep-char { line-height: 1; font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif; }
+.ep-broken { font-size: 11px; color: var(--c-text-3); }
+.ep-note { padding: 8px 4px; font-size: 13px; color: var(--c-text-3); }
+.ep-note .retry { color: var(--c-brand-text); background: none; border: 0; cursor: pointer; text-decoration: underline; }
+.ep-tabs { display: flex; gap: 2px; padding: 3px 8px; overflow-x: auto; border-top: 1px solid var(--c-line); }
+.ep-tabs .icon-btn { flex: none; width: 30px; height: 30px; color: var(--c-text-2); border-radius: 8px; }
+.ep-tabs .icon-btn.on { background: var(--c-hover); color: var(--c-brand-text); }
+.ep-tabs .icon-btn { position: relative; }
+.ep-lock { position: absolute; right: 1px; bottom: 1px; display: flex; padding: 1px; border-radius: 50%;
+  background: var(--c-float); color: var(--c-text-2); box-shadow: 0 0 0 1px var(--c-line); }
+.emoji-name { color: var(--c-text-2); }
+.tip { position: fixed; z-index: 50; transform: translate(-50%, -100%); width: max-content; max-width: 280px; padding: 4px 8px; border-radius: 6px;
+  background: rgba(31, 35, 41, 0.92); color: #fff; font-size: 12px; line-height: 16px; pointer-events: none; overflow-wrap: anywhere; }
+.tip.below { transform: translate(-50%, 0); }
+.tip.right { transform: translate(0, -50%); }
