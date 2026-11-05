@@ -1,5 +1,6 @@
 import { createStore } from "solid-js/store";
 import { errorText, type DmChatDto } from "../../lib/api";
+import type { FolderDto } from "../../lib/guildFolders";
 import type { Access, Channel, DmList, Focus, Guild, History, MemberList, Message, Outgoing, Unread, User } from "../types";
 
 // boot 恢复中；restore_failed 恢复时网络等临时错误（凭据保留，可重试）；login 未登录；ready 已登录。
@@ -12,6 +13,9 @@ export type State = {
   me: User | null;
   users: Record<string, User>;
   guilds: Guild[];
+  // 服务器栏文件夹。null 表示未加载或读取失败，此时服务器栏平铺显示。
+  folders: FolderDto[] | null;
+  foldersFailed: boolean;
   messages: Record<string, Message[]>;
   history: Record<string, History>;
   outbox: Record<string, Outgoing[]>;
@@ -42,7 +46,7 @@ export type State = {
 export const DM_LIST0: DmList = { loaded: false, loading: false, failed: false, page: 0, pageTotal: 1 };
 
 export const [session, setSession] = createStore<State>({
-  phase: "boot", notice: null, loadFailed: false, me: null, users: {}, guilds: [], messages: {}, history: {}, outbox: {}, unread: {}, access: {}, members: null, gateway: "offline", gatewayInfo: null, recovery: null, error: null, refs: { roles: {}, channels: {} }, focus: null, dms: [], dmList: { ...DM_LIST0 }, dmByUser: {},
+  phase: "boot", notice: null, loadFailed: false, me: null, users: {}, guilds: [], folders: null, foldersFailed: false, messages: {}, history: {}, outbox: {}, unread: {}, access: {}, members: null, gateway: "offline", gatewayInfo: null, recovery: null, error: null, refs: { roles: {}, channels: {} }, focus: null, dms: [], dmList: { ...DM_LIST0 }, dmByUser: {},
 });
 
 export const report = (e: unknown) => setSession("error", errorText(e));

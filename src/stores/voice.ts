@@ -232,7 +232,7 @@ export function deviceSummary(): { text: string; title: string; ok: boolean } {
   const notes = [mic.status === "active" ? mic.message : null, output.message].filter(Boolean);
   return {
     text: `麦克风：${micPart} 扬声器：${outPart}`,
-    title: [`麦克风：${micText()}${mic.device ? `，${mic.device}` : ""}`, `扬声器：${outPart}`, ...notes].join("\n"),
+    title: [`麦克风：${micOk && mic.device ? mic.device : micText()}`, `扬声器：${outPart}`, ...notes].join("\n"),
     ok: micOk && outOk,
   };
 }
@@ -559,8 +559,8 @@ export function deviceOptions(list: DeviceList): DeviceOption[] {
   const seen: Record<string, number> = {};
   return list.devices.map((d) => {
     const n = (seen[d.name] = (seen[d.name] ?? 0) + 1);
-    const label = count[d.name] > 1 ? `${d.name} (${n})` : d.name;
-    return { id: d.id, label, title: d.default ? `${label}，当前系统默认` : label, isDefault: d.default };
+    const label = count[d.name] > 1 ? `${d.name} ${n}` : d.name;
+    return { id: d.id, label, title: label, isDefault: d.default };
   });
 }
 
@@ -568,8 +568,7 @@ export function deviceOptions(list: DeviceList): DeviceOption[] {
 export const selectionMissing = (list: DeviceList) =>
   list.loaded && !list.error && list.selected !== null && !list.devices.some((d) => d.id === list.selected);
 
-// 系统默认项的说明，附带当前默认设备名称。
-export function defaultLabel(list: DeviceList): string {
-  const d = list.devices.find((x) => x.default);
-  return d ? `系统默认 (${d.name})` : "系统默认";
+// 当前系统默认设备的名称，作为系统默认项的提示。
+export function defaultName(list: DeviceList): string {
+  return list.devices.find((x) => x.default)?.name ?? "系统默认";
 }

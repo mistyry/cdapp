@@ -2735,9 +2735,10 @@ test("设备：同名设备按序号区分，所选设备缺失时提示回退",
   });
   await vs.loadOutputs();
   const opts = vs.deviceOptions(vs.outputs);
-  expect(opts.map((o) => o.label)).toEqual(["USB (1)", "USB (2)", "内置"]);
-  expect(opts[1].title).toContain("系统默认");
-  expect(vs.defaultLabel(vs.outputs)).toBe("系统默认 (USB)");
+  expect(opts.map((o) => o.label)).toEqual(["USB 1", "USB 2", "内置"]);
+  expect(opts[1].isDefault).toBe(true);
+  expect(opts[1].title).toBe("USB 2");
+  expect(vs.defaultName(vs.outputs)).toBe("USB");
   expect(vs.selectionMissing(vs.outputs)).toBe(true);
   await vs.selectOutput("y");
   expect(vs.selectionMissing(vs.outputs)).toBe(false);
@@ -3059,4 +3060,31 @@ test("窗口恢复的刷新复用在途请求并节流", async () => {
   } finally {
     Date.now = now;
   }
+});
+
+test("服务器文件夹：读取、失败降级与迟到结果", async () => {
+  const { loadFolders } = await import("../session");
+  auto.guild_folders = () => ({ bad: true });
+  await loadFolders();
+  expect(session.folders).toEqual([]);
+  expect(session.foldersFailed).toBe(false);
+  hold.add("guild_folders");
+  const first = loadFolders();
+  const second = loadFolders();
+  release("guild_folders", [{ id: "f", name: "n", color: null, guild_ids: ["g1"] }]);
+  release("guild_folders", [{ id: "", name: "", color: null, guild_ids: ["g1"] }]);
+  await Promise.all([first, second]);
+  expect(session.folders).toEqual([{ id: "", name: "", color: null, guildIds: ["g1"] }]);
+  hold.clear();
+  auto.guild_folders = () => { throw new Error("x"); };
+  await loadFolders();
+  expect(session.foldersFailed).toBe(true);
+  expect(session.folders).toEqual([{ id: "", name: "", color: null, guildIds: ["g1"] }]);
+  hold.add("guild_folders");
+  const late = loadFolders();
+  await logout();
+  release("guild_folders", [{ id: "f", name: "n", color: null, guild_ids: ["g1"] }]);
+  await late;
+  expect(session.folders).toBeNull();
+  expect(calls.some((c) => c.cmd === "guild_folders" && c.args)).toBe(false);
 });

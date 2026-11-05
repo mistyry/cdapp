@@ -83,6 +83,7 @@ export const api = {
   logout: () => invoke<void>("logout"),
   me: () => invoke<Raw>("me"),
   guilds: () => invoke<Raw[]>("guilds"),
+  guildFolders: () => invoke<unknown>("guild_folders"),
   channels: (guildId: string) => invoke<ChannelDto[]>("channels", { guildId }),
   activateGuild: (guildId: string) => invoke<Raw>("activate_guild", { guildId }),
   guildAccess: (guildId: string) => invoke<GuildAccess>("guild_access", { guildId }),

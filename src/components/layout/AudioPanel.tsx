@@ -1,7 +1,7 @@
 import { For, Show, createSignal, onCleanup, onMount } from "solid-js";
 import { setUi } from "../../stores/ui";
 import {
-  clampVolume, defaultLabel, deviceOptions, inputs, loadInputs, loadOutputs, output, outputs,
+  clampVolume, defaultName, deviceOptions, inputs, loadInputs, loadOutputs, output, outputs,
   selectInput, selectOutput, selectionMissing, setMasterVolume, setMicGain,
 } from "../../stores/voice";
 
@@ -131,11 +131,11 @@ export function DeviceMenu(p: { kind: AudioKind; x: number; onClose: (refocus: b
     <div class="audio-panel" ref={root} role="menu" aria-label={title} style={{ left: `${p.x}px` }} onFocusOut={onFocusOut} onKeyDown={onListKey}>
       <div class="audio-head">{title}</div>
       <div class="audio-list">
-        {item(null, "系统默认", `${defaultLabel(list())}，跟随系统设置变化`)}
+        {item(null, "系统默认", defaultName(list()))}
         <For each={deviceOptions(list())}>{(d) => item(d.id, d.label, d.title)}</For>
       </div>
       <Show when={selectionMissing(list())}>
-        <div class="audio-note" role="status">{isIn ? "所选麦克风" : "所选扬声器"}当前不可用，连接时使用系统默认设备</div>
+        <div class="audio-note" role="status">{isIn ? "所选麦克风不可用" : "所选扬声器不可用"}</div>
       </Show>
       <Show when={list().loading && !list().loaded}><div class="audio-note">正在读取设备</div></Show>
       <Show when={list().error}>

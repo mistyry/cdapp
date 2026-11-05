@@ -39,6 +39,7 @@ pub fn run() {
             commands::logout,
             commands::me,
             commands::guilds,
+            commands::guild_folders,
             commands::channels,
             commands::activate_guild,
             commands::guild_access,

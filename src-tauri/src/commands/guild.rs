@@ -31,6 +31,11 @@ pub async fn guilds(state: State<'_, Mutex<AppState>>) -> AppResult<Value> {
 }
 
 #[tauri::command]
+pub async fn guild_folders(state: State<'_, Mutex<AppState>>) -> AppResult<Value> {
+    with_api(&state, move |a| async move { a.guild_folders().await }).await
+}
+
+#[tauri::command]
 pub async fn channels(
     guild_id: String,
     state: State<'_, Mutex<AppState>>,

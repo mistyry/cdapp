@@ -177,7 +177,7 @@ export default function ChatPane() {
         />
         <div class="right">
           <input ref={picker} type="file" multiple hidden onChange={(e) => { addFiles([...(e.currentTarget.files ?? [])]); e.currentTarget.value = ""; }} />
-          <button class="icon-btn" data-tip="上传文件（5 MB 以内）" aria-label="上传文件（5 MB 以内）" disabled={!sendable()} onClick={() => picker?.click()}><CirclePlus size={22} stroke-width={1.6} /></button>
+          <button class="icon-btn" data-tip="上传文件" aria-label="上传文件" disabled={!sendable()} onClick={() => picker?.click()}><CirclePlus size={22} stroke-width={1.6} /></button>
         </div>
       </div>
     </div>

@@ -2,7 +2,7 @@ import { For, Show, createSignal, onCleanup, onMount } from "solid-js";
 import { X } from "lucide-solid";
 import { logout, session } from "../../stores/session";
 import { setUi, ui } from "../../stores/ui";
-import { defaultLabel, deviceOptions, loadInputs, inputs, selectInput, selectionMissing, loadOutputs, outputs, selectOutput, output, setMasterVolume, setMicGain } from "../../stores/voice";
+import { deviceOptions, loadInputs, inputs, selectInput, selectionMissing, loadOutputs, outputs, selectOutput, output, setMasterVolume, setMicGain } from "../../stores/voice";
 import Avatar from "../common/Avatar";
 
 // 全屏设置页，布局参照网页端“个人设置”。只保留本客户端实际支持的项目，不展示商城、背包等运营入口。
@@ -102,7 +102,7 @@ function VoiceSettings(p: { close: () => void }) {
               value={inputs.selected ?? ""}
               onChange={(e) => void selectInput(e.currentTarget.value || null)}
             >
-              <option value="">{defaultLabel(inputs)}</option>
+              <option value="">系统默认</option>
               <For each={deviceOptions(inputs)}>{(d) => <option value={d.id} title={d.title}>{d.label}</option>}</For>
               <Show when={selectionMissing(inputs)}><option value={inputs.selected!}>所选设备不可用</option></Show>
             </select>
@@ -113,9 +113,11 @@ function VoiceSettings(p: { close: () => void }) {
             <span>{output.gain}%</span>
           </div>
         </div>
-        <Show when={selectionMissing(inputs)}><div class="settings-note">所选麦克风当前不可用，连接时使用系统默认设备。</div></Show>
+        <Show when={selectionMissing(inputs)}><div class="settings-note">所选麦克风不可用。</div></Show>
         <Show when={inputs.error}>{(m) => <div class="settings-note">{m()}</div>}</Show>
         <Show when={!inputs.error && !inputs.loading && inputs.devices.length === 0}><div class="settings-note">没有找到麦克风。</div></Show>
+        <div class="settings-note">语音感应与按键说话尚未实现，目前持续开麦。</div>
+        <div class="settings-note">没有回声消除，建议使用耳机。</div>
         <div class="settings-note">加入语音频道时才会打开麦克风。麦克风音量作用于发送前的声音，100% 为原始音量。</div>
       </section>
       <h2 class="settings-panel-title">输出</h2>
@@ -129,7 +131,7 @@ function VoiceSettings(p: { close: () => void }) {
               value={outputs.selected ?? ""}
               onChange={(e) => void selectOutput(e.currentTarget.value || null)}
             >
-              <option value="">{defaultLabel(outputs)}</option>
+              <option value="">系统默认</option>
               <For each={deviceOptions(outputs)}>{(d) => <option value={d.id} title={d.title}>{d.label}</option>}</For>
               <Show when={selectionMissing(outputs)}><option value={outputs.selected!}>所选设备不可用</option></Show>
             </select>
@@ -142,7 +144,7 @@ function VoiceSettings(p: { close: () => void }) {
         </div>
         <Show when={outputs.error}>{(m) => <div class="settings-note">{m()}</div>}</Show>
         <Show when={!outputs.error && !outputs.loading && outputs.devices.length === 0}><div class="settings-note">没有找到扬声器。</div></Show>
-        <Show when={selectionMissing(outputs)}><div class="settings-note">所选扬声器当前不可用，连接时使用系统默认设备。</div></Show>
+        <Show when={selectionMissing(outputs)}><div class="settings-note">所选扬声器不可用。</div></Show>
         <div class="settings-note">成员音量可在语音频道中点击成员调节，范围 0% 至 200%。</div>
         <div class="settings-note">未提供回声消除与降噪。外放时对方可能听到回声，建议使用耳机。</div>
       </section>

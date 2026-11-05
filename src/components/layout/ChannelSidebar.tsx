@@ -50,11 +50,10 @@ function ChannelItem(p: { c: Channel }) {
   // 可查看但不能连接的语音频道保留显示，并说明原因。
   const noConnect = () => p.c.type === "voice" && voiceBlock(p.c.id) === "denied";
   const icon = () => channelIcon(p.c, permsOf(p.c.id));
-  const hint = () => icon().label;
   return (
     <>
       <div
-        aria-label={`${p.c.name}，${hint()}`}
+        aria-label={[p.c.name, ...icon().parts].join(" ")}
         aria-disabled={noConnect() || undefined}
         class={`channel ${p.c.type === "unknown" || noConnect() ? "unsupported" : ""} ${active() ? "active" : ""} ${preview() ? "has-preview" : ""} ${!active() && !unread() && p.c.type === "text" ? "muted" : ""}`}
         onClick={() => {
@@ -65,7 +64,7 @@ function ChannelItem(p: { c: Channel }) {
         }}
       >
         <div class="channel-row">
-          <span class="type" role="img" aria-label={icon().label}>
+          <span class="type" role="img" aria-label={icon().label} data-tip={icon().label}>
             {icon().base === "text" ? <KookHash restricted={icon().restricted} />
               : icon().lock ? <LockIcon restricted={icon().restricted} />
               : icon().base === "voice" ? <VoiceIcon restricted={icon().restricted} />
@@ -214,7 +213,7 @@ function VoiceBox() {
         </div>
       </Show>
       <div class="voice-ctrls" ref={ctrls}>
-        <button class="mode" disabled data-tip="语音感应与按键说话尚未实现，当前为持续开麦。没有回声消除，建议使用耳机" aria-label="语音感应" aria-description="语音感应与按键说话尚未实现，当前为持续开麦。没有回声消除，建议使用耳机">语音感应</button>
+        <button class="mode" disabled data-tip="持续开麦" aria-label="语音感应" aria-description="持续开麦">语音感应</button>
         <div class="ctrls">
           <div class="ctrl-wrap" {...hoverProps("input")} onContextMenu={(e) => openMenu(e, "input")}>
             <button

@@ -13,7 +13,7 @@ test("普通文字与语音", () => {
 });
 
 test("密码语音显示锁，已有连接权限时仍保留", () => {
-  expect(channelIcon(ch("voice", { password: true }), ALL)).toMatchObject({ lock: true, label: "语音频道，需要密码" });
+  expect(channelIcon(ch("voice", { password: true }), ALL)).toMatchObject({ lock: true, label: "需要密码", parts: ["需要密码", "语音频道"] });
   // 文字频道没有密码概念。
   expect(channelIcon(ch("text", { password: true }), full).lock).toBe(false);
 });
@@ -28,8 +28,8 @@ test("受限标识只看频道对 @全体成员 的限制，不看覆盖数组�
 });
 
 test("当前账号的限制写入提示，依据未知时不推断", () => {
-  expect(channelIcon(ch("text"), Perm.VIEW).label).toBe("文字频道，只读");
-  expect(channelIcon(ch("voice"), Perm.VIEW).label).toBe("语音频道，没有连接权限");
+  expect(channelIcon(ch("text"), Perm.VIEW).label).toBe("只读");
+  expect(channelIcon(ch("voice", { password: true, overwrites: deny(Perm.VIEW) }), Perm.VIEW).parts).toEqual(["没有连接权限", "需要密码", "受限频道", "语音频道"]);
   expect(channelIcon(ch("voice"), null).label).toBe("语音频道");
   expect(channelIcon(ch("unknown"), null).base).toBe("unknown");
 });

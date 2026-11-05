@@ -10,7 +10,7 @@ function Row(p: { m: MemberDto }) {
   // 显示服务器昵称；颜色取服务端计算的角色颜色。
   const user = () => ({ id: p.m.id, name: p.m.nickname || p.m.username || "未知用户", avatar: p.m.avatar || undefined, online: p.m.online });
   return (
-    <div class={`member ${p.m.online ? "" : "offline"}`} data-tip={`${user().name}#${p.m.identifyNum}（双击发私信）`}
+    <div class={`member ${p.m.online ? "" : "offline"}`} data-tip={`${user().name}#${p.m.identifyNum}`}
       onDblClick={() => !p.m.bot && session.me?.id !== p.m.id && void openDmWith(p.m.id)}>
       <Avatar user={user()} size={32} status />
       <div class="info">

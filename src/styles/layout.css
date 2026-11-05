@@ -22,6 +22,14 @@
 .guild-item.unread:not(.active)::before { height: 8px; background: var(--c-text); }
 .guild-item:not(.active):hover::before { height: 20px; background: var(--c-text); }
 .guild-item .badge { position: absolute; right: 10px; bottom: 6px; }
+.folder.open { margin: 0 12px 4px; border-radius: 16px; background: var(--folder-bg); }
+.folder.open .guild-item::before { left: -12px; }
+.folder-btn {
+  width: 48px; height: 48px; clip-path: var(--squircle); background: var(--folder-bg); cursor: pointer;
+  display: grid; grid-template-columns: 18px 18px; grid-auto-rows: 18px; gap: 4px; place-content: center;
+}
+.folder-glyph { display: flex; align-items: center; justify-content: center; background: none; }
+.folder-retry { color: var(--c-text-2); }
 .guild-line { width: 40px; height: 1px; margin: 8px 20px; background: var(--c-line); flex: none; }
 .guildbar-bottom { flex: none; display: flex; flex-direction: column; align-items: center; padding-bottom: 19px; }
 .guildbar-bottom .guild-line { margin: 0 0 19px; }

@@ -1,4 +1,5 @@
 import { api } from "../../lib/api";
+import { parseFolders } from "../../lib/guildFolders";
 import { ui, setUi, NONE, DM_VIEW } from "../ui";
 import { leaveHidden, loadAccess, refreshAccess, visible } from "./access";
 import { toGroups } from "./convert";
@@ -7,9 +8,26 @@ import { loadHistory } from "./history";
 import { channelById, guildOf, report, session, sessionUp, setSession, st } from "./state";
 import { readCurrent } from "./unread";
 
+// 读取服务器栏文件夹。失败时保留平铺列表，可重试；不发起任何修改分组的请求。
+// 重试与登录时的加载可能重叠，只采用最后一次请求的结果。
+let folderSeq = 0;
+export async function loadFolders() {
+  const gen = st.account;
+  const seq = ++folderSeq;
+  const mine = () => gen === st.account && seq === folderSeq;
+  setSession("foldersFailed", false);
+  try {
+    const folders = parseFolders(await api.guildFolders());
+    if (mine()) setSession("folders", folders);
+  } catch {
+    if (mine()) setSession("foldersFailed", true);
+  }
+}
+
 export async function loadGuilds() {
   const gen = st.account;
   setSession("loadFailed", false);
+  void loadFolders();
   try {
     const list = await api.guilds();
     if (gen !== st.account) return;

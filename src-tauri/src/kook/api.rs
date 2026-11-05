@@ -306,6 +306,18 @@ impl Api {
         .await
     }
 
+    /// 服务器栏文件夹。未归组的服务器以空 ID、单个成员的条目出现，条目顺序即服务器栏顺序。
+    ///
+    /// # Errors
+    ///
+    /// 请求失败时返回错误。
+    pub async fn guild_folders(&self) -> AppResult<Value> {
+        let v = self
+            .get("/api/v3/guild/folders", &[("page_size", "1024")])
+            .await?;
+        Ok(v.get("items").cloned().unwrap_or(Value::Array(Vec::new())))
+    }
+
     /// # Errors
     ///
     /// 请求失败时返回错误。

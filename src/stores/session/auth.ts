@@ -61,7 +61,7 @@ export function reset(phase: "login" | "boot", notice: string | null = null) {
   dropSubscription();
   stopListeners();
   resetOutbox();
-  setSession({ phase, notice, loadFailed: false, me: null, users: {}, guilds: [], messages: {}, history: {}, outbox: {}, unread: {}, access: {}, members: null, gateway: "offline", gatewayInfo: null, recovery: null, error: null, refs: { roles: {}, channels: {} }, focus: null, dms: [], dmList: { ...DM_LIST0 }, dmByUser: {} });
+  setSession({ phase, notice, loadFailed: false, me: null, users: {}, guilds: [], folders: null, foldersFailed: false, messages: {}, history: {}, outbox: {}, unread: {}, access: {}, members: null, gateway: "offline", gatewayInfo: null, recovery: null, error: null, refs: { roles: {}, channels: {} }, focus: null, dms: [], dmList: { ...DM_LIST0 }, dmByUser: {} });
   resetDm();
   resetUnread();
   resetGateway();
