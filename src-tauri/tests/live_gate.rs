@@ -54,3 +54,21 @@ async fn gate_matches_server() {
         }
     }
 }
+
+/// 密码频道不带密码申请令牌，应得到 40310 业务错误而不是 HTTP 错误。
+/// `CDAPP_LIVE_PW_CHANNEL=<ID>`。服务端已记住密码时返回地址，不建立连接。
+#[tokio::test]
+#[ignore = "需要真实账号"]
+async fn password_channel_reports_40310() {
+    let token = std::env::var("CDAPP_LIVE_TOKEN").expect("CDAPP_LIVE_TOKEN");
+    let id = std::env::var("CDAPP_LIVE_PW_CHANNEL").expect("CDAPP_LIVE_PW_CHANNEL");
+    let api = Api::new(Some(token)).unwrap();
+    match api.voice_gateway(&id, "").await {
+        Err(cdapp_lib::error::AppError::Api { code, .. }) => {
+            println!("code={code}");
+            assert_eq!(code, 40310);
+        }
+        Ok(_) => println!("服务端已记住密码"),
+        Err(e) => panic!("未识别的错误：{e}"),
+    }
+}

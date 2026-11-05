@@ -76,6 +76,13 @@ impl Api {
         if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
             return Err(AppError::RateLimited);
         }
+        // 业务错误可能以 HTTP 4xx 返回，响应体仍为 {code, message}，例如语音令牌的 40310 密码错误。
+        // 能识别业务码时按业务错误处理，否则保留 HTTP 错误。
+        if resp.status().is_client_error() {
+            let err = resp.error_for_status_ref().map(|_| ()).unwrap_err();
+            let bytes = resp.bytes().await.unwrap_or_default();
+            return Err(client_error(&bytes).unwrap_or(AppError::Http(err)));
+        }
         let bytes = resp.error_for_status()?.bytes().await?;
         if bytes.is_empty() {
             return Ok(Value::Null);
@@ -153,6 +160,24 @@ fn unwrap(body: Value) -> AppResult<Value> {
         return Ok(map.get("data").cloned().unwrap_or(Value::Null));
     }
     Ok(body)
+}
+
+/// 4xx 响应体中的业务错误。没有非零 code 时返回 `None`。
+fn client_error(bytes: &[u8]) -> Option<AppError> {
+    let body: Value = serde_json::from_slice(bytes).ok()?;
+    let code = body
+        .get("code")
+        .and_then(Value::as_i64)
+        .filter(|c| *c != 0)?;
+    if code == 401 {
+        return Some(unauthorized(&body));
+    }
+    let message = body
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    Some(AppError::Api { code, message })
 }
 
 fn unauthorized(body: &Value) -> AppError {
@@ -722,6 +747,21 @@ mod tests {
         assert!(check_upload(UPLOAD_LIMIT).is_ok());
         let e = check_upload(UPLOAD_LIMIT + 1).unwrap_err();
         assert_eq!(e.kind(), crate::error::ErrorKind::Local);
+    }
+
+    #[test]
+    fn client_error_body_keeps_code() {
+        let e = client_error(
+            br#"{"code":40310,"message":"\u9891\u9053\u5bc6\u7801\u9519\u8bef","data":[]}"#,
+        )
+        .unwrap();
+        assert!(matches!(e, AppError::Api { code: 40310, .. }));
+        assert!(matches!(
+            client_error(br#"{"code":401,"message":"x"}"#),
+            Some(AppError::Unauthorized(_))
+        ));
+        assert!(client_error(b"<html>").is_none());
+        assert!(client_error(br#"{"code":0}"#).is_none());
     }
 
     #[test]
