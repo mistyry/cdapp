@@ -108,6 +108,7 @@ pub async fn voice_join(
         // 闭听加入时麦克风也静音。
         muted: muted || deafened,
         source: mic_source(slot.input.clone()),
+        gain: slot.gain.clone(),
         deafen: Deafen::with_mic_before(deafened, mic_before_deaf),
         output: output::Sink::Device(slot.output.clone()),
         volumes: slot.volumes.clone(),
@@ -173,6 +174,7 @@ pub struct AudioInputs {
 pub async fn set_audio_input(id: Option<String>, voice: State<'_, VoiceState>) -> AppResult<()> {
     let mut slot = voice.0.lock().await;
     slot.input = id.filter(|s| !s.is_empty());
+    slot.persist();
     if let Some(s) = slot.session.as_ref().filter(|s| !s.is_finished()) {
         s.control().set_source(mic_source(slot.input.clone()));
     }
@@ -238,6 +240,7 @@ pub struct AudioOutputs {
 pub async fn set_audio_output(id: Option<String>, voice: State<'_, VoiceState>) -> AppResult<()> {
     let mut slot = voice.0.lock().await;
     slot.output = id.filter(|s| !s.is_empty());
+    slot.persist();
     if let Some(s) = slot.session.as_ref().filter(|s| !s.is_finished()) {
         s.control()
             .set_output(output::Sink::Device(slot.output.clone()));
@@ -271,8 +274,27 @@ pub async fn voice_set_master(percent: u16, voice: State<'_, VoiceState>) -> App
     let percent = percent.min(crate::audio::mixer::MAX_VOLUME);
     let mut slot = voice.0.lock().await;
     slot.master = Some(percent);
+    slot.persist();
     if let Some(s) = slot.session.as_ref().filter(|s| !s.is_finished()) {
         s.control().set_master(percent);
     }
     Ok(())
+}
+
+/// 设置麦克风输入增益，上限 200%，100% 为原始音量。正在采集时立即生效。
+/// 返回实际生效的值。
+#[tauri::command]
+pub async fn voice_set_gain(percent: u16, voice: State<'_, VoiceState>) -> AppResult<u16> {
+    let slot = voice.0.lock().await;
+    slot.gain.set(percent);
+    slot.persist();
+    Ok(slot.gain.percent())
+}
+
+/// 本机音频偏好，启动时读取一次。
+#[tauri::command]
+pub async fn audio_prefs(
+    voice: State<'_, VoiceState>,
+) -> AppResult<crate::audio::store::AudioPrefs> {
+    Ok(voice.0.lock().await.prefs())
 }

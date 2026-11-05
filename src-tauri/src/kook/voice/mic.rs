@@ -92,9 +92,10 @@ impl MicRun<'_> {
                     }
                     self.epoch += 1;
                     self.device = None;
-                    let source = prefs_get(self.prefs).source;
+                    let p = prefs_get(self.prefs);
                     *capture = Some(Capture::start(
-                        source,
+                        p.source,
+                        p.gain,
                         self.uplink.clone(),
                         self.epoch,
                         self.events.clone(),

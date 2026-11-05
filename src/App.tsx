@@ -9,11 +9,15 @@ import Login from "./components/auth/Login";
 import Settings from "./components/settings/Settings";
 import PasswordPrompt from "./components/layout/PasswordPrompt";
 import ConnectionBar from "./components/common/ConnectionBar";
+import { loadAudioPrefs } from "./stores/voice";
 import "./styles/theme.css";
 import "./styles/layout.css";
 
 export default function App() {
-  onMount(boot);
+  onMount(() => {
+    void loadAudioPrefs();
+    void boot();
+  });
   // 窗口重新获得焦点或变为可见、关闭设置页时，补标当前频道已读。
   // 同时节流刷新当前服务器的权限依据，覆盖变化不保证有推送。
   const back = () => {

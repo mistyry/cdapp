@@ -14,6 +14,8 @@ pub type Tap = Arc<Mutex<Vec<f32>>>;
 pub struct MicPrefs {
     pub muted: bool,
     pub source: Source,
+    /// 输入增益，与命令层共享，修改立即作用于采集。
+    pub gain: crate::audio::dsp::Gain,
     pub deafen: Deafen,
     pub output: output::Sink,
     /// 成员音量百分比，按用户 ID 记录。
@@ -35,6 +37,7 @@ impl Default for MicPrefs {
         Self {
             muted: false,
             source: Source::Device(None),
+            gain: crate::audio::dsp::Gain::default(),
             deafen: Deafen::default(),
             output: output::Sink::Device(None),
             volumes: HashMap::new(),

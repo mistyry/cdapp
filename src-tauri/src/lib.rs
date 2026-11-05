@@ -23,11 +23,14 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             use tauri::Manager;
-            kook::auth::init(&app.path().app_data_dir()?);
+            let dir = app.path().app_data_dir()?;
+            kook::auth::init(&dir);
+            audio::store::init(&dir);
+            let slot = commands::VoiceSlot::from_prefs(&audio::store::load());
+            app.manage(VoiceState(tokio::sync::Mutex::new(slot)));
             Ok(())
         })
         .manage(Mutex::new(AppState::default()))
-        .manage(VoiceState::default())
         .invoke_handler(tauri::generate_handler![
             commands::restore_session,
             commands::login_qr_code,
@@ -75,6 +78,8 @@ pub fn run() {
             commands::set_audio_output,
             commands::voice_set_volume,
             commands::voice_set_master,
+            commands::voice_set_gain,
+            commands::audio_prefs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

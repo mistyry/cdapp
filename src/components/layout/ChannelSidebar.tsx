@@ -2,9 +2,10 @@ import { For, Show, createSignal, onCleanup } from "solid-js";
 import { CircleHelp, Headphones, HeadphoneOff, Menu, Mic, MicOff, PhoneOff, Settings, UserPlus, X } from "lucide-solid";
 import type { Channel } from "../../stores/types";
 import { accessState, enterVoice, loadDms, permsOf, retryAccess, selectChannel, selectDm, session, visible, voiceBlock } from "../../stores/session";
-import { canRejoin, deviceSummary, dismissVoice, isSpeaking, leaveVoice, mic, micFailed, micHint, micText, output, qualityText, setPeerVolume, toggleDeafen, toggleMic, voice, voiceActive, voiceStatusText, volumeOf, type VoicePeer } from "../../stores/voice";
+import { canRejoin, deviceSummary, dismissVoice, isSpeaking, leaveVoice, mic, micFailed, micHint, output, qualityText, setPeerVolume, toggleDeafen, toggleMic, voice, voiceActive, voiceStatusText, volumeOf, type VoicePeer } from "../../stores/voice";
 import { DM_VIEW, currentChannelId, currentChatCode, ui, setUi } from "../../stores/ui";
 import Avatar from "../common/Avatar";
+import { DeviceMenu, VolumePop, type AudioKind } from "./AudioPanel";
 import { Caret, KookHash, LockIcon, VoiceIcon } from "../common/icons";
 import { channelIcon } from "../../lib/channelIcon";
 
@@ -142,6 +143,36 @@ function VoiceBox() {
   const [now, setNow] = createSignal(Date.now());
   const timer = setInterval(() => setNow(Date.now()), 500);
   onCleanup(() => clearInterval(timer));
+  // 右键打开设备菜单，按触发位置水平定位；悬停或键盘聚焦时显示音量条，拖动期间保持显示。
+  const [menu, setMenu] = createSignal<{ kind: AudioKind; x: number } | null>(null);
+  const [hover, setHover] = createSignal<AudioKind | null>(null);
+  const [dragging, setDragging] = createSignal(false);
+  let leaveTimer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => clearTimeout(leaveTimer));
+  const show = (k: AudioKind) => { clearTimeout(leaveTimer); setHover(k); };
+  const hide = (k: AudioKind) => {
+    clearTimeout(leaveTimer);
+    leaveTimer = setTimeout(() => !dragging() && hover() === k && setHover(null), 150);
+  };
+  const hoverProps = (k: AudioKind) => ({
+    onPointerEnter: () => show(k),
+    onPointerLeave: () => hide(k),
+    onFocusIn: () => show(k),
+    onFocusOut: (e: FocusEvent) => !(e.currentTarget as Element).contains(e.relatedTarget as Node) && setHover(null),
+  });
+  let ctrls!: HTMLDivElement;
+  const openMenu = (e: MouseEvent, kind: AudioKind) => {
+    e.preventDefault();
+    setHover(null);
+    const box = ctrls.getBoundingClientRect();
+    const btn = (e.currentTarget as Element).getBoundingClientRect();
+    // 菜单以按钮为中心，靠近窗口边缘时向内收，保持完整可见。
+    const half = Math.min(272, window.innerWidth - 24) / 2;
+    const center = Math.max(8 + half, Math.min(window.innerWidth - 8 - half, btn.left + btn.width / 2));
+    setMenu((m) => (m?.kind === kind ? null : { kind, x: center - box.left }));
+  };
+  let inBtn: HTMLButtonElement | undefined;
+  let outBtn: HTMLButtonElement | undefined;
   const wait = () => (voice.phase === "reconnecting" && voice.retryAt ? Math.max(0, Math.ceil((voice.retryAt - now()) / 1000)) : 0);
   return (
     <div class="voice-box">
@@ -182,29 +213,42 @@ function VoiceBox() {
           </Show>
         </div>
       </Show>
-      <div class="voice-ctrls">
+      <div class="voice-ctrls" ref={ctrls}>
         <button class="mode" disabled title="语音感应与按键说话尚未实现，当前为持续开麦。没有回声消除，建议使用耳机">语音感应</button>
         <div class="ctrls">
-          <button
-            class={`icon-btn ${mic.muted || micFailed() ? "danger" : ""}`}
-            disabled={mic.busy}
-            aria-pressed={mic.muted}
-            title={micFailed() ? `${micText()}，点击重试` : mic.muted ? "取消静音" : mic.device ? `静音，当前设备：${mic.device}` : "静音"}
-            onClick={() => void toggleMic()}
-          >
-            {mic.muted || micFailed() ? <MicOff size={20} /> : <Mic size={20} />}
-          </button>
-          <button
-            class={`icon-btn ${output.deafened ? "danger" : ""}`}
-            disabled={output.busy}
-            aria-pressed={output.deafened}
-            title={output.deafened ? "打开耳机" : output.device ? `关闭耳机，当前设备：${output.device}` : "关闭耳机"}
-            onClick={() => void toggleDeafen()}
-          >
-            {output.deafened ? <HeadphoneOff size={20} /> : <Headphones size={20} />}
-          </button>
+          <div class="ctrl-wrap" {...hoverProps("input")} onContextMenu={(e) => openMenu(e, "input")}>
+            <button
+              ref={inBtn}
+              class={`icon-btn ${mic.muted || micFailed() ? "danger" : ""}`}
+              disabled={mic.busy}
+              aria-pressed={mic.muted}
+              aria-haspopup="menu"
+              aria-label={mic.muted ? "取消静音" : "静音"}
+              onClick={() => void toggleMic()}
+            >
+              {mic.muted || micFailed() ? <MicOff size={20} /> : <Mic size={20} />}
+            </button>
+            <Show when={hover() === "input" && !menu()}><VolumePop kind="input" onDrag={setDragging} /></Show>
+          </div>
+          <div class="ctrl-wrap" {...hoverProps("output")} onContextMenu={(e) => openMenu(e, "output")}>
+            <button
+              ref={outBtn}
+              class={`icon-btn ${output.deafened ? "danger" : ""}`}
+              disabled={output.busy}
+              aria-pressed={output.deafened}
+              aria-haspopup="menu"
+              aria-label={output.deafened ? "打开耳机" : "关闭耳机"}
+              onClick={() => void toggleDeafen()}
+            >
+              {output.deafened ? <HeadphoneOff size={20} /> : <Headphones size={20} />}
+            </button>
+            <Show when={hover() === "output" && !menu()}><VolumePop kind="output" onDrag={setDragging} /></Show>
+          </div>
           <button class="icon-btn" title="语音设置" onClick={() => setUi("settings", "voice")}><Settings size={20} /></button>
         </div>
+        <Show when={menu()} keyed>
+          {(m) => <DeviceMenu kind={m.kind} x={m.x} onClose={(refocus) => { const b = m.kind === "input" ? inBtn : outBtn; setMenu(null); if (refocus) b?.focus(); }} />}
+        </Show>
       </div>
     </div>
   );

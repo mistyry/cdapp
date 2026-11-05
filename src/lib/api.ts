@@ -28,6 +28,8 @@ async function invoke<T>(cmd: string, args?: InvokeArgs, options?: InvokeOptions
 
 // 后端 audio::capture::InputDevice。
 export type InputDevice = { id: string; name: string; default: boolean };
+// 后端 audio::store::AudioPrefs。设备为 null 时跟随系统默认。
+export type AudioPrefs = { input: string | null; output: string | null; gain: number; master: number };
 
 // 后端 kook::model::Channel。kind 为 category / text / voice / unknown。
 export type ChannelDto = {
@@ -128,6 +130,9 @@ export const api = {
   // 成员音量与总音量的上限为 200。
   voiceSetVolume: (userId: string, percent: number) => invoke<void>("voice_set_volume", { userId, percent }),
   voiceSetMaster: (percent: number) => invoke<void>("voice_set_master", { percent }),
+  // 麦克风输入增益，上限 200，返回实际生效的值。
+  voiceSetGain: (percent: number) => invoke<number>("voice_set_gain", { percent }),
+  audioPrefs: () => invoke<AudioPrefs>("audio_prefs"),
 };
 
 // 后端错误带结果确定性：not_sent 未发出，rejected 服务端拒绝，uncertain 可能已被处理，local 本地错误，

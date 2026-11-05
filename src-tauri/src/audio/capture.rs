@@ -15,7 +15,7 @@ use tokio::sync::{Notify, mpsc, oneshot};
 #[cfg(any(test, feature = "test-media"))]
 use super::dsp::FRAME_SAMPLES;
 use super::dsp::{
-    Bounded, FRAME_MS, Framer, RATE, Resampler, ZeroProbe, audio_level, meter, mixdown,
+    Bounded, FRAME_MS, Framer, Gain, RATE, Resampler, ZeroProbe, audio_level, meter, mixdown,
 };
 use super::mic::MicStatus;
 use crate::kook::voice::peer::Uplink;
@@ -169,6 +169,7 @@ impl Capture {
     #[must_use]
     pub fn start(
         source: Source,
+        gain: Gain,
         uplink: Uplink,
         epoch: u64,
         events: mpsc::UnboundedSender<CaptureEvent>,
@@ -186,14 +187,14 @@ impl Capture {
                     match source {
                         #[cfg(any(test, feature = "test-media"))]
                         Source::Tone(freq) => {
-                            run_tone(freq, None, &frames, &stop, &wait, epoch, &tx);
+                            run_tone(freq, None, &gain, &frames, &stop, &wait, epoch, &tx);
                         }
                         #[cfg(any(test, feature = "test-media"))]
                         Source::Marked(freq, mark) => {
-                            run_tone(freq, Some(mark), &frames, &stop, &wait, epoch, &tx);
+                            run_tone(freq, Some(mark), &gain, &frames, &stop, &wait, epoch, &tx);
                         }
                         Source::Device(id) => {
-                            run_device(id.as_deref(), &frames, &stop, &wait, epoch, &tx);
+                            run_device(id.as_deref(), &gain, &frames, &stop, &wait, epoch, &tx);
                         }
                     }
                     LIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
@@ -318,9 +319,11 @@ pub fn encoder() -> Result<opus::Encoder, opus::Error> {
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss
 )]
+#[allow(clippy::too_many_arguments)]
 fn run_tone(
     freq: f32,
     mark: Option<f32>,
+    gain: &Gain,
     frames: &Frames,
     stop: &AtomicBool,
     wait: &std::sync::mpsc::Receiver<()>,
@@ -341,7 +344,7 @@ fn run_tone(
     let mut phase = 0.0f64;
     let mut k: u32 = 0;
     while !stop.load(Ordering::SeqCst) {
-        let chunk: Vec<f32> = (0..FRAME_SAMPLES)
+        let mut chunk: Vec<f32> = (0..FRAME_SAMPLES)
             .map(|_| {
                 let ms = wall0 + i as f64 * 1000.0 / f64::from(RATE);
                 i += 1;
@@ -354,6 +357,7 @@ fn run_tone(
                 (0.3 * phase.sin()) as f32
             })
             .collect();
+        gain.apply(&mut chunk);
         frames.push(splitter.push(&chunk));
         k += 1;
         let due = start + Duration::from_millis(u64::from(FRAME_MS) * u64::from(k));
@@ -369,9 +373,11 @@ fn run_tone(
     }
 }
 
-/// 采集处理链：混音、重采样、分帧与全零检测。
+/// 采集处理链：混音、全零检测、增益、重采样与分帧。
+/// 全零检测在增益之前，增益为 0% 时不误判为没有权限。
 struct Chain {
     channels: usize,
+    gain: Gain,
     resampler: Resampler,
     framer: Framer,
     probe: ZeroProbe,
@@ -379,9 +385,10 @@ struct Chain {
 }
 
 impl Chain {
-    fn new(rate: u32, channels: usize) -> Self {
+    fn new(rate: u32, channels: usize, gain: Gain) -> Self {
         Self {
             channels,
+            gain,
             resampler: Resampler::new(rate, RATE),
             framer: Framer::default(),
             probe: ZeroProbe::new(ZERO_WINDOW),
@@ -391,11 +398,12 @@ impl Chain {
 
     /// 处理一段样本。首次判定为全零时返回 true，之后不再重复。
     fn feed(&mut self, data: &[f32], frames: &Frames) -> bool {
-        let mono = mixdown(data, self.channels);
+        let mut mono = mixdown(data, self.channels);
         let zero = self.probe.feed(&mono) == Some(true) && !self.reported;
         if zero {
             self.reported = true;
         }
+        self.gain.apply(&mut mono);
         let out = self.resampler.process(&mono);
         frames.push(self.framer.push(&out));
         zero
@@ -451,6 +459,7 @@ fn device_name(d: &Device) -> String {
 /// 打开并启动输入流。设备支持 48 kHz 时优先使用，避免重采样。
 fn open(
     device: &Device,
+    gain: &Gain,
     frames: &Frames,
     signal: &std::sync::mpsc::Sender<Signal>,
 ) -> Result<cpal::Stream, (MicStatus, String)> {
@@ -470,7 +479,11 @@ fn open(
         })
         .map_or(cfg, |r| r.with_sample_rate(RATE));
     let config: StreamConfig = cfg.config();
-    let mut chain = Chain::new(config.sample_rate, usize::from(config.channels.max(1)));
+    let mut chain = Chain::new(
+        config.sample_rate,
+        usize::from(config.channels.max(1)),
+        gain.clone(),
+    );
     let (frames, on_silent) = (frames.clone(), signal.clone());
     let mut scratch: Vec<f32> = Vec::new();
     macro_rules! build {
@@ -512,6 +525,7 @@ fn open(
 /// 采集线程：打开设备并监视错误，设备丢失时改用系统默认设备。
 fn run_device(
     id: Option<&str>,
+    gain: &Gain,
     frames: &Frames,
     stop: &AtomicBool,
     wait: &std::sync::mpsc::Receiver<()>,
@@ -542,7 +556,7 @@ fn run_device(
             }
             Err((status, message)) => return failed(status, message),
         };
-        let stream = match open(&device, frames, &sig_tx) {
+        let stream = match open(&device, gain, frames, &sig_tx) {
             Ok(s) => s,
             Err((status, message)) => return failed(status, message),
         };
@@ -642,7 +656,7 @@ mod tests {
     #[test]
     fn chain_reports_silence_once_and_frames_resampled_input() {
         let frames = Frames::new();
-        let mut chain = Chain::new(44_100, 2);
+        let mut chain = Chain::new(44_100, 2, Gain::default());
         let mut zero = 0;
         for _ in 0..200 {
             if chain.feed(&[0.0; 1024], &frames) {
@@ -654,6 +668,32 @@ mod tests {
         let q = frames.queue.lock().unwrap();
         assert_eq!(q.len(), QUEUE_FRAMES);
         assert!(q.dropped() >= 30, "{}", q.dropped());
+    }
+
+    #[test]
+    fn zero_gain_does_not_trigger_silence_detection() {
+        let frames = Frames::new();
+        let gain = Gain::default();
+        gain.set(0);
+        let mut chain = Chain::new(48_000, 1, gain.clone());
+        let mut hits = 0;
+        for _ in 0..200 {
+            if chain.feed(&[0.3; 1024], &frames) {
+                hits += 1;
+            }
+        }
+        assert_eq!(hits, 0);
+        // 输出为静音，修改增益后立即生效。
+        let q = frames.queue.lock().unwrap().pop().unwrap();
+        assert!(q.iter().all(|&s| s == 0));
+        gain.set(100);
+        let f2 = Frames::new();
+        chain.feed(&vec![0.3; FRAME_SAMPLES * 2], &f2);
+        let mut last = None;
+        while let Some(x) = f2.queue.lock().unwrap().pop() {
+            last = Some(x);
+        }
+        assert!(last.unwrap().iter().any(|&s| s > 9000));
     }
 
     #[test]

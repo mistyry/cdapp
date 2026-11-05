@@ -7,3 +7,4 @@ pub mod jitter;
 pub mod mic;
 pub mod mixer;
 pub mod output;
+pub mod store;

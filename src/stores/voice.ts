@@ -3,7 +3,8 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { api, errorText, type InputDevice } from "../lib/api";
 
 // 语音会话状态。后端在后台完成连接与重建，经 voice://event 推送事件，事件按会话代次过滤。
-// 静音、耳机与音量偏好在会话之间保留，退出登录时重置。
+// 静音、耳机与成员音量在会话之间保留，退出登录时重置。
+// 设备、输入增益与总音量属于本机偏好，由后端保存，退出登录时保留。
 
 export type VoicePeer = {
   id: string; name: string; avatar: string; device: string;
@@ -87,9 +88,11 @@ type Out = {
   // 成员音量百分比，100 不记录。
   volumes: Record<string, number>;
   master: number;
+  // 麦克风输入增益百分比。
+  gain: number;
 };
 const OUT_IDLE = { active: false, device: null, message: null, busy: false, speaking: [] as string[] };
-export const [output, setOutput] = createStore<Out>({ deafened: false, ...OUT_IDLE, volumes: {}, master: 100 });
+export const [output, setOutput] = createStore<Out>({ deafened: false, ...OUT_IDLE, volumes: {}, master: 100, gain: 100 });
 export const isSpeaking = (id: string) => output.speaking.includes(id);
 export const volumeOf = (id: string) => output.volumes[id] ?? 100;
 
@@ -251,7 +254,7 @@ export function resetVoice() {
   early = [];
   setVoice({ ...IDLE });
   setMic({ muted: false, ...MIC_IDLE });
-  setOutput({ deafened: false, ...OUT_IDLE, volumes: {}, master: 100 });
+  setOutput({ deafened: false, ...OUT_IDLE, volumes: {} });
   micBeforeDeaf = null;
 }
 
@@ -346,10 +349,56 @@ export async function setPeerVolume(id: string, percent: number) {
   await api.voiceSetVolume(id, v).catch((e) => setOutput({ message: errorText(e) }));
 }
 
+export const clampVolume = (percent: number) => Math.max(0, Math.min(200, Math.round(Number.isFinite(percent) ? percent : 100)));
+
+// 总音量与输入增益：连续拖动只采用最新一次的结果，失败时恢复后端最后确认的值。
+// 后端确认的值只由更新的成功请求覆盖：较早请求成功后被较新请求的失败回滚时，恢复到该较早值。
+let masterSeq = 0, masterOkSeq = 0;
+let masterOk = 100;
 export async function setMasterVolume(percent: number) {
-  const v = Math.max(0, Math.min(200, Math.round(percent)));
-  setOutput("master", v);
-  await api.voiceSetMaster(v).catch((e) => setOutput({ message: errorText(e) }));
+  const v = clampVolume(percent);
+  const my = ++masterSeq;
+  setOutput({ master: v, message: null });
+  try {
+    await api.voiceSetMaster(v);
+    if (my > masterOkSeq) { masterOk = v; masterOkSeq = my; }
+  } catch (e) {
+    if (my !== masterSeq) return;
+    setOutput({ master: masterOk, message: `总音量未生效：${errorText(e)}` });
+  }
+}
+
+let gainSeq = 0, gainOkSeq = 0;
+let gainOk = 100;
+export async function setMicGain(percent: number) {
+  const v = clampVolume(percent);
+  const my = ++gainSeq;
+  setOutput("gain", v);
+  try {
+    const applied = await api.voiceSetGain(v);
+    if (my > gainOkSeq) { gainOk = typeof applied === "number" ? applied : v; gainOkSeq = my; }
+    if (my === gainSeq) setOutput("gain", gainOk);
+  } catch (e) {
+    if (my !== gainSeq) return;
+    setOutput("gain", gainOk);
+    setMic("message", `麦克风音量未生效：${errorText(e)}`);
+  }
+}
+
+// 启动时读取后端保存的本机音频偏好。读取失败时保持默认值。
+export async function loadAudioPrefs() {
+  const my = [masterSeq, gainSeq, inSeq, outSeq];
+  try {
+    const p = await api.audioPrefs();
+    if (!p) return;
+    // 读取期间用户已修改的项以用户为准。
+    if (my[0] === masterSeq) { masterOk = clampVolume(p.master); setOutput("master", masterOk); }
+    if (my[1] === gainSeq) { gainOk = clampVolume(p.gain); setOutput("gain", gainOk); }
+    if (my[2] === inSeq) { inOk = p.input; setInputs("selected", p.input); }
+    if (my[3] === outSeq) { outOk = p.output; setOutputs("selected", p.output); }
+  } catch {
+    // 使用默认值。
+  }
 }
 
 export function onVoiceEvent(p: VoicePayload) {
@@ -424,52 +473,103 @@ export function onVoiceEvent(p: VoicePayload) {
   }
 }
 
+type DeviceList = {
+  devices: InputDevice[];
+  // 期望的选择，null 为跟随系统默认。
+  selected: string | null;
+  loading: boolean;
+  // 已读取过一次列表。
+  loaded: boolean;
+  error: string | null;
+};
+const LIST0: DeviceList = { devices: [], selected: null, loading: false, loaded: false, error: null };
+
 // 输入设备列表。
-export const [inputs, setInputs] = createStore<{ devices: InputDevice[]; selected: string | null; loading: boolean; error: string | null }>({
-  devices: [], selected: null, loading: false, error: null,
-});
+export const [inputs, setInputs] = createStore<DeviceList>({ ...LIST0 });
+// 输出设备列表。
+export const [outputs, setOutputs] = createStore<DeviceList>({ ...LIST0 });
+
+// 列表请求与选择各自按序号只采用最新结果。
+let inLoad = 0, outLoad = 0, inSeq = 0, outSeq = 0;
 
 export async function loadInputs() {
+  const my = ++inLoad;
+  const sel = inSeq;
   setInputs({ loading: true, error: null });
   try {
     const r = await api.audioInputs();
-    setInputs({ devices: r.devices, selected: r.selected, loading: false });
+    if (my !== inLoad) return;
+    // 列表在途期间用户已重新选择时，保留新的选择。
+    if (sel === inSeq) inOk = r.selected;
+    setInputs({ devices: r.devices, loading: false, loaded: true, ...(sel === inSeq ? { selected: r.selected } : {}) });
   } catch (e) {
-    setInputs({ loading: false, error: errorText(e) });
+    if (my === inLoad) setInputs({ loading: false, error: errorText(e) });
   }
 }
 
-// 输出设备列表。
-export const [outputs, setOutputs] = createStore<{ devices: InputDevice[]; selected: string | null; loading: boolean; error: string | null }>({
-  devices: [], selected: null, loading: false, error: null,
-});
-
 export async function loadOutputs() {
+  const my = ++outLoad;
+  const sel = outSeq;
   setOutputs({ loading: true, error: null });
   try {
     const r = await api.audioOutputs();
-    setOutputs({ devices: r.devices, selected: r.selected, loading: false });
+    if (my !== outLoad) return;
+    if (sel === outSeq) outOk = r.selected;
+    setOutputs({ devices: r.devices, loading: false, loaded: true, ...(sel === outSeq ? { selected: r.selected } : {}) });
   } catch (e) {
-    setOutputs({ loading: false, error: errorText(e) });
+    if (my === outLoad) setOutputs({ loading: false, error: errorText(e) });
+  }
+}
+
+// 后端最后确认的选择，失败时恢复。
+let inOk: string | null | undefined;
+let outOk: string | null | undefined;
+let inOkSeq = 0, outOkSeq = 0;
+
+export async function selectInput(id: string | null) {
+  const my = ++inSeq;
+  if (inOk === undefined) inOk = inputs.selected;
+  setInputs({ selected: id, error: null });
+  try {
+    await api.setAudioInput(id);
+    if (my > inOkSeq) { inOk = id; inOkSeq = my; }
+  } catch (e) {
+    if (my === inSeq) setInputs({ selected: inOk ?? null, error: `麦克风切换失败：${errorText(e)}` });
   }
 }
 
 export async function selectOutput(id: string | null) {
-  const prev = outputs.selected;
+  const my = ++outSeq;
+  if (outOk === undefined) outOk = outputs.selected;
   setOutputs({ selected: id, error: null });
   try {
     await api.setAudioOutput(id);
+    if (my > outOkSeq) { outOk = id; outOkSeq = my; }
   } catch (e) {
-    setOutputs({ selected: prev, error: errorText(e) });
+    if (my === outSeq) setOutputs({ selected: outOk ?? null, error: `扬声器切换失败：${errorText(e)}` });
   }
 }
 
-export async function selectInput(id: string | null) {
-  const prev = inputs.selected;
-  setInputs({ selected: id, error: null });
-  try {
-    await api.setAudioInput(id);
-  } catch (e) {
-    setInputs({ selected: prev, error: errorText(e) });
-  }
+export type DeviceOption = { id: string; label: string; title: string; isDefault: boolean };
+
+// 设备选项。同名设备追加序号区分；选择以设备 ID 为准。
+export function deviceOptions(list: DeviceList): DeviceOption[] {
+  const count: Record<string, number> = {};
+  for (const d of list.devices) count[d.name] = (count[d.name] ?? 0) + 1;
+  const seen: Record<string, number> = {};
+  return list.devices.map((d) => {
+    const n = (seen[d.name] = (seen[d.name] ?? 0) + 1);
+    const label = count[d.name] > 1 ? `${d.name} (${n})` : d.name;
+    return { id: d.id, label, title: d.default ? `${label}，当前系统默认` : label, isDefault: d.default };
+  });
+}
+
+// 所选设备已不在列表中。只在列表读取成功后判断。
+export const selectionMissing = (list: DeviceList) =>
+  list.loaded && !list.error && list.selected !== null && !list.devices.some((d) => d.id === list.selected);
+
+// 系统默认项的说明，附带当前默认设备名称。
+export function defaultLabel(list: DeviceList): string {
+  const d = list.devices.find((x) => x.default);
+  return d ? `系统默认 (${d.name})` : "系统默认";
 }

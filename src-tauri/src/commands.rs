@@ -47,14 +47,47 @@ pub struct VoiceSlot {
     pub generation: u64,
     /// 已处理的最新前端请求序号。请求可能乱序拿到锁，序号更小的加入已被后来的加入或退出取代。
     pub latest: u64,
-    /// 输入设备 ID，None 为系统默认。只保存在内存中。
+    /// 输入设备 ID，None 为系统默认。本机偏好，保存在 audio.json。
     pub input: Option<String>,
-    /// 输出设备 ID，None 为系统默认。只保存在内存中。
+    /// 输出设备 ID，None 为系统默认。本机偏好，保存在 audio.json。
     pub output: Option<String>,
+    /// 输入增益，与当前会话共享，修改立即生效。
+    pub gain: crate::audio::dsp::Gain,
     /// 成员音量百分比，按用户 ID 记录。跨会话保留，只保存在内存中。
     pub volumes: std::collections::HashMap<String, u16>,
     /// 总音量百分比，None 为 100。
     pub master: Option<u16>,
+}
+
+impl VoiceSlot {
+    /// 按保存的本机偏好初始化。
+    #[must_use]
+    pub fn from_prefs(p: &crate::audio::store::AudioPrefs) -> Self {
+        let slot = Self {
+            input: p.input.clone(),
+            output: p.output.clone(),
+            master: Some(p.master),
+            ..Self::default()
+        };
+        slot.gain.set(p.gain);
+        slot
+    }
+
+    /// 当前本机偏好。
+    #[must_use]
+    pub fn prefs(&self) -> crate::audio::store::AudioPrefs {
+        crate::audio::store::AudioPrefs {
+            input: self.input.clone(),
+            output: self.output.clone(),
+            gain: self.gain.percent(),
+            master: self.master.unwrap_or(100),
+        }
+    }
+
+    /// 在后台保存本机偏好，不在持锁期间写盘。失败只记录日志，不影响当前设置生效。
+    pub fn persist(&self) {
+        crate::audio::store::save_later(self.prefs());
+    }
 }
 
 impl VoiceSlot {
@@ -67,11 +100,10 @@ impl VoiceSlot {
         true
     }
 
-    /// 退出登录时清除账号相关的音量设置，与前端 resetVoice 的默认值一致。
-    /// 输入与输出设备属于本机设置，保留不变。
+    /// 退出登录时清除账号相关的成员音量。
+    /// 设备、输入增益与总音量属于本机设置，保留不变。
     pub fn reset_account(&mut self) {
         self.volumes.clear();
-        self.master = None;
     }
 
     /// 登记退出请求。序号更小且尚未拿到锁的加入随之作废。
@@ -186,7 +218,7 @@ mod tests {
         slot.output = Some("dev".into());
         slot.reset_account();
         assert!(slot.volumes.is_empty());
-        assert_eq!(slot.master, None);
+        assert_eq!(slot.master, Some(30));
         assert_eq!(slot.output.as_deref(), Some("dev"));
     }
 

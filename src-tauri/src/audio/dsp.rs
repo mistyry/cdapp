@@ -1,7 +1,9 @@
-//! 音频处理基础：声道混合、重采样、分帧、电平计算与有界队列。
+//! 音频处理基础：声道混合、重采样、输入增益、分帧、电平计算与有界队列。
 //! 只依赖标准库，在采集与播放回调中调用，不分配锁。
 
 use std::collections::VecDeque;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU16, Ordering};
 
 /// 内部处理采样率，与 Opus 协商一致。
 pub const RATE: u32 = 48_000;
@@ -204,6 +206,61 @@ impl ZeroProbe {
     }
 }
 
+/// 输入增益，百分比，100 为单位增益。采集线程每次回调读取，修改立即生效。
+#[derive(Clone, Debug)]
+pub struct Gain(Arc<AtomicU16>);
+
+/// 输入增益上限，百分比。
+pub const MAX_GAIN: u16 = 200;
+
+impl Default for Gain {
+    fn default() -> Self {
+        Self(Arc::new(AtomicU16::new(100)))
+    }
+}
+
+impl Gain {
+    #[must_use]
+    pub fn percent(&self) -> u16 {
+        self.0.load(Ordering::Relaxed)
+    }
+
+    /// 设置增益，超过上限时取上限。
+    pub fn set(&self, percent: u16) {
+        self.0.store(percent.min(MAX_GAIN), Ordering::Relaxed);
+    }
+
+    /// 按当前增益处理样本。100% 时不改变样本；高于 100% 时经软限幅，避免削波。
+    pub fn apply(&self, samples: &mut [f32]) {
+        let p = self.percent();
+        if p == 100 {
+            return;
+        }
+        let g = f32::from(p) / 100.0;
+        for x in samples.iter_mut() {
+            *x *= g;
+        }
+        if p > 100 {
+            for x in samples.iter_mut() {
+                *x = soft_limit(*x);
+            }
+        }
+    }
+}
+
+/// 软限幅。0.8 以下不变，以上平滑压缩到 1 以内。
+#[must_use]
+pub fn soft_limit(x: f32) -> f32 {
+    const KNEE: f32 = 0.8;
+    let a = x.abs();
+    if a <= KNEE {
+        x
+    } else {
+        let y = KNEE + (1.0 - KNEE) * ((a - KNEE) / (1.0 - KNEE)).tanh();
+        y.copysign(x)
+    }
+}
+
 /// 定长队列，满时丢弃最旧的元素。
 pub struct Bounded<T> {
     items: VecDeque<T>,
@@ -386,5 +443,56 @@ mod tests {
         assert_eq!(q.pop(), Some(4));
         assert_eq!(q.pop(), Some(9));
         assert_eq!(q.len(), 0);
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn gain_scales_samples_and_limits_above_unity() {
+        let base = [0.0f32, 0.1, -0.2, 0.4, -0.6];
+        let run = |p: u16| {
+            let g = Gain::default();
+            g.set(p);
+            let mut v = base;
+            g.apply(&mut v);
+            v
+        };
+        assert_eq!(run(100), base);
+        assert!(run(0).iter().all(|&x| x == 0.0));
+        for (a, b) in run(50).iter().zip(base) {
+            assert!((a - b * 0.5).abs() < 1e-6);
+        }
+        // 200% 时线性区内翻倍，超过拐点的样本压缩到 1 以内且保持单调。
+        let r = run(200);
+        assert!((r[1] - 0.2).abs() < 1e-6);
+        assert!((r[2] + 0.4).abs() < 1e-6);
+        assert!(r[3] > 0.79 && r[3] <= 0.8 + 1e-6);
+        assert!(r[4] < -0.8 && r[4] > -1.0);
+        let g = Gain::default();
+        g.set(1000);
+        assert_eq!(g.percent(), MAX_GAIN);
+        let mut loud = [1.0f32, -1.0];
+        g.apply(&mut loud);
+        assert!(loud.iter().all(|x| x.abs() < 1.0));
+    }
+
+    #[test]
+    fn gain_changes_frame_level() {
+        // 1 kHz 正弦，峰值 0.25，经分帧后计算电平。
+        #[allow(clippy::cast_precision_loss)]
+        let tone: Vec<f32> = (0..FRAME_SAMPLES)
+            .map(|i| 0.25 * (i as f32 * 2.0 * std::f32::consts::PI / 48.0).sin())
+            .collect();
+        let level = |p: u16| {
+            let g = Gain::default();
+            g.set(p);
+            let mut v = tone.clone();
+            g.apply(&mut v);
+            audio_level(&Framer::default().push(&v)[0])
+        };
+        // 约 -15 dBov；50% 降 6 dB，200% 升 6 dB，0% 为静音。
+        assert_eq!(level(100), 15);
+        assert_eq!(level(50), 21);
+        assert_eq!(level(200), 9);
+        assert_eq!(level(0), 127);
     }
 }

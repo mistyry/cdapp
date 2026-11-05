@@ -2597,7 +2597,9 @@ test("音量：成员音量限制在 0 至 200，退出登录时重置", async (
   expect(calls.find((c) => c.cmd === "voice_set_master")!.args).toEqual({ percent: 80 });
   vs.resetVoice();
   expect(vs.volumeOf("u1")).toBe(100);
-  expect(vs.output.master).toBe(100);
+  // 总音量属于本机偏好，退出登录时保留。
+  expect(vs.output.master).toBe(80);
+  await vs.setMasterVolume(100);
 });
 
 test("音量：选择输出设备，失败时恢复之前的选择", async () => {
@@ -2609,6 +2611,130 @@ test("音量：选择输出设备，失败时恢复之前的选择", async () =>
   auto.set_audio_output = () => Promise.reject({ kind: "local", message: "x" });
   await vs.selectOutput(null);
   expect(vs.outputs.selected).toBe("coreaudio:s");
+});
+
+test("音量：麦克风增益限制范围，连续调节以最新值为准，失败时恢复", async () => {
+  await vs.setMicGain(100);
+  auto.voice_set_gain = ({ percent }) => percent;
+  await vs.setMicGain(250);
+  expect(vs.output.gain).toBe(200);
+  expect(calls[calls.length - 1].args).toEqual({ percent: 200 });
+  // 先发的请求晚返回，不覆盖后来的值。
+  hold.add("voice_set_gain");
+  const a = vs.setMicGain(50);
+  const b = vs.setMicGain(150);
+  release("voice_set_gain", 150, (x) => x.percent === 150);
+  await b;
+  release("voice_set_gain", 50, (x) => x.percent === 50);
+  await a;
+  expect(vs.output.gain).toBe(150);
+  hold.clear();
+  auto.voice_set_gain = () => Promise.reject({ kind: "local", message: "x" });
+  await vs.setMicGain(20);
+  expect(vs.output.gain).toBe(150);
+  expect(vs.mic.message).toContain("未生效");
+  auto.voice_set_gain = ({ percent }) => percent;
+  await vs.setMicGain(100);
+});
+
+test("音量：调节音量不改变静音与耳机状态", async () => {
+  vs.resetVoice();
+  await vs.setMuted(true);
+  await vs.setDeafened(true);
+  auto.voice_set_gain = ({ percent }) => percent;
+  await vs.setMicGain(200);
+  await vs.setMasterVolume(200);
+  expect(vs.mic.muted).toBe(true);
+  expect(vs.output.deafened).toBe(true);
+  expect(calls.some((c) => c.cmd === "voice_set_mic" || c.cmd === "voice_set_deafen")).toBe(false);
+  await vs.setMicGain(100);
+  await vs.setMasterVolume(100);
+  vs.resetVoice();
+});
+
+test("音量：较早请求成功、较新请求失败时恢复为较早的值", async () => {
+  await vs.setMasterVolume(100);
+  hold.add("voice_set_master");
+  const a = vs.setMasterVolume(120);
+  const b = vs.setMasterVolume(130);
+  release("voice_set_master", null, (x) => x.percent === 120);
+  await a;
+  const i = pending.findIndex((x) => x.cmd === "voice_set_master");
+  pending.splice(i, 1)[0].resolve(Promise.reject({ kind: "local", message: "x" }));
+  await b;
+  expect(vs.output.master).toBe(120);
+  hold.clear();
+  await vs.setMasterVolume(100);
+});
+
+test("总音量失败时恢复上次生效的值", async () => {
+  await vs.setMasterVolume(60);
+  auto.voice_set_master = () => Promise.reject({ kind: "local", message: "x" });
+  await vs.setMasterVolume(90);
+  expect(vs.output.master).toBe(60);
+  expect(vs.output.message).toContain("未生效");
+  delete auto.voice_set_master;
+  await vs.setMasterVolume(100);
+});
+
+test("设备：读取保存的偏好，读取期间的选择不被覆盖", async () => {
+  hold.add("audio_prefs");
+  const p = vs.loadAudioPrefs();
+  await flush();
+  await vs.selectOutput("o2");
+  release("audio_prefs", { input: "i1", output: "o1", gain: 130, master: 70 });
+  await p;
+  expect(vs.inputs.selected).toBe("i1");
+  expect(vs.outputs.selected).toBe("o2");
+  expect(vs.output.gain).toBe(130);
+  expect(vs.output.master).toBe(70);
+  hold.clear();
+  await vs.setMicGain(100);
+  await vs.setMasterVolume(100);
+  await vs.selectInput(null);
+  await vs.selectOutput(null);
+});
+
+test("设备：连续切换以最后一次为准，迟到的失败不回滚新选择", async () => {
+  await vs.selectInput(null);
+  hold.add("set_audio_input");
+  const a = vs.selectInput("a");
+  const b = vs.selectInput("b");
+  release("set_audio_input", null, (x) => x.id === "b");
+  await b;
+  // 先发的请求迟到失败。
+  const i = pending.findIndex((x) => x.cmd === "set_audio_input");
+  pending.splice(i, 1)[0].resolve(Promise.reject({ kind: "local", message: "x" }));
+  await a;
+  expect(vs.inputs.selected).toBe("b");
+  expect(vs.inputs.error).toBeNull();
+  hold.clear();
+  await vs.selectInput(null);
+});
+
+test("设备：同名设备按序号区分，所选设备缺失时提示回退", async () => {
+  auto.audio_outputs = () => ({
+    devices: [{ id: "x1", name: "USB", default: false }, { id: "x2", name: "USB", default: true }, { id: "y", name: "内置", default: false }],
+    selected: "gone",
+  });
+  await vs.loadOutputs();
+  const opts = vs.deviceOptions(vs.outputs);
+  expect(opts.map((o) => o.label)).toEqual(["USB (1)", "USB (2)", "内置"]);
+  expect(opts[1].title).toContain("系统默认");
+  expect(vs.defaultLabel(vs.outputs)).toBe("系统默认 (USB)");
+  expect(vs.selectionMissing(vs.outputs)).toBe(true);
+  await vs.selectOutput("y");
+  expect(vs.selectionMissing(vs.outputs)).toBe(false);
+  // 列表在途期间的选择不被返回的旧选择覆盖。
+  hold.add("audio_outputs");
+  const l = vs.loadOutputs();
+  await flush();
+  await vs.selectOutput("x1");
+  release("audio_outputs", { devices: [], selected: "y" });
+  await l;
+  expect(vs.outputs.selected).toBe("x1");
+  hold.clear();
+  await vs.selectOutput(null);
 });
 
 // // 连接恢复

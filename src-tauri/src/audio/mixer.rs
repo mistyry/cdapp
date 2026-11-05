@@ -18,18 +18,7 @@ const SPEAK_HOLD: u64 = 48 * 300;
 /// 单包最大样本数，120 ms。
 const MAX_FRAME: usize = 5760;
 
-/// 软限幅。0.8 以下不变，以上平滑压缩到 1 以内。
-#[must_use]
-pub fn limit(x: f32) -> f32 {
-    const KNEE: f32 = 0.8;
-    let a = x.abs();
-    if a <= KNEE {
-        x
-    } else {
-        let y = KNEE + (1.0 - KNEE) * ((a - KNEE) / (1.0 - KNEE)).tanh();
-        y.copysign(x)
-    }
-}
+pub use super::dsp::soft_limit as limit;
 
 /// 音量百分比转换为增益。
 #[must_use]
