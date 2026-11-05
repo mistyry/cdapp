@@ -35,6 +35,8 @@ pub struct AppState {
     pub gateway_gen: u64,
     /// 进行中的上传，按前端上传 ID 取消。
     pub uploads: std::collections::HashMap<String, std::sync::Arc<tokio::sync::Notify>>,
+    /// 命令边界的权限依据，退出登录时随状态清空。
+    pub gate: crate::kook::gate::Gate,
 }
 
 /// 当前语音会话与代次。切换时需跨 await 等待旧连接释放，因此单独使用 tokio 锁。
@@ -134,6 +136,30 @@ where
         expire(state.inner(), &token);
     }
     r
+}
+
+/// 记录权限依据。仅当请求所用凭据仍是当前凭据时写入，旧账号的迟到结果不进入新登录。
+fn note(state: &Mutex<AppState>, token: &str, f: impl FnOnce(&mut crate::kook::gate::Gate)) {
+    if let Ok(mut s) = state.lock()
+        && !token.is_empty()
+        && s.token.as_deref() == Some(token)
+    {
+        f(&mut s.gate);
+    }
+}
+
+/// 当前凭据。
+fn token_of(state: &Mutex<AppState>) -> AppResult<String> {
+    lock(state)?.token.clone().ok_or(AppError::NotLoggedIn)
+}
+
+/// 按门禁判断频道操作，未通过时请求不发出。
+fn check(
+    state: &Mutex<AppState>,
+    channel_id: &str,
+    need: crate::kook::gate::Need,
+) -> AppResult<()> {
+    lock(state)?.gate.check(channel_id, need)
 }
 
 /// 凭据失效后在后台退出语音。

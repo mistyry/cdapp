@@ -81,8 +81,9 @@ pub(super) async fn join(
     sink: &Sink,
     muted: bool,
     deafened: bool,
+    password: &str,
 ) -> AppResult<Live> {
-    let url = api.voice_gateway(channel_id).await?;
+    let url = api.voice_gateway(channel_id, password).await?;
     let (signal, inbound) = Signal::connect(&url).await?;
     let signal = slots.signal.insert(signal).clone();
     let joined = signal
@@ -163,7 +164,16 @@ pub(super) async fn attempt(
     // 加入期间仍处理控制命令，收到退出时中止加入。
     let joined = {
         let p = prefs_get(prefs);
-        let fut = join(api, channel_id, &mut slots, sink, p.muted, p.deafen.on());
+        let password = p.password.clone().unwrap_or_default();
+        let fut = join(
+            api,
+            channel_id,
+            &mut slots,
+            sink,
+            p.muted,
+            p.deafen.on(),
+            &password,
+        );
         tokio::pin!(fut);
         loop {
             tokio::select! {

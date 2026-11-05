@@ -114,6 +114,8 @@ pub enum EndReason {
     Lost,
     /// 登录凭据失效。
     Unauthorized,
+    /// 频道密码缺失或错误（40310）。
+    Password,
 }
 
 /// 发往前端的语音事件。

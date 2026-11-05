@@ -31,6 +31,10 @@ pub struct Channel {
     pub overwrites: Vec<Overwrite>,
     /// 用户覆盖。
     pub user_overwrites: Vec<UserOverwrite>,
+    /// 频道设有密码。服务端不返回密码本身。
+    pub has_password: bool,
+    /// 与所属分组同步覆盖。服务端已把分组覆盖复制到本频道，客户端不再叠加父分组。
+    pub permission_sync: bool,
 }
 
 /// 频道角色覆盖。角色 ID 为数字，0 表示 @全体成员（不能用 `id_of`，它把 0 视为缺失）。
@@ -241,6 +245,12 @@ impl MemberPage {
     }
 }
 
+/// 公开的 ID 读取，规则同 `id_of`。
+#[must_use]
+pub fn id_str(v: Option<&Value>) -> Option<String> {
+    id_of(v)
+}
+
 /// 字符串或数字形式的 ID 统一为字符串；空串、"0" 与 0 视为缺失。
 fn id_of(v: Option<&Value>) -> Option<String> {
     let s = match v? {
@@ -278,6 +288,8 @@ impl Channel {
         Some(Self {
             overwrites,
             user_overwrites,
+            has_password: int_of(v.get("has_password")).unwrap_or(0) != 0,
+            permission_sync: int_of(v.get("permission_sync")).unwrap_or(0) != 0,
             name: v
                 .get("name")
                 .and_then(Value::as_str)

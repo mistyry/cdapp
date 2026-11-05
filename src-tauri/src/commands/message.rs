@@ -3,8 +3,9 @@ use std::sync::Mutex;
 use serde_json::Value;
 use tauri::State;
 
-use super::{AppState, with_api};
+use super::{AppState, check, with_api};
 use crate::error::AppResult;
+use crate::kook::gate::Need;
 use crate::kook::model::{History, MessageLocation};
 
 #[tauri::command]
@@ -13,6 +14,7 @@ pub async fn messages(
     before: Option<String>,
     state: State<'_, Mutex<AppState>>,
 ) -> AppResult<History> {
+    check(&state, &channel_id, Need::Read)?;
     with_api(&state, move |a| async move {
         a.messages(&channel_id, before.as_deref()).await
     })
@@ -25,6 +27,7 @@ pub async fn messages_after(
     after: String,
     state: State<'_, Mutex<AppState>>,
 ) -> AppResult<History> {
+    check(&state, &channel_id, Need::Read)?;
     with_api(&state, move |a| async move {
         a.messages_after(&channel_id, &after).await
     })
@@ -51,6 +54,7 @@ pub async fn send_message(
     quote: Option<String>,
     state: State<'_, Mutex<AppState>>,
 ) -> AppResult<Value> {
+    check(&state, &channel_id, Need::Send)?;
     with_api(&state, move |a| async move {
         a.send_message(&channel_id, kind, &content, quote.as_deref())
             .await

@@ -33,6 +33,7 @@ pub(super) fn lost(message: impl Into<String>) -> Outcome {
 pub(super) fn join_error(e: &AppError) -> Outcome {
     match e {
         AppError::Unauthorized(m) => Outcome::End(EndReason::Unauthorized, Some(m.clone())),
+        AppError::Api { code: 40310, .. } => Outcome::End(EndReason::Password, None),
         AppError::Api { .. } | AppError::Format(_) | AppError::NotLoggedIn => {
             Outcome::End(EndReason::JoinFailed, Some(e.to_string()))
         }
@@ -78,6 +79,18 @@ pub(super) fn settle_lost(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wrong_password_ends_without_retry() {
+        let e = AppError::Api {
+            code: 40310,
+            message: String::new(),
+        };
+        assert!(matches!(
+            failed_join(&e, None, false).0,
+            Outcome::End(EndReason::Password, None)
+        ));
+    }
     use crate::kook::voice::*;
 
     #[test]

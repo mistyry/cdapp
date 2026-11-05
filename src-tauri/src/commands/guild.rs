@@ -3,17 +3,31 @@ use std::sync::Mutex;
 use serde_json::Value;
 use tauri::State;
 
-use super::{AppState, lock, with_api};
+use super::{AppState, lock, note, token_of, with_api};
 use crate::error::{AppError, AppResult};
 
 #[tauri::command]
 pub async fn me(state: State<'_, Mutex<AppState>>) -> AppResult<Value> {
-    with_api(&state, move |a| async move { a.me().await }).await
+    let token = token_of(&state)?;
+    let me = with_api(&state, move |a| async move { a.me().await }).await?;
+    let id = crate::kook::model::id_str(me.get("id"));
+    note(&state, &token, |g| g.me = id);
+    Ok(me)
 }
 
 #[tauri::command]
 pub async fn guilds(state: State<'_, Mutex<AppState>>) -> AppResult<Value> {
-    with_api(&state, move |a| async move { a.guilds().await }).await
+    let token = token_of(&state)?;
+    let list = with_api(&state, move |a| async move { a.guilds().await }).await?;
+    // 已退出的服务器不再保留权限依据。
+    if let Some(items) = list.as_array() {
+        let ids = items
+            .iter()
+            .filter_map(|g| crate::kook::model::id_str(g.get("id")))
+            .collect();
+        note(&state, &token, |g| g.retain_guilds(&ids));
+    }
+    Ok(list)
 }
 
 #[tauri::command]
@@ -21,7 +35,12 @@ pub async fn channels(
     guild_id: String,
     state: State<'_, Mutex<AppState>>,
 ) -> AppResult<Vec<crate::kook::model::Channel>> {
-    with_api(&state, move |a| async move { a.channels(&guild_id).await }).await
+    let token = token_of(&state)?;
+    let ticket = lock(&state)?.gate.ticket();
+    let gid = guild_id.clone();
+    let list = with_api(&state, move |a| async move { a.channels(&gid).await }).await?;
+    note(&state, &token, |g| g.set_channels(&guild_id, &list, ticket));
+    Ok(list)
 }
 
 /// 当前账号在服务器中的角色与权限依据。
@@ -30,11 +49,13 @@ pub async fn guild_access(
     guild_id: String,
     state: State<'_, Mutex<AppState>>,
 ) -> AppResult<crate::kook::model::GuildAccess> {
-    with_api(
-        &state,
-        move |a| async move { a.guild_access(&guild_id).await },
-    )
-    .await
+    let token = token_of(&state)?;
+    let ticket = lock(&state)?.gate.ticket();
+    let gid = guild_id.clone();
+    let access = with_api(&state, move |a| async move { a.guild_access(&gid).await }).await?;
+    let copy = access.clone();
+    note(&state, &token, |g| g.set_access(&guild_id, copy, ticket));
+    Ok(access)
 }
 
 /// 一页服务器成员，可按频道过滤。

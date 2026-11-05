@@ -2,8 +2,10 @@
 
 pub mod api;
 pub mod auth;
+pub mod gate;
 pub mod gateway;
 pub mod model;
+pub mod perms;
 pub mod voice;
 
 pub const BASE: &str = "https://www.kookapp.cn";

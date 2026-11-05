@@ -687,14 +687,14 @@ impl Api {
         str_field(&data, "url")
     }
 
-    /// 语音信令地址。每个地址只能使用一次。
+    /// 语音信令地址。每个地址只能使用一次。密码频道需要密码，服务端记住后可传空串；错误返回 40310。
     ///
     /// # Errors
     ///
     /// 请求失败或响应缺少 `gateway_url` 时返回错误。
-    pub async fn voice_gateway(&self, channel_id: &str) -> AppResult<String> {
+    pub async fn voice_gateway(&self, channel_id: &str, password: &str) -> AppResult<String> {
         let body = json!({
-            "invisible_join": false, "ip_discovery": [], "password": "",
+            "invisible_join": false, "ip_discovery": [], "password": password,
             "streaming": "[null,null,\"\",\"\"]",
         });
         let data = self

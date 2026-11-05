@@ -20,6 +20,8 @@ pub struct MicPrefs {
     pub volumes: HashMap<String, u16>,
     /// 总音量百分比。
     pub master: u16,
+    /// 频道密码，只保存在内存中，不写入日志。
+    pub password: Option<String>,
     /// 把混音输出追加到该缓冲。
     #[cfg(any(test, feature = "test-media"))]
     pub tap: Option<Tap>,
@@ -37,6 +39,7 @@ impl Default for MicPrefs {
             output: output::Sink::Device(None),
             volumes: HashMap::new(),
             master: 100,
+            password: None,
             #[cfg(any(test, feature = "test-media"))]
             tap: None,
             #[cfg(any(test, feature = "test-media"))]

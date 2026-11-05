@@ -3,10 +3,11 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
-use super::{AppState, VoiceState, api, expire, lock};
+use super::{AppState, VoiceState, api, check, expire, lock};
 use crate::audio::capture::{InputDevice, Source};
 use crate::audio::output::{self, Deafen, OutputDevice};
 use crate::error::{AppError, AppResult};
+use crate::kook::gate::Need;
 use crate::kook::voice::{EndReason, MicPrefs, Sink, VoiceEvent, VoiceSession};
 
 /// 通知当前语音会话系统已唤醒或网络已恢复。
@@ -46,11 +47,14 @@ pub async fn voice_join(
     channel_id: String,
     request: u64,
     audio: Option<JoinAudio>,
+    password: Option<String>,
     app: AppHandle,
     state: State<'_, Mutex<AppState>>,
     voice: State<'_, VoiceState>,
 ) -> AppResult<u64> {
     let api = api(&state)?;
+    // 服务端不校验查看与连接权限，须在申请令牌前拦截。
+    check(&state, &channel_id, Need::Connect)?;
     let token = api.token().unwrap_or_default().to_owned();
     let mut slot = voice.0.lock().await;
     // 前端按序号发出请求，但拿锁顺序不定。已被后发的加入或退出取代时不再加入。
@@ -108,6 +112,7 @@ pub async fn voice_join(
         output: output::Sink::Device(slot.output.clone()),
         volumes: slot.volumes.clone(),
         master: slot.master.unwrap_or(100),
+        password: password.filter(|p| !p.is_empty()),
         ..MicPrefs::default()
     };
     slot.session = Some(VoiceSession::start_with(

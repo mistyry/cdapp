@@ -38,6 +38,7 @@ pub async fn restore_session(state: State<'_, Mutex<AppState>>) -> AppResult<Res
         _ if superseded => Ok(Restore::None),
         Ok(me) => {
             s.token = Some(token);
+            s.gate.me = crate::kook::model::id_str(me.get("id"));
             Ok(Restore::Ready { me })
         }
         Err(AppError::Unauthorized(message)) => {
