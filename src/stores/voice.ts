@@ -11,7 +11,7 @@ export type VoicePeer = {
 };
 export type VoicePatch = Partial<Omit<VoicePeer, "avatar" | "device">> & { id: string };
 export type VoicePhase = "idle" | "connecting" | "connected" | "reconnecting" | "disconnected";
-export type EndReason = "left" | "replaced" | "exited" | "join_failed" | "lost" | "unauthorized";
+export type EndReason = "left" | "replaced" | "exited" | "join_failed" | "lost" | "unauthorized" | "password" | "revoked";
 
 export type LinkQuality = "good" | "fair" | "poor";
 export type UpStats = { score: number; loss: number; packets: number; lost: number; bitrate: number };
@@ -115,6 +115,8 @@ const REASONS: Record<EndReason, string> = {
   join_failed: "加入语音失败",
   lost: "语音连接已断开",
   unauthorized: "登录已失效",
+  password: "需要频道密码",
+  revoked: "已失去该语音频道的权限",
 };
 
 export function voiceStatusText(): string {
@@ -137,7 +139,8 @@ function ensureListener() {
 }
 
 // 加入语音频道。已在该频道时不重复加入，在其他频道时由后端先退出旧频道。
-export async function joinVoice(channelId: string) {
+// 权限由调用方（session/access.ts 的 enterVoice）先行判断；password 只用于本次请求。
+export async function joinVoice(channelId: string, password: string | null = null) {
   if (voiceActive() && voice.channelId === channelId) return;
   const my = ++seq;
   joining = true;
@@ -151,7 +154,7 @@ export async function joinVoice(channelId: string) {
     await ensureListener();
     const sent = mic.muted;
     const sentDeaf = output.deafened;
-    const generation = await api.voiceJoin(channelId, my, sent, sentDeaf, sentDeaf ? micBeforeDeaf : null);
+    const generation = await api.voiceJoin(channelId, my, sent, sentDeaf, sentDeaf ? micBeforeDeaf : null, password);
     if (my !== seq) return;
     joining = false;
     setVoice("generation", generation);
@@ -184,6 +187,18 @@ export async function leaveVoice() {
   setMic(MIC_IDLE);
   setOutput(OUT_IDLE);
   await api.voiceLeave(my).catch(() => {});
+}
+
+// 需要频道密码时的处理，由会话层注册。
+let onPassword: (channelId: string) => void = () => {};
+export const setPasswordHandler = (f: (channelId: string) => void) => (onPassword = f);
+
+// 权限撤销：结束当前会话并说明原因，不提供重新加入。
+// 先同步写入结束状态再等待后端，期间新的加入可以正常覆盖。
+export async function revokeVoice() {
+  const p = leaveVoice();
+  setVoice({ channelId: "", phase: "disconnected", reason: "revoked", message: null });
+  await p;
 }
 
 // 连接中断、正常结束或加入失败后可以重新加入。被替换与登录失效时不提供。
@@ -352,6 +367,7 @@ export function onVoiceEvent(p: VoicePayload) {
         setMic(MIC_IDLE);
         setOutput(OUT_IDLE);
         if (ev.reason === "left") return void setVoice({ ...IDLE });
+        if (ev.reason === "password") onPassword(p.channelId);
         setVoice({ phase: "disconnected", reason: ev.reason ?? "lost", message: ev.message ?? null, peers: [], attempt: 0, retryAt: null, quality: null });
         return;
       }

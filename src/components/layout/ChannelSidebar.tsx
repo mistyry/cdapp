@@ -1,8 +1,8 @@
 import { For, Show, createSignal, onCleanup } from "solid-js";
 import { CircleHelp, Headphones, HeadphoneOff, Menu, Mic, MicOff, PhoneOff, Settings, UserPlus, Volume2, X } from "lucide-solid";
 import type { Channel } from "../../stores/types";
-import { loadDms, selectChannel, selectDm, session, visible } from "../../stores/session";
-import { canRejoin, deviceSummary, dismissVoice, isSpeaking, joinVoice, leaveVoice, mic, micFailed, micHint, micText, output, qualityText, rejoinVoice, setPeerVolume, toggleDeafen, toggleMic, voice, voiceActive, voiceStatusText, volumeOf, type VoicePeer } from "../../stores/voice";
+import { accessState, enterVoice, loadDms, retryAccess, selectChannel, selectDm, session, visible, voiceBlock } from "../../stores/session";
+import { canRejoin, deviceSummary, dismissVoice, isSpeaking, leaveVoice, mic, micFailed, micHint, micText, output, qualityText, setPeerVolume, toggleDeafen, toggleMic, voice, voiceActive, voiceStatusText, volumeOf, type VoicePeer } from "../../stores/voice";
 import { DM_VIEW, currentChannelId, currentChatCode, ui, setUi } from "../../stores/ui";
 import Avatar from "../common/Avatar";
 import { Caret, KookHash } from "../common/icons";
@@ -45,14 +45,18 @@ function ChannelItem(p: { c: Channel }) {
   const inRoom = () => p.c.type === "voice" && voice.channelId === p.c.id && voiceActive() && voice.me !== null;
   const preview = () => active() && p.c.preview;
   const unread = () => session.unread[p.c.id];
+  // 可查看但不能连接的语音频道保留显示，并说明原因。
+  const noConnect = () => p.c.type === "voice" && voiceBlock(p.c.id) === "denied";
+  const hint = () => (p.c.type === "unknown" ? "暂不支持此类频道" : noConnect() ? "没有连接该语音频道的权限" : p.c.password && p.c.type === "voice" ? "需要密码" : undefined);
   return (
     <>
       <div
-        title={p.c.type === "unknown" ? "暂不支持此类频道" : undefined}
-        class={`channel ${p.c.type === "unknown" ? "unsupported" : ""} ${active() ? "active" : ""} ${preview() ? "has-preview" : ""} ${!active() && !unread() && p.c.type === "text" ? "muted" : ""}`}
+        title={hint()}
+        aria-disabled={noConnect() || undefined}
+        class={`channel ${p.c.type === "unknown" || noConnect() ? "unsupported" : ""} ${active() ? "active" : ""} ${preview() ? "has-preview" : ""} ${!active() && !unread() && p.c.type === "text" ? "muted" : ""}`}
         onClick={() => {
           // 语音频道点击即加入，已在该频道时不重复加入。
-          if (p.c.type === "voice") return void joinVoice(p.c.id);
+          if (p.c.type === "voice") return void (noConnect() || enterVoice(p.c.id));
           if (p.c.type !== "text") return;
           selectChannel(p.c.id);
         }}
@@ -147,7 +151,7 @@ function VoiceBox() {
             <div class="voice-channel" title={voice.message ?? undefined}>{name()}</div>
             <Show when={voice.phase === "reconnecting" || voice.phase === "disconnected" ? voice.message : null}>{(m) => <div class="voice-note">{m()}</div>}</Show>
             <Show when={canRejoin()}>
-              <button class="rejoin-btn" onClick={() => void rejoinVoice()} title="重新加入该语音频道">重新加入</button>
+              <button class="rejoin-btn" onClick={() => canRejoin() && void enterVoice(voice.channelId)} title="重新加入该语音频道">重新加入</button>
             </Show>
             <Show when={noSay()}><div class="voice-note">当前设备没有发言权限，其他人听不到你</div></Show>
             <Show when={voiceActive() && !noSay() && (micHint() ?? (mic.status === "muted" ? null : mic.message))}>
@@ -211,6 +215,13 @@ export default function ChannelSidebar() {
       </div>
       <div class="sidebar-line" />
       <Show when={ui.view === DM_VIEW}><DmList /></Show>
+      <Show when={ui.view !== DM_VIEW && guild().id && accessState(guild().id) !== "ready"}>
+        <div class="access-note">
+          <Show when={accessState(guild().id) === "failed"} fallback="正在读取频道权限">
+            无法读取频道权限 <button class="retry" onClick={() => void retryAccess(guild().id)}>重试</button>
+          </Show>
+        </div>
+      </Show>
       <div class="channel-list" hidden={ui.view === DM_VIEW}>
         <For each={guild().groups}>
           {(grp) => {

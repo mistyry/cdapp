@@ -16,7 +16,7 @@ mock.module("@tauri-apps/api/core", () => ({
 }));
 mock.module("@tauri-apps/api/event", () => ({ listen: async () => () => {} }));
 
-const { session, setSession, selectGuild, selectChannel, openDm, send, canSend, logout, enter, retry, verify, discard, boot, skipRestore, loadGuilds, loadOlder, loadHistory, onGatewayStatus, onEvent, reconnectNow, ensureMembers, loadMoreMembers, refreshMembers, sendBlock, loadAccess, jumpTo, loadNewer, jumpLatest, plainContent, editMessage, deleteMessage, toggleReaction, canEdit, canDelete, canReact, stageFiles, submit, cancelUpload, unstage, onUploadProgress, cardFileSrcs, loadDms, selectDm, openDmWith, loadDmOlder, loadDmHistory, dmKey, dmUnreadTotal, readCurrent, msgKey } = await import("../session");
+const { retryAccess, enterVoice, voiceBlock, visible, pwPrompt, cancelPassword, session, setSession, selectGuild, selectChannel, openDm, send, canSend, logout, enter, retry, verify, discard, boot, skipRestore, loadGuilds, loadOlder, loadHistory, onGatewayStatus, onEvent, reconnectNow, ensureMembers, loadMoreMembers, refreshMembers, sendBlock, loadAccess, jumpTo, loadNewer, jumpLatest, plainContent, editMessage, deleteMessage, toggleReaction, canEdit, canDelete, canReact, stageFiles, submit, cancelUpload, unstage, onUploadProgress, cardFileSrcs, loadDms, selectDm, openDmWith, loadDmOlder, loadDmHistory, dmKey, dmUnreadTotal, readCurrent, msgKey } = await import("../session");
 const { ui, setUi, currentKey } = await import("../ui");
 
 const VIEW = 1 << 11, SEND = 1 << 12;
@@ -948,11 +948,14 @@ test("权限依据加载中或失败时不视为已授权，重试后恢复", as
   release("guild_access", Promise.reject("网络错误"));
   await p;
   expect(session.access.A.status).toBe("failed");
-  expect(ui.target).toMatchObject({ channelId: "A-t1" });
-  expect(sendBlock()).toBe("failed");
+  // 依据失败时不选中频道，也不读取历史。
+  expect(ui.target).toEqual({ kind: "none" });
+  expect(sendBlock({ kind: "channel", guildId: "A", channelId: "A-t1" })).toBe("failed");
   expect(canSend()).toBe(false);
+  expect(calls.some((c) => c.cmd === "messages")).toBe(false);
   hold.clear();
-  await loadAccess("A");
+  await retryAccess("A");
+  expect(ui.target).toMatchObject({ channelId: "A-t1" });
   expect(sendBlock()).toBeNull();
 });
 
@@ -2698,4 +2701,220 @@ test("设备摘要：显示当前设备与设备提示", async () => {
   ev(1, { type: "mic", status: "denied", muted: false, message: "x" });
   ev(1, { type: "output", deafened: false, active: false, message: "扬声器已断开" });
   expect(vs.deviceSummary()).toMatchObject({ text: "麦克风：无权限 扬声器：未开启", ok: false });
+});
+
+// M5-02a 频道权限与可见性
+
+const CONNECT = 1 << 15;
+const vraw = (id: string, overwrites: any[] = [], extra: any = {}) => ({ ...raw(id, id, 2), overwrites, userOverwrites: [], ...extra });
+
+test("权限依据加载中时不显示频道，避免暴露未过滤的名称", async () => {
+  hold.add("guild_access");
+  const p = selectGuild("A");
+  await flush();
+  await flush();
+  const c = session.guilds[0].groups.flatMap((g) => g.channels)[0];
+  expect(c).toBeDefined();
+  expect(visible(c)).toBe(false);
+  release("guild_access", access("A"));
+  await p;
+  expect(visible(c)).toBe(true);
+});
+
+test("无 VIEW 的语音、无 CONNECT 的语音不申请令牌，可连接时才加入", async () => {
+  auto.voice_join = () => 1;
+  auto.channels = () => [raw("A-t1", "t1"), vraw("V-hide", [{ roleId: 0, allow: 0, deny: VIEW }]), vraw("V-noc", [{ roleId: 0, allow: 0, deny: CONNECT }]), vraw("V-ok")];
+  auto.guild_access = ({ guildId }) => access(guildId, { everyone: VIEW | SEND | CONNECT });
+  await selectGuild("A");
+  expect(voiceBlock("V-hide")).toBe("denied");
+  expect(voiceBlock("V-noc")).toBe("denied");
+  await enterVoice("V-hide");
+  await enterVoice("V-noc");
+  expect(calls.some((c) => c.cmd === "voice_join")).toBe(false);
+  await enterVoice("V-ok");
+  expect(calls.filter((c) => c.cmd === "voice_join").map((c) => c.args.channelId)).toEqual(["V-ok"]);
+  await vs.leaveVoice();
+});
+
+test("依据未就绪时不加入语音", async () => {
+  auto.channels = () => [raw("A-t1", "t1"), vraw("V-ok")];
+  hold.add("guild_access");
+  const p = selectGuild("A");
+  await flush();
+  const j = enterVoice("V-ok");
+  await flush();
+  // 首次读取与加入前的刷新均失败。
+  while (pending.some((x) => x.cmd === "guild_access")) release("guild_access", Promise.reject("x"));
+  await p;
+  await j;
+  expect(voiceBlock("V-ok")).toBe("failed");
+  expect(calls.some((c) => c.cmd === "voice_join")).toBe(false);
+});
+
+test("无 SEND 的文字频道可阅读但不发送", async () => {
+  auto.channels = () => [withOw("A-ro", "ro", [{ roleId: 0, allow: 0, deny: SEND }])];
+  await selectGuild("A");
+  expect(ui.target).toMatchObject({ channelId: "A-ro" });
+  expect(calls.some((c) => c.cmd === "messages" && c.args.channelId === "A-ro")).toBe(true);
+  expect(sendBlock()).toBe("denied");
+  setUi("drafts", currentKey(), "hi");
+  expect(canSend()).toBe(false);
+  expect(submit(ui.target, "hi")).toBe(false);
+  expect(calls.some((c) => c.cmd === "send_message")).toBe(false);
+});
+
+test("分组无可见子项时不读取，同步子频道不叠加父分组覆盖", async () => {
+  auto.channels = () => [
+    { ...raw("cat", "c", 0), overwrites: [{ roleId: 0, allow: 0, deny: VIEW }], userOverwrites: [] },
+    { ...withOw("A-sync", "s", []), parentId: "cat", permissionSync: true },
+  ];
+  await selectGuild("A");
+  // 子频道自身覆盖为空，按服务端复制的结果计算，不继承分组的拒绝。
+  expect(ui.target).toMatchObject({ channelId: "A-sync" });
+  expect(session.guilds[0].groups[0].channels[0].sync).toBe(true);
+});
+
+test("权限撤销后移除内容、未读，切离当前频道并丢弃迟到历史", async () => {
+  const nav = await import("../session/nav");
+  auto.channels = () => [raw("A-t1", "t1"), raw("A-t2", "t2"), raw("A-t3", "t3")];
+  await selectGuild("A");
+  await selectChannel("A-t2");
+  setSession("unread", "A-t2", { guildId: "A", unread: true, mentions: 1, readAt: 0 });
+  // 频道覆盖变更：A-t2 失去查看权限。
+  auto.channels = () => [raw("A-t1", "t1"), withOw("A-t2", "t2", [{ roleId: 0, allow: 0, deny: VIEW }]), raw("A-t3", "t3")];
+  await nav.reloadChannels("A");
+  expect(session.messages["A-t2"]).toBeUndefined();
+  expect(session.unread["A-t2"]).toBeUndefined();
+  expect(ui.target).toMatchObject({ channelId: "A-t1" });
+  // 撤销后的推送与未读不写回。
+  sys("unread_count_changed", { channel_id: "A-t2", guild_id: "A", msg_time: 99, mention_count: 1 });
+  expect(session.unread["A-t2"]).toBeUndefined();
+  // A-t3 历史在途时被撤销：迟到结果不写回。
+  hold.add("messages");
+  const late = selectChannel("A-t3");
+  await flush();
+  hold.delete("messages");
+  auto.channels = () => [raw("A-t1", "t1"), withOw("A-t3", "t3", [{ roleId: 0, allow: 0, deny: VIEW }])];
+  await nav.reloadChannels("A");
+  release("messages", pg([{ id: "m1", rong_id: "m1", content: "x", type: 1, author: { id: "u" }, create_at: 1 }]), (a) => a.channelId === "A-t3");
+  await late;
+  expect(session.messages["A-t3"]).toBeUndefined();
+  expect(ui.target).toMatchObject({ channelId: "A-t1" });
+});
+
+test("已连接语音失去 CONNECT 后结束会话，不提供重新加入", async () => {
+  auto.voice_join = () => 1;
+  auto.channels = () => [raw("A-t1", "t1"), vraw("V-ok")];
+  auto.guild_access = ({ guildId }) => access(guildId, { everyone: VIEW | SEND | CONNECT });
+  await selectGuild("A");
+  await enterVoice("V-ok");
+  ev(1, { type: "state", phase: "connected" }, "V-ok");
+  auto.guild_access = ({ guildId }) => access(guildId, { everyone: VIEW | SEND });
+  await loadAccess("A", true);
+  await flush();
+  expect(calls.some((c) => c.cmd === "voice_leave")).toBe(true);
+  expect(vs.voice.reason).toBe("revoked");
+  expect(vs.canRejoin()).toBe(false);
+});
+
+test("密码频道：服务端记住时直接加入，40310 才提示，错误密码另行说明，取消不重试", async () => {
+  let gen = 0;
+  auto.voice_join = () => ++gen;
+  auto.channels = () => [raw("A-t1", "t1"), vraw("V-pw", [], { hasPassword: true })];
+  auto.guild_access = ({ guildId }) => access(guildId, { everyone: VIEW | SEND | CONNECT });
+  await selectGuild("A");
+  await enterVoice("V-pw");
+  expect(calls.find((c) => c.cmd === "voice_join")?.args.password).toBeNull();
+  expect(pwPrompt.channelId).toBe("");
+  ev(gen, { type: "state", phase: "disconnected", reason: "password" }, "V-pw");
+  expect(pwPrompt).toMatchObject({ channelId: "V-pw", error: null });
+  await enterVoice("V-pw", "bad");
+  expect(calls.filter((c) => c.cmd === "voice_join").slice(-1)[0]?.args.password).toBe("bad");
+  ev(gen, { type: "state", phase: "disconnected", reason: "password" }, "V-pw");
+  expect(pwPrompt).toMatchObject({ channelId: "V-pw", error: "密码错误" });
+  cancelPassword();
+  ev(gen, { type: "state", phase: "disconnected", reason: "password" }, "V-pw");
+  expect(pwPrompt.channelId).toBe("");
+});
+
+test("updated_guild 合并刷新角色依据与频道覆盖", async () => {
+  await selectGuild("A");
+  calls.length = 0;
+  for (let i = 0; i < 3; i++) sys("updated_guild", { id: "A", name: "A" });
+  await new Promise((r) => setTimeout(r, 350));
+  expect(calls.filter((c) => c.cmd === "guild_access").length).toBe(1);
+  expect(calls.filter((c) => c.cmd === "channels").length).toBe(1);
+});
+
+test("连续点击两个语音频道，只加入后点击的频道；取消密码后进行中的加入作废", async () => {
+  auto.voice_join = () => 1;
+  auto.channels = () => [raw("A-t1", "t1"), vraw("V1"), vraw("V2", [], { hasPassword: true })];
+  auto.guild_access = ({ guildId }) => access(guildId, { everyone: VIEW | SEND | CONNECT });
+  await selectGuild("A");
+  const { ACCESS_TTL } = await import("../session/access");
+  const now = Date.now;
+  Date.now = () => now() + ACCESS_TTL + 1;
+  try {
+    hold.add("guild_access");
+    const a = enterVoice("V1");
+    const b = enterVoice("V2");
+    await flush();
+    while (pending.some((x) => x.cmd === "guild_access")) release("guild_access", access("A", { everyone: VIEW | SEND | CONNECT }));
+    await a;
+    await b;
+    expect(calls.filter((c) => c.cmd === "voice_join").map((c) => c.args.channelId)).toEqual(["V2"]);
+  } finally {
+    Date.now = now;
+    hold.clear();
+  }
+  await vs.leaveVoice();
+});
+
+test("无 CONNECT 的密码频道不弹出密码框也不申请令牌；其他频道的 40310 不弹出", async () => {
+  auto.voice_join = ({ channelId }) => (channelId === "V1" ? 1 : 2);
+  auto.channels = () => [raw("A-t1", "t1"), vraw("Vno", [{ roleId: 0, allow: 0, deny: CONNECT }], { hasPassword: true }), vraw("V1", [], { hasPassword: true }), vraw("V2", [], { hasPassword: true })];
+  auto.guild_access = ({ guildId }) => access(guildId, { everyone: VIEW | SEND | CONNECT });
+  await selectGuild("A");
+  await enterVoice("Vno");
+  expect(calls.some((c) => c.cmd === "voice_join")).toBe(false);
+  expect(pwPrompt.channelId).toBe("");
+  await enterVoice("V1");
+  await enterVoice("V2");
+  ev(1, { type: "state", phase: "disconnected", reason: "password" }, "V1");
+  expect(pwPrompt.channelId).toBe("");
+  ev(2, { type: "state", phase: "disconnected", reason: "password" }, "V2");
+  expect(pwPrompt.channelId).toBe("V2");
+  cancelPassword();
+});
+
+test("撤销后迟到的频道消息推送不写回", async () => {
+  auto.channels = () => [raw("A-t1", "t1"), raw("A-t2", "t2")];
+  await selectGuild("A");
+  await selectChannel("A-t2");
+  auto.channels = () => [raw("A-t1", "t1"), withOw("A-t2", "t2", [{ roleId: 0, allow: 0, deny: VIEW }])];
+  await (await import("../session/nav")).reloadChannels("A");
+  onEvent({ type: "CHANNEL_MSG", channelType: "GROUP", toUserId: "A-t2", msgId: "late1", msgTimestamp: 5, fromUserId: "u", content: JSON.stringify({ content: "x" }), extra: { author: { id: "u" } } });
+  expect(session.messages["A-t2"]).toBeUndefined();
+  expect(session.unread["A-t2"]).toBeUndefined();
+});
+
+test("窗口恢复的刷新复用在途请求并节流", async () => {
+  await selectGuild("A");
+  const { refreshAccess: r, ACCESS_TTL } = await import("../session/access");
+  const now = Date.now;
+  Date.now = () => now() + ACCESS_TTL + 1;
+  try {
+    calls.length = 0;
+    hold.add("guild_access");
+    const p1 = r("A");
+    const p2 = r("A");
+    expect(calls.filter((c) => c.cmd === "guild_access").length).toBe(1);
+    release("guild_access", access("A"));
+    await Promise.all([p1, p2]);
+    hold.clear();
+    await r("A");
+    expect(calls.filter((c) => c.cmd === "guild_access").length).toBe(1);
+  } finally {
+    Date.now = now;
+  }
 });

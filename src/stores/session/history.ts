@@ -2,6 +2,7 @@ import { api } from "../../lib/api";
 import type { History, Message } from "../types";
 import { currentChannelId } from "../ui";
 import { toMessage } from "./convert";
+import { denied } from "./access";
 import { isDmKey, report, session, setSession, st } from "./state";
 
 // 列表代次：跳转替换列表后递增，替换前发出的上翻或补拉结果作废，避免拼出缺口。
@@ -96,7 +97,8 @@ export async function firstLoad(channelId: string) {
   patchHistory(channelId, { failed: false, loading: true });
   try {
     const page = await api.messages(channelId);
-    if (gen !== st.account) return;
+    // 等待期间失去查看权限：丢弃结果，不把已移除的内容带回。
+    if (gen !== st.account || denied(channelId)) return;
     const fetched = settleFetched(channelId, page.items.map(toMessage), log);
     const cur = session.messages[channelId] ?? [];
     setSession("messages", channelId, mergeMessages(freshen(cur, fetched), loading.get(channelId) ?? [], fetched));
@@ -140,7 +142,7 @@ export async function refreshLatest(channelId: string): Promise<boolean> {
   } finally {
     if (gen === st.account) untrackFetch(channelId, log);
   }
-  if (gen !== st.account || !session.messages[channelId] || lg !== genOf(channelId)) return true;
+  if (gen !== st.account || !session.messages[channelId] || lg !== genOf(channelId) || denied(channelId)) return true;
   got.splice(0, got.length, ...settleFetched(channelId, got.slice(), log));
   // 补拉从最新页开始，结果已覆盖跳转片段之后的消息。
   if (session.history[channelId]?.newer) {
@@ -311,6 +313,7 @@ export async function jumpTo(channelId: string, id: string | undefined): Promise
 }
 
 export function append(channelId: string, m: Message) {
+  if (denied(channelId)) return;
   const buffer = loading.get(channelId);
   if (buffer && !buffer.some((x) => x.id === m.id)) buffer.push(m);
   if (!session.messages[channelId]) return;

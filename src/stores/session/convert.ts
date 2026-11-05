@@ -125,6 +125,8 @@ export function toChannel(c: ChannelDto): Channel {
     limit: c.limit || undefined,
     overwrites: c.overwrites ?? [],
     userOverwrites: c.userOverwrites ?? [],
+    password: c.hasPassword || undefined,
+    sync: c.permissionSync || undefined,
   };
 }
 

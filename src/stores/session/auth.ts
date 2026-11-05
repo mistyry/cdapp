@@ -8,7 +8,7 @@ import { resetEdit } from "./edit";
 import { resetGateway, startGateway, stopListeners } from "./gateway";
 import { resetHistory } from "./history";
 import { dropSubscription } from "./members";
-import { loadGuilds } from "./nav";
+import { loadGuilds, resetNav } from "./nav";
 import { resetOutbox } from "./outbox";
 import { DM_LIST0, report, session, setSession, st } from "./state";
 import { resetUnread, syncUnread } from "./unread";
@@ -57,6 +57,7 @@ export function reset(phase: "login" | "boot", notice: string | null = null) {
   st.account++;
   resetHistory();
   resetAccess();
+  resetNav();
   dropSubscription();
   stopListeners();
   resetOutbox();

@@ -19,7 +19,7 @@ export default function ChatPane() {
     switch (sendBlock()) {
       case "loading": return "正在确认发送权限";
       case "failed": return "无法确认发送权限";
-      case "denied": return "你没有在此频道发言的权限";
+      case "denied": return "此频道为只读，你没有发言的权限";
       default: return "无法在此发送消息";
     }
   };

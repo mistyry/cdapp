@@ -7,6 +7,8 @@ export type Channel = {
   preview?: string; limit?: number; users?: string[];
   // 频道权限覆盖，用于计算本人有效权限。
   overwrites?: Overwrite[]; userOverwrites?: UserOverwrite[];
+  // 设有密码；与分组同步覆盖（服务端已复制分组覆盖，不再叠加）。
+  password?: boolean; sync?: boolean;
 };
 
 // 服务器权限依据的加载状态。未知（loading / failed）时不视为已获授权。

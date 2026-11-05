@@ -11,7 +11,7 @@ import { loadDms, noteDmRead, onPrivate, refreshDm } from "./dm";
 import { applyReaction, onUpdated, removeMessage } from "./edit";
 import { append, refreshLatest } from "./history";
 import { dropSubscription, ensureMembers, invalidateMembers, onUserList, patchMember } from "./members";
-import { activate, activated, reloadChannels, visited } from "./nav";
+import { activate, activated, refreshGuild, reloadChannels, visited } from "./nav";
 import { dmKey, guildOf, isDmKey, report, session, setSession, st } from "./state";
 import { noteRead, noteUnread, syncUnread } from "./unread";
 
@@ -267,6 +267,9 @@ export function onSystem(c: Raw | null, target = "") {
     case "updated_guild": {
       const i = session.guilds.findIndex((g) => g.id === body.id);
       if (i >= 0) setSession("guilds", i, { name: body.name, icon: body.icon || undefined });
+      // 频道覆盖变化只推送此事件：同时刷新角色依据与频道覆盖。
+      const gid = String(body.id ?? "");
+      if (i >= 0 && visited.has(gid)) refreshGuild(gid);
       break;
     }
   }

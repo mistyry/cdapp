@@ -34,6 +34,7 @@ export type ChannelDto = {
   id: string; name: string; kind: "category" | "text" | "voice" | "unknown"; rawType: number;
   parentId: string | null; level: number; limit: number;
   overwrites?: Overwrite[]; userOverwrites?: UserOverwrite[];
+  hasPassword?: boolean; permissionSync?: boolean;
 };
 
 // 后端 kook::model::Member 与 MemberPage。成员按服务端顺序（在线在前），人数取服务端统计。
@@ -110,8 +111,9 @@ export const api = {
   gatewayStop: () => invoke<void>("gateway_stop"),
   // 返回会话代次，进度与成员经 voice://event 推送。
   // request 为前端请求序号，后端据此丢弃已被后发的加入或退出取代的加入。
-  voiceJoin: (channelId: string, request: number, muted = false, deafened = false, micBeforeDeaf: boolean | null = null) =>
-    invoke<number>("voice_join", { channelId, request, audio: { muted, deafened, micBeforeDeaf } }),
+  // password 仅用于本次加入，不保存。
+  voiceJoin: (channelId: string, request: number, muted = false, deafened = false, micBeforeDeaf: boolean | null = null, password: string | null = null) =>
+    invoke<number>("voice_join", { channelId, request, audio: { muted, deafened, micBeforeDeaf }, password }),
   voiceLeave: (request?: number) => invoke<void>("voice_leave", { request: request ?? null }),
   // 通知语音会话系统已唤醒或网络已恢复。
   voiceWake: () => invoke<void>("voice_wake"),

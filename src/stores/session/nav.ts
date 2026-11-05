@@ -1,6 +1,6 @@
 import { api } from "../../lib/api";
 import { ui, setUi, NONE, DM_VIEW } from "../ui";
-import { leaveHidden, loadAccess, visible } from "./access";
+import { leaveHidden, loadAccess, refreshAccess, visible } from "./access";
 import { toGroups } from "./convert";
 import { loadDms } from "./dm";
 import { loadHistory } from "./history";
@@ -38,7 +38,8 @@ export async function selectGuild(id: string) {
   setUi({ view: id, target: NONE });
   const idx = session.guilds.findIndex((g) => g.id === id);
   if (idx < 0) return;
-  const access = session.access[id]?.status === "ready" ? undefined : loadAccess(id);
+  // 已有依据时节流刷新，不阻塞进入；没有依据时等待。
+  const access = session.access[id]?.status === "ready" ? void refreshAccess(id) : loadAccess(id);
   if (!session.guilds[idx].loaded) {
     const gen = st.account;
     try {
@@ -51,7 +52,7 @@ export async function selectGuild(id: string) {
       if (my === st.epoch) report(e);
     }
   }
-  // 等待权限依据，避免先选中随后被判定不可见的频道。失败时仍按列表选择，发送入口保持禁用。
+  // 等待权限依据，避免先选中随后被判定不可见的频道。失败时不选中频道，界面显示重试。
   await access;
   if (my !== st.epoch) return;
   activate(id);
@@ -83,7 +84,7 @@ export async function selectChannel(id: string) {
   const guild = guildOf(id);
   if (!guild) return;
   const hit = channelById(id);
-  if (hit && !visible(hit.channel)) return;
+  if (!hit || !visible(hit.channel)) return;
   const my = ++st.epoch;
   setUi({ view: guild.id, target: { kind: "channel", guildId: guild.id, channelId: id } });
   setUi("lastChannel", guild.id, id);
@@ -91,17 +92,46 @@ export async function selectChannel(id: string) {
   if (my === st.epoch) readCurrent();
 }
 
-// 重新拉取频道列表（频道或覆盖变化），不改变当前会话。
+// 重新拉取频道列表（频道或覆盖变化），不改变当前会话。并发调用只采用最后一次请求的结果。
+const channelSeq = new Map<string, number>();
 export async function reloadChannels(guildId: string) {
   const gen = st.account;
+  const seq = (channelSeq.get(guildId) ?? 0) + 1;
+  channelSeq.set(guildId, seq);
   try {
     const groups = toGroups(await api.channels(guildId));
     const i = session.guilds.findIndex((g) => g.id === guildId);
-    if (gen === st.account && i >= 0) {
+    if (gen === st.account && i >= 0 && channelSeq.get(guildId) === seq) {
       setSession("guilds", i, { groups, loaded: true, failed: false });
       leaveHidden();
     }
   } catch {
     // 保留旧列表，下次进入或补偿时再试。
   }
+}
+
+// 权限依据与频道覆盖一并刷新。短时间内的多次触发合并为一次。
+const pendingRefresh = new Map<string, ReturnType<typeof setTimeout>>();
+export const REFRESH_DELAY = 300;
+export function refreshGuild(guildId: string) {
+  if (pendingRefresh.has(guildId)) return;
+  const gen = st.account;
+  pendingRefresh.set(guildId, setTimeout(() => {
+    pendingRefresh.delete(guildId);
+    if (gen !== st.account) return;
+    void loadAccess(guildId, true);
+    if (session.guilds.some((g) => g.id === guildId && g.loaded)) void reloadChannels(guildId);
+  }, REFRESH_DELAY));
+}
+
+export function resetNav() {
+  for (const t of pendingRefresh.values()) clearTimeout(t);
+  pendingRefresh.clear();
+}
+
+// 重试读取权限依据。成功且仍停留在该服务器、尚未选中会话时，按常规规则选中频道。
+export async function retryAccess(guildId: string) {
+  const my = st.epoch;
+  if (!(await loadAccess(guildId, true))) return;
+  if (my === st.epoch && ui.view === guildId && ui.target.kind === "none") await selectGuild(guildId);
 }

@@ -4,6 +4,7 @@ import type { Unread } from "../types";
 import { ui, currentChannelId } from "../ui";
 import { readDm } from "./dm";
 import { SEEN_LIMIT } from "./gateway";
+import { denied } from "./access";
 import { guildOfAny, report, session, setSession, st } from "./state";
 
 // 未读
@@ -15,6 +16,7 @@ export const readUpTo = new Map<string, number>();
 
 // 记录一条未读。当前频道正被阅读时改为标记已读。
 export function noteUnread(channelId: string, guildId: string, at: number, mentions: number) {
+  if (denied(channelId)) return;
   const cur = session.unread[channelId];
   // 已读时间之前的事件（重复下发或续传补发）不再恢复未读。
   if (at && at <= Math.max(cur?.readAt ?? 0, readUpTo.get(channelId) ?? 0)) return;
@@ -76,6 +78,7 @@ export async function syncUnread(): Promise<boolean> {
     if (local) next[id] = { ...local, mentions: Math.max(local.mentions, next[id]?.mentions ?? 0) };
   }
   for (const [id, time] of mine.read) if (next[id] && (latestAt.get(id) ?? 0) <= time) delete next[id];
+  for (const id of Object.keys(next)) if (denied(id)) delete next[id];
   setSession("unread", reconcile(next));
   readCurrent();
   return true;
