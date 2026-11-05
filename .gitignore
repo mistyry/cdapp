@@ -1,0 +1,19 @@
+node_modules/
+dist/
+target/
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+.DS_Store
+*.log
+
+# 本地资料与 AI 上下文
+docs/
+.codex/
+.claude/
+/poc/
+AGENTS.md
+CLAUDE.md
+CLAUDE.local.md

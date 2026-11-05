@@ -1,0 +1,38 @@
+/* KOOK 网页端深色主题实测值，见 docs/前端设计.md */
+:root {
+  --c-app: #17181a;
+  --c-panel: rgba(225, 235, 255, 0.07);
+  --c-fill: rgba(225, 235, 255, 0.09);
+  --c-hover: rgba(255, 255, 255, 0.06);
+  --c-line: rgba(255, 255, 255, 0.06);
+  --c-avatar: rgba(187, 190, 196, 0.2);
+  --c-text: #e6eaf0;
+  --c-text-2: rgba(230, 234, 240, 0.64);
+  --c-text-3: rgba(230, 234, 240, 0.4);
+  --c-placeholder: rgba(255, 255, 255, 0.3);
+  --c-brand: #6cbf00;
+  --c-mention: #ff8f19;
+  --c-danger: #ff4d42;
+  --c-float: #35373d;
+
+  --squircle: path("M 0 24 C 0 2.55 2.55 0 24 0 C 45.45 0 48 2.55 48 24 C 48 45.45 45.45 48 24 48 C 2.55 48 0 45.45 0 24");
+  --font: "PingFang SC", "Microsoft YaHei New", "Microsoft Yahei", "Microsoft JhengHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body, #root { margin: 0; height: 100%; }
+body {
+  background: var(--c-app); color: var(--c-text); font: 16px/18px var(--font);
+  overflow: hidden; user-select: none; -webkit-font-smoothing: antialiased; cursor: default;
+}
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+svg { display: block; flex: none; }
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-thumb { background: transparent; border-radius: 2px; }
+:hover::-webkit-scrollbar-thumb { background: var(--c-fill); }
+
+.icon-btn {
+  width: 28px; height: 28px; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+  color: var(--c-text-3);
+}
+.icon-btn:hover { color: var(--c-text); background: var(--c-hover); }
+.icon-btn.on { color: var(--c-brand); }

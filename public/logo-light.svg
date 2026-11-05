@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="60 60 392 392">
+  <defs>
+    <mask id="face-cutout" maskUnits="userSpaceOnUse" x="40" y="40" width="432" height="450" style="mask-type:luminance">
+      <rect x="40" y="40" width="432" height="450" fill="white" />
+      <g transform="">
+        <g fill="black">
+          <path d="M160 216H214.5C228 216 238.5 226.5 238.5 239.5S228 263 214.5 263H160A8.5 8.5 0 0 1 160 246H192.5V233H160A8.5 8.5 0 0 1 160 216Z" />
+          <path d="M160 216H214.5C228 216 238.5 226.5 238.5 239.5S228 263 214.5 263H160A8.5 8.5 0 0 1 160 246H192.5V233H160A8.5 8.5 0 0 1 160 216Z" transform="translate(123.2 0)" />
+        </g>
+        <path d="M226 280.5C227 288.2 232 292.6 239.7 292.6C247.4 292.6 252.7 287.2 254 280.5C255.3 287.2 260.6 292.6 268.3 292.6C276 292.6 281 288.2 282 280.5" fill="none" stroke="black" stroke-width="14.7" stroke-linecap="round" stroke-linejoin="round" />
+      </g>
+    </mask>
+  </defs>
+  <g transform="translate(256 256) rotate(-16) scale(1 .84) translate(-256 -256)">
+    <g mask="url(#face-cutout)">
+      <circle cx="256" cy="265" r="174" fill="white" />
+      <circle cx="256" cy="256" r="174" fill="white" />
+    </g>
+  </g>
+  <title>cdapp</title>
+</svg>

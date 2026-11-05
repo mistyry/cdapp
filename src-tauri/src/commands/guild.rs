@@ -1,0 +1,87 @@
+use std::sync::Mutex;
+
+use serde_json::Value;
+use tauri::State;
+
+use super::{AppState, lock, with_api};
+use crate::error::{AppError, AppResult};
+
+#[tauri::command]
+pub async fn me(state: State<'_, Mutex<AppState>>) -> AppResult<Value> {
+    with_api(&state, move |a| async move { a.me().await }).await
+}
+
+#[tauri::command]
+pub async fn guilds(state: State<'_, Mutex<AppState>>) -> AppResult<Value> {
+    with_api(&state, move |a| async move { a.guilds().await }).await
+}
+
+#[tauri::command]
+pub async fn channels(
+    guild_id: String,
+    state: State<'_, Mutex<AppState>>,
+) -> AppResult<Vec<crate::kook::model::Channel>> {
+    with_api(&state, move |a| async move { a.channels(&guild_id).await }).await
+}
+
+/// 当前账号在服务器中的角色与权限依据。
+#[tauri::command]
+pub async fn guild_access(
+    guild_id: String,
+    state: State<'_, Mutex<AppState>>,
+) -> AppResult<crate::kook::model::GuildAccess> {
+    with_api(
+        &state,
+        move |a| async move { a.guild_access(&guild_id).await },
+    )
+    .await
+}
+
+/// 一页服务器成员，可按频道过滤。
+#[tauri::command]
+pub async fn members(
+    guild_id: String,
+    channel_id: Option<String>,
+    page: u32,
+    state: State<'_, Mutex<AppState>>,
+) -> AppResult<crate::kook::model::MemberPage> {
+    with_api(&state, move |a| async move {
+        a.members(&guild_id, channel_id.as_deref(), page).await
+    })
+    .await
+}
+
+/// 订阅当前频道成员区间的在线状态推送；`start`、`end` 为 -1 时取消。须在网关就绪后调用。
+#[tauri::command]
+pub async fn subscribe_members(
+    channel_id: String,
+    start: i64,
+    end: i64,
+    state: State<'_, Mutex<AppState>>,
+) -> AppResult<()> {
+    let session = lock(&state)?.session_id.clone();
+    let session = session.ok_or_else(|| AppError::Other("网关未就绪".into()))?;
+    with_api(&state, move |a| async move {
+        a.subscribe_members(&channel_id, start, end, &session).await
+    })
+    .await
+    .map(|_| ())
+}
+
+/// 激活服务器以接收其频道消息推送。须在网关就绪后调用。
+#[tauri::command]
+pub async fn activate_guild(
+    guild_id: String,
+    state: State<'_, Mutex<AppState>>,
+) -> AppResult<Value> {
+    let session = state
+        .lock()
+        .map_err(|_| AppError::Other("状态锁损坏".into()))?
+        .session_id
+        .clone();
+    let session = session.ok_or_else(|| AppError::Other("网关未就绪".into()))?;
+    with_api(&state, move |a| async move {
+        a.activate_guild(&guild_id, &session).await
+    })
+    .await
+}
