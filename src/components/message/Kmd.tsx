@@ -18,7 +18,7 @@ function Emoji(p: { name: string; id: string }) {
     <Switch>
       <Match when={broken()}>{`:${p.name}:`}</Match>
       <Match when={!broken()}>
-        <img class="emoji" src={emojiUrl(p.id)} alt={`:${p.name}:`} title={p.name} loading="lazy" onError={() => setBroken(true)} />
+        <img class="emoji" src={emojiUrl(p.id)} alt={`:${p.name}:`} title={p.name} loading="lazy" referrerPolicy="no-referrer" onError={() => setBroken(true)} />
       </Match>
     </Switch>
   );

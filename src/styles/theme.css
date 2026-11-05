@@ -1,5 +1,29 @@
-/* KOOK 网页端深色主题实测值，见 docs/前端设计.md */
+/* 默认亮色主题；深色主题沿用 KOOK 网页端实测值，见 docs/前端设计.md。品牌色取自应用图标主色。 */
 :root {
+  color-scheme: light;
+  --c-app: #eef0f3;
+  --c-panel: #ffffff;
+  --c-fill: rgba(15, 23, 42, 0.06);
+  --c-hover: rgba(15, 23, 42, 0.04);
+  --c-line: rgba(15, 23, 42, 0.08);
+  --c-avatar: rgba(15, 23, 42, 0.08);
+  --c-text: #1f2329;
+  --c-text-2: rgba(31, 35, 41, 0.66);
+  --c-text-3: rgba(31, 35, 41, 0.45);
+  --c-placeholder: rgba(31, 35, 41, 0.36);
+  --c-brand: #45a6f7;
+  --c-brand-text: #1677d2;
+  --c-mention: #ff8f19;
+  --c-danger: #ff4d42;
+  --c-float: #ffffff;
+  --c-surface: #ffffff;
+  --c-strong: rgba(31, 35, 41, 0.87);
+  --shadow: 0 2px 12px rgba(15, 23, 42, 0.12), 0 0 0 1px rgba(15, 23, 42, 0.06);
+  --squircle: path("M 0 24 C 0 2.55 2.55 0 24 0 C 45.45 0 48 2.55 48 24 C 48 45.45 45.45 48 24 48 C 2.55 48 0 45.45 0 24");
+  --font: "PingFang SC", "Microsoft YaHei New", "Microsoft Yahei", "Microsoft JhengHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
   --c-app: #17181a;
   --c-panel: rgba(225, 235, 255, 0.07);
   --c-fill: rgba(225, 235, 255, 0.09);
@@ -10,13 +34,11 @@
   --c-text-2: rgba(230, 234, 240, 0.64);
   --c-text-3: rgba(230, 234, 240, 0.4);
   --c-placeholder: rgba(255, 255, 255, 0.3);
-  --c-brand: #6cbf00;
-  --c-mention: #ff8f19;
-  --c-danger: #ff4d42;
+  --c-brand-text: #6dbaf9;
   --c-float: #35373d;
-
-  --squircle: path("M 0 24 C 0 2.55 2.55 0 24 0 C 45.45 0 48 2.55 48 24 C 48 45.45 45.45 48 24 48 C 2.55 48 0 45.45 0 24");
-  --font: "PingFang SC", "Microsoft YaHei New", "Microsoft Yahei", "Microsoft JhengHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --c-surface: #25262a;
+  --c-strong: rgba(255, 255, 255, 0.87);
+  --shadow: 0 2px 8px rgba(0, 0, 0, 0.24);
 }
 * { box-sizing: border-box; }
 html, body, #root { margin: 0; height: 100%; }
@@ -35,4 +57,4 @@ svg { display: block; flex: none; }
   color: var(--c-text-3);
 }
 .icon-btn:hover { color: var(--c-text); background: var(--c-hover); }
-.icon-btn.on { color: var(--c-brand); }
+.icon-btn.on { color: var(--c-brand-text); }

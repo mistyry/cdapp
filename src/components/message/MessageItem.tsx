@@ -8,7 +8,7 @@ import { currentKey, currentMsgKey, setUi } from "../../stores/ui";
 import Avatar from "../common/Avatar";
 import Kmd, { open } from "./Kmd";
 
-// 图片只接受 http/https 地址；加载失败时显示说明与可点击的原地址，并保持固定高度。
+// 图片只接受 http/https 地址，不发送 Referer，否则 KOOK CDN 防盗链会拒绝 tauri 来源；加载失败时显示说明与可点击的原地址，并保持固定高度。
 function Picture(p: { src: string; alt?: string }) {
   const [broken, setBroken] = createSignal(false);
   const url = () => safeUrl(p.src);
@@ -86,7 +86,7 @@ function ReactionIcon(p: { r: Reaction }) {
   const [broken, setBroken] = createSignal(false);
   return (
     <Show when={p.r.id.includes("/") && !broken()} fallback={<span>{p.r.id.includes("/") ? `:${p.r.name}:` : p.r.id}</span>}>
-      <img class="emoji" src={emojiUrl(p.r.id)} alt={`:${p.r.name}:`} onError={() => setBroken(true)} />
+      <img class="emoji" src={emojiUrl(p.r.id)} alt={`:${p.r.name}:`} referrerPolicy="no-referrer" onError={() => setBroken(true)} />
     </Show>
   );
 }

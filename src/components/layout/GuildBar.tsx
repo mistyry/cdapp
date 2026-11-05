@@ -20,7 +20,7 @@ export default function GuildBar() {
             return (
             <div class={`guild-item ${ui.view === g.id ? "active" : ""} ${u().unread ? "unread" : ""}`} title={g.name}>
               <div class="guild-btn" onClick={() => selectGuild(g.id)}>
-                <Show when={g.icon} fallback={g.name.slice(0, 2)}>{(src) => <img src={src()} alt="" draggable={false} />}</Show>
+                <Show when={g.icon} fallback={g.name.slice(0, 2)}>{(src) => <img src={src()} alt="" draggable={false} referrerPolicy="no-referrer" />}</Show>
               </div>
               <span class="ring" />
               <Show when={u().mentions}><span class="badge">{u().mentions > 99 ? "99+" : u().mentions}</span></Show>
