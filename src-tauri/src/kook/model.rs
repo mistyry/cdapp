@@ -333,6 +333,35 @@ impl Page {
     }
 }
 
+/// 展开 guild/view 的嵌套频道：分组后紧跟其子频道，子频道缺少 `parent_id` 时以所在分组补齐。
+#[must_use]
+pub fn flatten_view_channels(top: &[Value]) -> Vec<Value> {
+    let mut out = Vec::new();
+    for c in top {
+        let mut c = c.clone();
+        let children = c
+            .as_object_mut()
+            .and_then(|o| o.remove("channels"))
+            .and_then(|v| match v {
+                Value::Array(a) => Some(a),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let parent = c.get("id").cloned();
+        out.push(c);
+        for mut child in children {
+            if let (Some(o), Some(p)) = (child.as_object_mut(), parent.as_ref()) {
+                let missing = o.get("parent_id").is_none_or(|v| v.as_str() == Some(""));
+                if missing {
+                    o.insert("parent_id".into(), p.clone());
+                }
+            }
+            out.push(child);
+        }
+    }
+    out
+}
+
 /// 合并各页条目：按 ID 去重（翻页期间列表变化可能产生重复），跳过无 ID 条目并返回其数量。
 #[must_use]
 pub fn merge_channels(pages: impl IntoIterator<Item = Vec<Value>>) -> (Vec<Channel>, usize) {
@@ -727,6 +756,25 @@ mod tests {
         assert!(Page::from_raw(json!([])).is_err());
         assert!(Page::from_raw(json!({})).is_err());
         assert!(Page::from_raw(Value::Null).is_err());
+    }
+
+    #[test]
+    fn flattens_view_channels() {
+        let top = vec![
+            json!({"id": "c1", "type": 0, "channels": [
+                {"id": "t1", "type": 1, "parent_id": "c1"},
+                {"id": "t2", "type": 2},
+            ]}),
+            json!({"id": "t3", "type": 1, "parent_id": ""}),
+        ];
+        let (list, _) = merge_channels([flatten_view_channels(&top)]);
+        let ids: Vec<_> = list.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(ids, ["c1", "t1", "t2", "t3"]);
+        assert_eq!(list[0].kind, ChannelKind::Category);
+        assert_eq!(list[1].parent_id.as_deref(), Some("c1"));
+        assert_eq!(list[2].parent_id.as_deref(), Some("c1"));
+        assert_eq!(list[3].parent_id, None);
+        assert!(!list[0].has_password);
     }
 
     #[test]

@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use super::model::{
     Asset, Channel, DmChat, DmPage, DmSent, GuildAccess, History, MemberPage, MessageLocation,
-    Page, merge_channels,
+    Page, flatten_view_channels, merge_channels,
 };
 use super::{BASE, CLIENT_VERSION, USER_AGENT};
 use crate::error::{AppError, AppResult};
@@ -213,6 +213,20 @@ fn unauthorized(body: &Value) -> AppError {
 /// 频道列表分页上限，防止异常 meta 导致无限请求。50 条每页，约 5000 个频道。
 const MAX_CHANNEL_PAGES: u32 = 100;
 
+fn merged(pages: impl IntoIterator<Item = Vec<Value>>) -> Vec<Channel> {
+    let (list, skipped) = merge_channels(pages);
+    if skipped > 0 {
+        log::warn!("频道列表中 {skipped} 个条目缺少 ID，已跳过");
+    }
+    list
+}
+
+/// guild/view 中的频道。没有非空的 `channels` 数组时返回 `None`。
+fn channels_of_view(view: &Value) -> Option<Vec<Channel>> {
+    let top = view.get("channels")?.as_array().filter(|a| !a.is_empty())?;
+    Some(merged([flatten_view_channels(top)]))
+}
+
 /// 历史消息每页条数，即服务端上限。
 pub const HISTORY_PAGE: usize = 50;
 /// 私信会话每页数量（服务端默认值）。
@@ -322,6 +336,16 @@ impl Api {
     ///
     /// 请求失败时返回错误。
     pub async fn channels(&self, guild_id: &str) -> AppResult<Vec<Channel>> {
+        // guild/view 一次返回全部频道（分组嵌套子频道），内容与 channel/list 一致。
+        // 未带频道时退回分页读取。
+        let view = self.get("/api/v2/guild/view", &[("id", guild_id)]).await?;
+        if let Some(list) = channels_of_view(&view) {
+            return Ok(list);
+        }
+        self.channel_pages(guild_id).await
+    }
+
+    async fn channel_pages(&self, guild_id: &str) -> AppResult<Vec<Channel>> {
         // 服务端每页最多 50 条，忽略更大的 page_size。按 meta.page_total 读完所有页。
         let mut pages = Vec::new();
         let mut page = 1u32;
@@ -344,11 +368,7 @@ impl Api {
             }
             page += 1;
         }
-        let (list, skipped) = merge_channels(pages);
-        if skipped > 0 {
-            log::warn!("频道列表中 {skipped} 个条目缺少 ID，已跳过");
-        }
-        Ok(list)
+        Ok(merged(pages))
     }
 
     /// 当前账号在服务器中的角色与权限依据。
