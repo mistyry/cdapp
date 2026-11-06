@@ -1,5 +1,7 @@
 pub mod audio;
 mod commands;
+#[cfg(all(target_os = "macos", debug_assertions))]
+mod devshot;
 pub mod error;
 pub mod kook;
 
@@ -28,6 +30,8 @@ pub fn run() {
             audio::store::init(&dir);
             let slot = commands::VoiceSlot::from_prefs(&audio::store::load());
             app.manage(VoiceState(tokio::sync::Mutex::new(slot)));
+            #[cfg(all(target_os = "macos", debug_assertions))]
+            devshot::init(app.handle());
             Ok(())
         })
         .manage(Mutex::new(AppState::default()))

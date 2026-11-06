@@ -11,6 +11,7 @@ import PasswordPrompt from "./components/layout/PasswordPrompt";
 import ConnectionBar from "./components/common/ConnectionBar";
 import { TipLayer } from "./components/common/Tip";
 import { loadAudioPrefs } from "./stores/voice";
+import { dragRegion, titleInset, watchWindow } from "./stores/window";
 import "./styles/theme.css";
 import "./styles/layout.css";
 
@@ -19,6 +20,8 @@ export default function App() {
     void loadAudioPrefs();
     void boot();
   });
+  const unwatch = watchWindow();
+  onCleanup(() => void unwatch.then((f) => f(), () => {}));
   // 窗口重新获得焦点或变为可见、关闭设置页时，补标当前频道已读。
   // 同时节流刷新当前服务器的权限依据，覆盖变化不保证有推送。
   const back = () => {
@@ -33,12 +36,18 @@ export default function App() {
   });
   createEffect(on(() => ui.settings, (v) => !v && readCurrent(), { defer: true }));
   return (
-    <div class="app">
+    <div class={`app ${titleInset() ? "titled" : ""}`}>
+      <Show when={titleInset()}>
+        <div class="titlebar">
+          <img src="/icon.svg" alt="" width={20} height={20} draggable={false} />
+          <span>cdapp</span>
+        </div>
+      </Show>
       <TipLayer />
       <Switch>
-        <Match when={session.phase === "boot"}><div class="boot">加载中</div></Match>
+        <Match when={session.phase === "boot"}><div class="boot" data-tauri-drag-region={dragRegion()}>加载中</div></Match>
         <Match when={session.phase === "restore_failed"}>
-          <div class="boot">
+          <div class="boot" data-tauri-drag-region={dragRegion()}>
             <p>无法连接到 KOOK，登录信息已保留</p>
             <div>
               <button class="login-retry" onClick={boot}>重试</button>
@@ -62,6 +71,8 @@ export default function App() {
       <Show when={session.error}>
         <div class="toast" onClick={() => setSession("error", null)}>{session.error}</div>
       </Show>
+      {/* 拖拽层覆盖标题栏，位于设置页与对话框之上，任何页面都能拖动窗口。 */}
+      <Show when={titleInset()}><div class="title-drag" data-tauri-drag-region={dragRegion()} /></Show>
     </div>
   );
 }

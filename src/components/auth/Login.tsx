@@ -2,6 +2,7 @@ import { Show, createSignal, onCleanup, onMount } from "solid-js";
 import { renderSVG } from "uqr";
 import { api, errorText } from "../../lib/api";
 import { enter, session } from "../../stores/session";
+import { dragRegion } from "../../stores/window";
 
 const TEXT = {
   loading: "正在获取二维码",
@@ -92,7 +93,7 @@ export default function Login() {
   const canRefresh = () => status() === "unknown" || status() === "failed" || Boolean(error());
 
   return (
-    <div class="login">
+    <div class="login" data-tauri-drag-region={dragRegion()}>
       <div class="login-card">
         <img class="login-logo" src="/icon.svg" alt="" width={64} height={64} draggable={false} />
         <h1>登录 cdapp</h1>

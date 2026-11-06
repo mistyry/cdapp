@@ -2,6 +2,7 @@
 :root {
   color-scheme: light;
   --c-app: #eef0f3;
+  --c-app-solid: #eef0f3;
   --c-panel: #ffffff;
   --c-fill: rgba(15, 23, 42, 0.06);
   --c-hover: rgba(15, 23, 42, 0.04);
@@ -25,6 +26,7 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
   --c-app: #17181a;
+  --c-app-solid: #17181a;
   --c-panel: rgba(225, 235, 255, 0.07);
   --c-fill: rgba(225, 235, 255, 0.09);
   --c-hover: rgba(255, 255, 255, 0.06);
@@ -40,6 +42,10 @@
   --c-strong: rgba(255, 255, 255, 0.87);
   --shadow: 0 2px 8px rgba(0, 0, 0, 0.24);
 }
+/* macOS 窗口透明，底层为系统侧栏材质：应用底色保留 72% 不透明度，透出少量桌面颜色。主面板与浮层保持不透明。 */
+:root[data-platform="macos"] { --c-app: rgba(238, 240, 243, 0.72); }
+:root[data-platform="macos"][data-theme="dark"] { --c-app: rgba(23, 24, 26, 0.72); }
+
 * { box-sizing: border-box; }
 html, body, #root { margin: 0; height: 100%; }
 body {

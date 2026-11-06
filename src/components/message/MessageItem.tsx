@@ -11,6 +11,7 @@ import Kmd, { open } from "./Kmd";
 import EmojiPicker from "./EmojiPicker";
 import { reactionOf } from "../../lib/emoji";
 import { ui } from "../../stores/ui";
+import { titleTop } from "../../stores/window";
 
 // 图片只接受 http/https 地址，不发送 Referer，否则 KOOK CDN 防盗链会拒绝 tauri 来源；加载失败时显示说明与可点击的原地址，并保持固定高度。
 function Picture(p: { src: string; alt?: string }) {
@@ -133,7 +134,8 @@ export default function MessageItem(p: { msg: Message; first: boolean }) {
     const r = el.getBoundingClientRect();
     const w = 360, h = 320, m = 8;
     const left = Math.max(m, Math.min(r.left - w - m, window.innerWidth - w - m));
-    const top = Math.max(m, Math.min(r.top, window.innerHeight - h - m));
+    // 上沿不进入窗口标题栏。
+    const top = Math.max(titleTop() + m, Math.min(r.top, window.innerHeight - h - m));
     setPickerPos({ left: `${left}px`, top: `${top}px` });
   };
   const openPicker = (el: HTMLElement) => {
