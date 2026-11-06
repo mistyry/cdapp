@@ -74,13 +74,20 @@ export default function MessageList(p: Props) {
   // 跳转片段的底部不是最新消息：不贴底、不标记已读。
   const fragment = () => Boolean(p.history?.newer);
   const [flash, setFlash] = createSignal<string | undefined>();
-  const toBottom = () => {
-    box.scrollTop = box.scrollHeight;
-    setTop(box.scrollTop);
+  // 程序设定的滚动位置。滚动事件异步派发，期间内容高度可能已变化，
+  // 位置未变的滚动事件来自程序设定，不据此改变贴底状态。
+  let expected = -1;
+  const setScroll = (y: number) => {
+    box.scrollTop = y;
+    expected = box.scrollTop;
+    setTop(expected);
   };
+  const toBottom = () => setScroll(box.scrollHeight);
 
   const onScroll = () => {
     setTop(box.scrollTop);
+    if (box.scrollTop === expected) return capture();
+    expected = -1;
     const bottom = bottomGap() <= BOTTOM_SLACK && !fragment();
     if (bottom !== atBottom()) {
       setAtBottom(bottom);
@@ -107,8 +114,7 @@ export default function MessageList(p: Props) {
     setSeen(p.messages[p.messages.length - 1]?.id);
     const o = offsets();
     const h = o[i + 1] - o[i];
-    box.scrollTop = Math.max(0, o[i] + HEAD - Math.max(0, (box.clientHeight - h) / 2));
-    setTop(box.scrollTop);
+    setScroll(Math.max(0, o[i] + HEAD - Math.max(0, (box.clientHeight - h) / 2)));
     capture();
     setFlash(id);
     setTimeout(() => flash() === id && setFlash(undefined), 2000);
@@ -126,8 +132,8 @@ export default function MessageList(p: Props) {
     const i = p.messages.findIndex((m) => m.id === anchor!.id);
     if (i < 0) return capture();
     const want = offsets()[i] + anchor.delta + HEAD;
-    if (Math.abs(box.scrollTop - want) > 0.5) box.scrollTop = want;
-    setTop(box.scrollTop);
+    if (Math.abs(box.scrollTop - want) > 0.5) setScroll(want);
+    else setTop(box.scrollTop);
   };
   createEffect(on(offsets, () => (atBottom() && !fragment() ? toBottom() : restore()), { defer: true }));
 
