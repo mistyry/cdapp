@@ -110,6 +110,10 @@ fn decode(msg: Message) -> Option<Value> {
     }
 }
 
+fn fmt_dur(d: Option<Duration>) -> String {
+    d.map_or_else(|| "-".into(), |d| format!("{}ms", d.as_millis()))
+}
+
 fn redact(url: &str) -> &str {
     url.split('?').next().unwrap_or(url)
 }
@@ -179,6 +183,10 @@ impl Reorder {
 /// 单次连接的结束方式（除错误外的附加信息）。
 #[derive(Default)]
 struct Outcome {
+    /// 握手完成时刻，用于记录连接持续时长。
+    opened: Option<Instant>,
+    /// 最后收到任意帧的时刻。
+    last_frame: Option<Instant>,
     /// 收到过心跳回应或续传完成，连接确认可用，退避回到基线。
     stable: bool,
     /// 续传被拒或服务端要求重连，应立即开新会话而不等待退避。
@@ -208,6 +216,8 @@ pub async fn run<U, Fut, F>(
             r = connect_once(&mut fetch_url, &cfg, &mut session, &mut had_session, &mut out, &mut emit) => r,
             _ = stop.changed() => break,
         };
+        let lived = out.opened.map(|t| t.elapsed());
+        let idle = out.last_frame.map(|t| t.elapsed());
         let err = match result {
             Err(AppError::Unauthorized(m)) => {
                 log::warn!("网关凭据失效");
@@ -229,7 +239,12 @@ pub async fn run<U, Fut, F>(
             backoff = (backoff * 2).min(cfg.max_backoff);
             d
         };
-        log::warn!("网关断开：{err}，{}ms 后重连", delay.as_millis());
+        log::warn!(
+            "网关断开：{err:?}；连接持续 {}，距最后一帧 {}，{}ms 后重连",
+            fmt_dur(lived),
+            fmt_dur(idle),
+            delay.as_millis()
+        );
         emit(GatewayEvent::Disconnected {
             reason: err.to_string(),
             retry_in: delay,
@@ -239,7 +254,10 @@ pub async fn run<U, Fut, F>(
         }
         tokio::select! {
             () = tokio::time::sleep(delay) => {}
-            () = wake.notified() => backoff = cfg.min_backoff,
+            () = wake.notified() => {
+                log::info!("网关收到唤醒，提前重连");
+                backoff = cfg.min_backoff;
+            }
             _ = stop.changed() => break,
         }
     }
@@ -268,6 +286,7 @@ where
         redact(&url),
         if resuming { "（续传）" } else { "" }
     );
+    let started = Instant::now();
     let ws = match timeout(
         cfg.connect_timeout,
         tokio_tungstenite::connect_async(url.as_str()),
@@ -283,8 +302,16 @@ where
             }
             return Err(e.into());
         }
-        Ok(Ok((ws, _))) => ws,
+        Ok(Ok((ws, resp))) => {
+            log::info!(
+                "网关握手完成 {}，耗时 {}ms",
+                resp.status(),
+                started.elapsed().as_millis()
+            );
+            ws
+        }
     };
+    out.opened = Some(Instant::now());
     let (tx, mut rx) = ws.split();
 
     let hello = match timeout(cfg.hello_timeout, rx.next()).await {
@@ -297,6 +324,7 @@ where
         .pointer("/d/code")
         .and_then(Value::as_i64)
         .unwrap_or(0);
+    log::debug!("网关 hello：{hello}");
     if hello.get("s").and_then(Value::as_i64) != Some(1) || code != 0 {
         // 续传被拒（例如会话过期）时立即重新取地址开新会话；新会话被拒走正常退避。
         *session = None;
@@ -323,6 +351,7 @@ where
             id: id.clone(),
             sn: 0,
         });
+        log::info!("网关新会话 {}", short(&id));
         let kind = if *had_session {
             ReadyKind::Rebuilt
         } else {
@@ -336,6 +365,11 @@ where
     }
 
     pump((tx, rx), cfg, session, resume_deadline, out, emit).await
+}
+
+/// 会话 ID 只记录前缀，便于对照又不完整暴露。
+fn short(id: &str) -> &str {
+    id.get(..8).unwrap_or(id)
 }
 
 type Ws =
@@ -357,6 +391,7 @@ async fn pump<F: FnMut(GatewayEvent)>(
     let mut ticker = tokio::time::interval(cfg.heartbeat);
     ticker.tick().await;
     let mut pong_deadline: Option<Instant> = None;
+    let mut ping_at: Option<Instant> = None;
     let mut order = Reorder::default();
     loop {
         tokio::select! {
@@ -371,6 +406,8 @@ async fn pump<F: FnMut(GatewayEvent)>(
                     Err(_) => return Err(AppError::Other("心跳发送超时".into())),
                     Ok(r) => r?,
                 }
+                log::trace!("网关心跳 sn={sn}");
+                ping_at.get_or_insert_with(Instant::now);
                 pong_deadline.get_or_insert(Instant::now() + cfg.pong_timeout);
             }
             () = until(pong_deadline) => return Err(AppError::Other("心跳超时".into())),
@@ -383,7 +420,22 @@ async fn pump<F: FnMut(GatewayEvent)>(
             }
             frame = rx.next() => {
                 let Some(frame) = frame else { return Err(AppError::Other("连接关闭".into())) };
-                let Some(v) = decode(frame?) else { continue };
+                let frame = frame?;
+                out.last_frame = Some(Instant::now());
+                if let Message::Close(c) = &frame {
+                    return Err(AppError::Other(match c {
+                        Some(c) => format!("服务端关闭连接 {} {}", u16::from(c.code), c.reason),
+                        None => "服务端关闭连接".into(),
+                    }));
+                }
+                let binary = matches!(frame, Message::Binary(_) | Message::Text(_));
+                let Some(v) = decode(frame) else {
+                    if binary {
+                        log::warn!("网关帧无法解析");
+                    }
+                    continue;
+                };
+                log::trace!("网关帧 s={:?} sn={:?}", v.get("s"), v.get("sn"));
                 match v.get("s").and_then(Value::as_i64) {
                     Some(0) => {
                         let d = v.get("d").cloned().unwrap_or(Value::Null);
@@ -393,15 +445,20 @@ async fn pump<F: FnMut(GatewayEvent)>(
                         }
                     }
                     Some(3) => {
+                        if let Some(t) = ping_at.take() {
+                            log::debug!("网关心跳回应 {}ms", t.elapsed().as_millis());
+                        }
                         pong_deadline = None;
                         out.stable = true;
                     }
                     Some(5) => {
+                        log::info!("网关要求重连：{}", v.get("d").unwrap_or(&Value::Null));
                         *session = None;
                         out.immediate = true;
                         return Err(AppError::Other("服务端要求重连".into()));
                     }
                     Some(6) if resume_deadline.take().is_some() => {
+                        log::info!("网关续传完成");
                         out.stable = true;
                         let id = session.as_ref().map(|s| s.id.clone()).unwrap_or_default();
                         emit(GatewayEvent::Ready { session_id: id, kind: ReadyKind::Resumed });

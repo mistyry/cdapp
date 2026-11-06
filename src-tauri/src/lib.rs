@@ -35,6 +35,39 @@ fn data_dir_arg() -> Option<std::path::PathBuf> {
     }
 }
 
+/// 日志写入应用日志目录并轮换保留。开发构建默认记录调试级别；`CDAPP_LOG` 可覆盖级别。
+fn log_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
+    use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
+    let default = if cfg!(debug_assertions) {
+        log::LevelFilter::Debug
+    } else {
+        log::LevelFilter::Info
+    };
+    let level = std::env::var("CDAPP_LOG")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default);
+    let mut targets = vec![Target::new(TargetKind::LogDir { file_name: None })];
+    if cfg!(debug_assertions) {
+        targets.push(Target::new(TargetKind::Stdout));
+    }
+    let deps = log::LevelFilter::Info.min(level);
+    tauri_plugin_log::Builder::new()
+        .targets(targets)
+        .level(level)
+        .level_for("tungstenite", deps)
+        .level_for("tokio_tungstenite", deps)
+        .level_for("rustls", deps)
+        .level_for("hyper", deps)
+        .level_for("hyper_util", deps)
+        .level_for("reqwest", deps)
+        .level_for("tao", log::LevelFilter::Warn)
+        .max_file_size(2_000_000)
+        .rotation_strategy(RotationStrategy::KeepSome(5))
+        .timezone_strategy(TimezoneStrategy::UseLocal)
+        .build()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// 启动应用。
 ///
@@ -59,11 +92,7 @@ fn prevent_default<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
 /// 应用初始化失败时触发。
 pub fn run() {
     tauri::Builder::default()
-        .plugin(
-            tauri_plugin_log::Builder::new()
-                .level(log::LevelFilter::Info)
-                .build(),
-        )
+        .plugin(log_plugin())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(prevent_default())
