@@ -12,6 +12,8 @@ import ConnectionBar from "./components/common/ConnectionBar";
 import { TipLayer } from "./components/common/Tip";
 import { loadAudioPrefs } from "./stores/voice";
 import { dragRegion, titleInset, watchWindow } from "./stores/window";
+import WindowControls from "./components/common/WindowControls";
+import { isWindows } from "./lib/platform";
 import "./styles/theme.css";
 import "./styles/layout.css";
 
@@ -71,8 +73,9 @@ export default function App() {
       <Show when={session.error}>
         <div class="toast" onClick={() => setSession("error", null)}>{session.error}</div>
       </Show>
-      {/* 拖拽层覆盖标题栏，位于设置页与对话框之上，任何页面都能拖动窗口。 */}
+      {/* 拖拽层覆盖标题栏，位于设置页与对话框之上，任何页面都能拖动窗口。窗口按钮在拖拽层之上。 */}
       <Show when={titleInset()}><div class="title-drag" data-tauri-drag-region={dragRegion()} /></Show>
+      <Show when={isWindows && titleInset()}><WindowControls /></Show>
     </div>
   );
 }

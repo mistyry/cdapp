@@ -1,11 +1,17 @@
 .app { display: flex; height: 100%; padding-top: 12px; }
 
-/* macOS 窗口标题栏：高 36px，红绿灯占左侧 12–72px，标识从 84px 起 */
+/* 窗口标题栏：高 36px。macOS 红绿灯占左侧 12–72px，标识从 84px 起；Windows 标识从 12px 起，右侧为窗口按钮 */
 .app.titled { padding-top: 36px; }
 .titlebar { position: absolute; top: 0; left: 0; right: 0; height: 36px; display: flex; align-items: center; gap: 8px; padding-left: 84px;
   font-size: 13px; font-weight: 600; color: var(--c-text-2); pointer-events: none; user-select: none; z-index: 25; }
 .titlebar img { display: block; }
 .title-drag { position: fixed; top: 0; left: 0; right: 0; height: 36px; z-index: 40; }
+:root[data-platform="windows"] .titlebar { padding-left: 12px; }
+.win-ctrls { position: fixed; top: 0; right: 0; z-index: 41; display: flex; height: 36px; }
+.win-btn { width: 46px; height: 36px; display: flex; align-items: center; justify-content: center; color: var(--c-text-2); }
+.win-btn:hover { background: var(--c-hover); color: var(--c-text); }
+.win-btn.close:hover { background: #c42b1c; color: #fff; }
+.win-btn:focus-visible { outline: 2px solid var(--c-brand); outline-offset: -2px; }
 
 /* ── 服务器栏 80px ── */
 .guildbar { width: 80px; flex: none; display: flex; flex-direction: column; }

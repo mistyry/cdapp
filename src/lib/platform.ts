@@ -8,7 +8,9 @@ export function platformOf(ua: string): Platform {
   return "other";
 }
 
-export const isMac = typeof navigator !== "undefined" && platformOf(navigator.userAgent) === "macos";
+export const platform: Platform = typeof navigator === "undefined" ? "other" : platformOf(navigator.userAgent);
+export const isMac = platform === "macos";
+export const isWindows = platform === "windows";
 
 // 拖拽区属性值。"" 只在点到元素本身时拖动，"deep" 覆盖整个子树，按钮等控件自动排除。
 // 不叠加标题栏时不输出属性，原生标题栏下双击页面不会缩放窗口。
