@@ -58,7 +58,9 @@ export async function selectGuild(id: string) {
   if (idx < 0) return;
   // 已有依据时节流刷新，不阻塞进入；没有依据时等待。
   const access = session.access[id]?.status === "ready" ? void refreshAccess(id) : loadAccess(id);
-  if (!session.guilds[idx].loaded) {
+  // 已加载时在后台刷新：未激活期间的语音频道进出没有推送。
+  if (session.guilds[idx].loaded) void reloadChannels(id);
+  else {
     const gen = st.account;
     try {
       const groups = toGroups(await api.channels(id));

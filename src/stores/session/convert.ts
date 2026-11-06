@@ -93,6 +93,9 @@ export function toMessage(r: Raw): Message {
     id: String(r.rong_id ?? r.msg_id ?? r.id),
     rongId: r.rong_id,
     author: author.id,
+    name: author.name,
+    avatar: author.avatar,
+    system: Boolean(r.author?.is_sys) || undefined,
     createAt,
     ...stamp(createAt),
     type,
@@ -127,7 +130,20 @@ export function toChannel(c: ChannelDto): Channel {
     userOverwrites: c.userOverwrites ?? [],
     password: c.hasPassword || undefined,
     sync: c.permissionSync || undefined,
+    users: c.kind === "voice" ? voiceUsers(c.users ?? []) : undefined,
+    preview: c.kind === "text" ? c.preview || undefined : undefined,
   };
+}
+
+// 语音频道内用户。nickname 为服务器昵称，未设置时为用户名；按 ID 去重。
+export function voiceUsers(list: Raw[]): User[] {
+  const out: User[] = [];
+  for (const u of list) {
+    const id = String(u?.id ?? "");
+    if (!id || out.some((x) => x.id === id)) continue;
+    out.push(toUser({ id, nickname: u.nickname, username: u.username, identify_num: u.identifyNum ?? u.identify_num, avatar: u.avatar }));
+  }
+  return out;
 }
 
 // 按 level 排序（相同时保持服务端顺序）。顶层频道与分组按 level 交错排列；

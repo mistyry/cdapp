@@ -159,7 +159,13 @@ export default function MessageItem(p: { msg: Message; first: boolean }) {
       errTimer = setTimeout(() => setReactError(""), 4000);
     });
   };
-  const author = () => session.users[p.msg.author] ?? { id: p.msg.author, name: "未知用户", online: false };
+  // 消息自带的作者资料优先（服务器内为服务器昵称），没有时取已知用户。
+  const author = () => {
+    const u = session.users[p.msg.author];
+    return { id: p.msg.author, online: u?.online ?? false, color: u?.color, name: p.msg.name || u?.name || "未知用户", avatar: p.msg.avatar ?? u?.avatar };
+  };
+  // 服务器内的系统消息只显示内容；私信中的系统消息按普通消息显示。
+  const plain = () => Boolean(p.msg.system) && ui.target.kind === "channel";
   const reply = () => {
     if (!currentKey()) return;
     setUi("replies", currentKey(), {
@@ -168,9 +174,9 @@ export default function MessageItem(p: { msg: Message; first: boolean }) {
     });
   };
   return (
-    <div class={`msg ${p.first ? "first" : ""} ${p.msg.pending ? `pending ${p.msg.pending}` : ""}`} onMouseLeave={() => (menu() !== "picker" && setMenu(""), setConfirming(false))}>
+    <div class={`msg ${p.first && !plain() ? "first" : ""} ${plain() ? "system" : ""} ${p.msg.pending ? `pending ${p.msg.pending}` : ""}`} onMouseLeave={() => (menu() !== "picker" && setMenu(""), setConfirming(false))}>
       <div class="msg-wrap">
-        <Show when={p.first} fallback={<span class="msg-small-time">{p.msg.short}</span>}>
+        <Show when={p.first && !plain()} fallback={<span class="msg-small-time">{p.msg.short}</span>}>
           <Avatar user={author()} />
           <div class="msg-infos">
             <span class="msg-name" style={{ color: author().color }}>{author().name}</span>

@@ -4,7 +4,9 @@ import type { Attachment } from "../lib/content";
 export type User = { id: string; name: string; tag?: string; avatar?: string; color?: string; online: boolean; activity?: string };
 export type Channel = {
   id: string; name: string; type: "text" | "voice" | "unknown";
-  preview?: string; limit?: number; users?: string[];
+  preview?: string; limit?: number;
+  // 语音频道内在线用户。名称取服务器昵称，与全局已知用户分开存放。
+  users?: User[];
   // 频道权限覆盖，用于计算本人有效权限。
   overwrites?: Overwrite[]; userOverwrites?: UserOverwrite[];
   // 设有密码；与分组同步覆盖（服务端已复制分组覆盖，不再叠加）。
@@ -32,6 +34,8 @@ export type Reaction = { id: string; name: string; count: number; me: boolean; u
 export type Message = {
   id: string; rongId?: string; author: string; createAt: number; time: string; short: string;
   type: number; content: string; quote?: Quote; attachment?: Attachment;
+  // 作者在此会话中的显示资料（服务器内为服务器昵称）；system 为系统消息。
+  name?: string; avatar?: string; system?: boolean;
   updatedAt?: number; reactions?: Reaction[]; pending?: "editing" | "deleting";
 };
 

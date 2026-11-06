@@ -35,6 +35,41 @@ pub struct Channel {
     pub has_password: bool,
     /// 与所属分组同步覆盖。服务端已把分组覆盖复制到本频道，客户端不再叠加父分组。
     pub permission_sync: bool,
+    /// 语音频道内的在线用户，来自 guild/view；`channel/list` 不提供，为空。
+    pub users: Vec<VoiceUser>,
+    /// 最新消息的单行预览，形如 `昵称：内容`；最新消息被删除时为服务端给出的说明。
+    pub preview: String,
+}
+
+/// 语音频道内用户的显示资料。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceUser {
+    pub id: String,
+    pub username: String,
+    pub nickname: String,
+    pub identify_num: String,
+    pub avatar: String,
+}
+
+impl VoiceUser {
+    /// 缺少 ID 时返回 `None`。
+    #[must_use]
+    pub fn from_raw(v: &Value) -> Option<Self> {
+        let s = |k: &str| {
+            v.get(k)
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned()
+        };
+        Some(Self {
+            id: id_of(v.get("id"))?,
+            username: s("username"),
+            nickname: s("nickname"),
+            identify_num: s("identify_num"),
+            avatar: s("avatar"),
+        })
+    }
 }
 
 /// 频道角色覆盖。角色 ID 为数字，0 表示 @全体成员（不能用 `id_of`，它把 0 视为缺失）。
@@ -302,6 +337,16 @@ impl Channel {
             limit: int_of(v.get("limit_amount"))
                 .and_then(|n| u64::try_from(n).ok())
                 .unwrap_or(0),
+            preview: v
+                .get("last_msg_content")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+            users: v
+                .get("users")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(VoiceUser::from_raw).collect())
+                .unwrap_or_default(),
             id,
         })
     }
@@ -763,9 +808,9 @@ mod tests {
         let top = vec![
             json!({"id": "c1", "type": 0, "channels": [
                 {"id": "t1", "type": 1, "parent_id": "c1"},
-                {"id": "t2", "type": 2},
+                {"id": "t2", "type": 2, "users": [{"id": "u1", "username": "a", "nickname": "b"}, {"name": "x"}]},
             ]}),
-            json!({"id": "t3", "type": 1, "parent_id": ""}),
+            json!({"id": "t3", "type": 1, "parent_id": "", "last_msg_content": "甲：你好"}),
         ];
         let (list, _) = merge_channels([flatten_view_channels(&top)]);
         let ids: Vec<_> = list.iter().map(|c| c.id.as_str()).collect();
@@ -774,6 +819,11 @@ mod tests {
         assert_eq!(list[1].parent_id.as_deref(), Some("c1"));
         assert_eq!(list[2].parent_id.as_deref(), Some("c1"));
         assert_eq!(list[3].parent_id, None);
+        assert_eq!(list[3].preview, "甲：你好");
+        assert_eq!(list[2].users.len(), 1);
+        assert_eq!(list[2].users[0].id, "u1");
+        assert_eq!(list[2].users[0].nickname, "b");
+        assert_eq!(list[1].users.len(), 0);
         assert!(!list[0].has_password);
     }
 

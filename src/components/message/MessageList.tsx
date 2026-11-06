@@ -21,6 +21,8 @@ type Props = {
   footer?: JSX.Element;
   // footer 内容变化的标记，例如待发条数。
   footerKey?: unknown;
+  // 私信会话：系统消息按普通消息显示。
+  dm?: boolean;
 };
 
 const HEAD = 40; // 顶部状态行固定高度，避免状态切换影响锚点。
@@ -42,7 +44,10 @@ export default function MessageList(p: Props) {
   // 同作者且间隔五分钟内的连续消息合并。
   const isFirst = (i: number) => {
     const l = p.messages;
-    return i === 0 || l[i - 1].author !== l[i].author || l[i].createAt - l[i - 1].createAt > 300_000;
+    // 服务器内的系统消息不显示作者，也不与前后消息合并。
+    const sys = (m: Message) => Boolean(m.system) && !p.dm;
+    if (sys(l[i])) return false;
+    return i === 0 || sys(l[i - 1]) || l[i - 1].author !== l[i].author || l[i].createAt - l[i - 1].createAt > 300_000;
   };
   const offsets = createMemo(() => {
     version();

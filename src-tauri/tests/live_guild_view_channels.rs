@@ -44,10 +44,22 @@ async fn view_matches_pages() {
         }
         let tl = t.elapsed();
         let (mut list, _) = merge_channels(pages);
-        let mut v = view.clone();
+        // 语音在线用户只由 guild/view 提供，比较前清除。
+        let mut v: Vec<_> = view
+            .iter()
+            .cloned()
+            .map(|mut c| {
+                c.users.clear();
+                c
+            })
+            .collect();
         list.sort_by(|a, b| a.id.cmp(&b.id));
         v.sort_by(|a, b| a.id.cmp(&b.id));
-        println!("频道 {} 页 {page} view {tv:?} list {tl:?}", view.len());
+        let voice_users: usize = view.iter().map(|c| c.users.len()).sum();
+        println!(
+            "频道 {} 页 {page} view {tv:?} list {tl:?} 语音在线 {voice_users}",
+            view.len()
+        );
         assert_eq!(v, list);
     }
 }

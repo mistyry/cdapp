@@ -37,7 +37,10 @@ export type ChannelDto = {
   parentId: string | null; level: number; limit: number;
   overwrites?: Overwrite[]; userOverwrites?: UserOverwrite[];
   hasPassword?: boolean; permissionSync?: boolean;
+  users?: VoiceUserDto[]; preview?: string;
 };
+// 后端 kook::model::VoiceUser。
+export type VoiceUserDto = { id: string; username: string; nickname: string; identifyNum: string; avatar: string };
 
 // 后端 kook::model::Member 与 MemberPage。成员按服务端顺序（在线在前），人数取服务端统计。
 export type MemberDto = {

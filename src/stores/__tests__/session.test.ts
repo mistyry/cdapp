@@ -3088,3 +3088,74 @@ test("服务器文件夹：读取、失败降级与迟到结果", async () => {
   expect(session.folders).toBeNull();
   expect(calls.some((c) => c.cmd === "guild_folders" && c.args)).toBe(false);
 });
+
+// 语音频道在线成员
+
+const ids2 = (c: { users?: { id: string }[] }) => (c.users ?? []).map((u) => u.id);
+const voiceOf = (gid: string) => session.guilds.find((g) => g.id === gid)!.groups.flatMap((g) => g.channels).find((c) => c.type === "voice")!;
+
+test("频道列表中的语音成员显示在频道下并记入已知用户", async () => {
+  auto.channels = ({ guildId }) => [{ ...raw(`${guildId}-voice`, "v", 2), users: [{ id: "u1", username: "a", nickname: "甲", identifyNum: "1", avatar: "" }] }, raw(`${guildId}-t1`, "t1")];
+  await selectGuild("A");
+  expect(voiceOf("A").users?.map((u) => [u.id, u.name])).toEqual([["u1", "甲"]]);
+});
+
+test("进出语音频道事件更新成员，加入其他频道时从原频道移出", async () => {
+  auto.channels = ({ guildId }) => [raw(`${guildId}-voice`, "v", 2), raw(`${guildId}-voice2`, "v2", 2), raw(`${guildId}-t1`, "t1")];
+  await selectGuild("A");
+  const sysEv = (type: string, body: unknown) => onEvent({ type: "SYS_MSG", content: JSON.stringify({ type, body }) });
+  const voices = () => session.guilds[0].groups.flatMap((g) => g.channels).filter((c) => c.type === "voice");
+  sysEv("joined_channel", { id: "u2", username: "b", channel: { id: "A-voice", guild_id: "A" } });
+  expect(ids2(voices()[0])).toEqual(["u2"]);
+  sysEv("joined_channel", { id: "u2", username: "b", nickname: "乙", channel: { id: "A-voice", guild_id: "A" } });
+  expect(voices()[0].users?.map((u) => u.name)).toEqual(["乙"]);
+  sysEv("joined_channel", { id: "u2", username: "b", channel: { id: "A-voice2", guild_id: "A" } });
+  expect(ids2(voices()[0])).toEqual([]);
+  expect(ids2(voices()[1])).toEqual(["u2"]);
+  sysEv("exited_channel", { id: "u2", channel: { id: "A-voice2", guild_id: "A" } });
+  expect(ids2(voices()[1])).toEqual([]);
+});
+
+test("未加载服务器的进出事件被忽略", () => {
+  const before = JSON.stringify(session.guilds);
+  onEvent({ type: "SYS_MSG", content: JSON.stringify({ type: "joined_channel", body: { id: "u3", channel: { id: "x", guild_id: "zz" } } }) });
+  expect(JSON.stringify(session.guilds)).toBe(before);
+});
+
+// 文字频道预览、作者名称与系统消息
+
+const textOf = (gid: string, id: string) => session.guilds.find((g) => g.id === gid)!.groups.flatMap((g) => g.channels).find((c) => c.id === id)!;
+const pushCh = (channelId: string, msgId: string, extra: Record<string, unknown>) =>
+  onEvent({ type: "CHANNEL_MSG", channelType: "GROUP", toUserId: channelId, msgId, msgTimestamp: Date.now(), fromUserId: "u", content: JSON.stringify({ content: "x", extra: JSON.stringify(extra) }) });
+
+test("频道预览取自频道列表并随推送更新", async () => {
+  auto.channels = ({ guildId }) => [{ ...raw(`${guildId}-t1`, "t1"), preview: "甲：旧" }, raw(`${guildId}-t2`, "t2")];
+  await selectGuild("A");
+  expect(textOf("A", "A-t1").preview).toBe("甲：旧");
+  expect(textOf("A", "A-t2").preview).toBeUndefined();
+  pushCh("A-t2", "m-new", { author: { id: "u", username: "u", nickname: "服务器昵称" }, last_msg_content: "服务器昵称：新" });
+  expect(textOf("A", "A-t2").preview).toBe("服务器昵称：新");
+  pushCh("A-t1", "m-open", { author: { id: "u", username: "u", nickname: "服务器昵称" }, last_msg_content: "服务器昵称：x" });
+  expect(session.messages["A-t1"]?.slice(-1)[0]?.name).toBe("服务器昵称");
+});
+
+test("删除最新消息后重新拉取频道列表", async () => {
+  auto.messages = () => pg([m("a", 10), m("b", 20)]);
+  await selectGuild("A");
+  calls.length = 0;
+  onEvent({ type: "SYS_MSG", content: JSON.stringify({ type: "deleted_message", body: { rong_id: "a", channel_id: "A-t1", guild_id: "A" } }) });
+  await new Promise((r) => setTimeout(r, 350));
+  expect(calls.some((c) => c.cmd === "channels")).toBe(false);
+  onEvent({ type: "SYS_MSG", content: JSON.stringify({ type: "deleted_message", body: { rong_id: "b", channel_id: "A-t1", guild_id: "A" } }) });
+  await new Promise((r) => setTimeout(r, 350));
+  expect(calls.some((c) => c.cmd === "channels")).toBe(true);
+});
+
+test("历史消息带作者服务器昵称与系统标记", async () => {
+  auto.messages = () => pg([{ id: "s1", rong_id: "s1", type: 9, content: "欢迎", create_at: 1, author: { id: "3900", username: "系统", is_sys: true } }, { id: "n1", rong_id: "n1", type: 9, content: "hi", create_at: 2, author: { id: "u9", username: "全局名", nickname: "服务器名" } }]);
+  await selectGuild("A");
+  const [s, n] = session.messages["A-t1"];
+  expect(s.system).toBe(true);
+  expect(n.system).toBeUndefined();
+  expect(n.name).toBe("服务器名");
+});

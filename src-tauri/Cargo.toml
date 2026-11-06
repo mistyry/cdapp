@@ -89,6 +89,10 @@ required-features = ["test-media"]
 name = "live_soak"
 required-features = ["test-media"]
 
+[[test]]
+name = "live_voice_presence"
+required-features = ["test-media"]
+
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "test-util"] }
 # 测试中读取进程资源占用。

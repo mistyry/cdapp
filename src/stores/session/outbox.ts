@@ -4,9 +4,10 @@ import type { Message, Outgoing, OutgoingFile } from "../types";
 import { Kind } from "../../lib/content";
 import { ui, setUi, targetKey, type Reply, type Staged, type Target } from "../ui";
 import { canSend, msgKey } from "./access";
-import { stamp, toMessage } from "./convert";
+import { plainContent, stamp, toMessage } from "./convert";
 import { dmOf, noteDmMessage } from "./dm";
 import { append, jumpLatest } from "./history";
+import { setPreview } from "./gateway";
 import { isDmKey, session, setSession, st } from "./state";
 
 // 发送：目标在调用时固定，结果写回发起时的频道。KOOK 写接口不按 nonce 去重，因此不自动重发。
@@ -130,8 +131,14 @@ export async function deliver(o: Outgoing, after?: Promise<void>) {
         ? { id: o.reply.id, authorId: o.reply.authorId, author: o.reply.author, type: o.reply.type ?? Kind.KMARKDOWN, content: o.reply.content ?? o.reply.text, text: o.reply.text }
         : undefined,
     };
+    // 本人在该频道的显示名取自已加载消息中本人的最近一条，没有时用账号名称。
+    const mine = [...(session.messages[o.channelId] ?? [])].reverse().find((m) => m.author === me.id && m.name);
+    sent.name = mine?.name ?? me.name;
+    sent.avatar = mine?.avatar ?? me.avatar;
     append(o.channelId, sent);
     if (isDmKey(o.channelId)) noteDmMessage(o.channelId.slice(3), sent);
+    // 发送者收不到自己消息的推送，频道预览按服务端格式本地更新。
+    else setPreview(o.channelId, `${sent.name}：${plainContent(sent.type, sent.content, sent.attachment)}`);
     patchOutgoing(o.channelId, o.localId, null);
     fileBodies.delete(o.localId);
   } catch (e) {

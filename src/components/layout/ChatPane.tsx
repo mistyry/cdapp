@@ -199,6 +199,7 @@ export default function ChatPane() {
           history={session.history[dmKey(code)]}
           onOlder={() => loadDmOlder(code)}
           onRetry={() => loadDmHistory(code)}
+          dm
           onNewer={() => {}}
           onLatest={() => {}}
           focus={session.focus?.channelId === dmKey(code) ? session.focus : null}

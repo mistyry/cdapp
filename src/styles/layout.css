@@ -82,10 +82,9 @@
 .channel:hover { background: var(--c-hover); }
 .channel.active { background: var(--c-fill); }
 .channel-row { display: flex; align-items: center; min-height: 36px; }
-.channel.active.has-preview .channel-row { min-height: 0; margin-top: 5px; }
+.channel.has-preview .channel-row { min-height: 0; margin-top: 5px; }
 .channel .type { width: 16px; height: 16px; margin-right: 6px; display: flex; align-items: center; justify-content: center; }
 .channel .label { flex: 1; min-width: 0; font-size: 14px; line-height: 20px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.channel.muted .label { color: var(--c-text-3); }
 .channel .ctrl { display: none; gap: 4px; color: var(--c-text-3); }
 .channel:hover .ctrl, .channel.active .ctrl { display: flex; }
 .channel .ctrl svg:hover { color: var(--c-text); }
@@ -144,6 +143,7 @@
 .message-box { flex: 1; overflow-y: auto; position: relative; padding-bottom: 8px; user-select: text; }
 .msg { position: relative; margin: 0 16px; }
 .msg.first { margin-top: 17px; }
+.msg.system { margin-top: 8px; margin-bottom: 8px; }
 .msg-wrap { position: relative; padding: 2px 0 2px 60px; border-radius: 16px; }
 .msg-wrap:hover { background: var(--c-hover); }
 .msg-wrap > .avatar { position: absolute; left: 8px; top: 2px; cursor: pointer; }

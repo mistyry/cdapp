@@ -45,7 +45,7 @@ const roomPeers = () => (voice.me ? [voice.me, ...voice.peers] : voice.peers);
 function ChannelItem(p: { c: Channel }) {
   const active = () => currentChannelId() === p.c.id;
   const inRoom = () => p.c.type === "voice" && voice.channelId === p.c.id && voiceActive() && voice.me !== null;
-  const preview = () => active() && p.c.preview;
+  const preview = () => p.c.type === "text" && p.c.preview;
   const unread = () => session.unread[p.c.id];
   // 可查看但不能连接的语音频道保留显示，并说明原因。
   const noConnect = () => p.c.type === "voice" && voiceBlock(p.c.id) === "denied";
@@ -55,7 +55,7 @@ function ChannelItem(p: { c: Channel }) {
       <div
         aria-label={[p.c.name, ...icon().parts].join(" ")}
         aria-disabled={noConnect() || undefined}
-        class={`channel ${p.c.type === "unknown" || noConnect() ? "unsupported" : ""} ${active() ? "active" : ""} ${preview() ? "has-preview" : ""} ${!active() && !unread() && p.c.type === "text" ? "muted" : ""}`}
+        class={`channel ${p.c.type === "unknown" || noConnect() ? "unsupported" : ""} ${active() ? "active" : ""} ${preview() ? "has-preview" : ""}`}
         onClick={() => {
           // 语音频道点击即加入，已在该频道时不重复加入。
           if (p.c.type === "voice") return void (noConnect() || enterVoice(p.c.id));
@@ -75,7 +75,7 @@ function ChannelItem(p: { c: Channel }) {
             <span class="ctrl"><UserPlus size={16} stroke-width={1.6} /><Settings size={16} stroke-width={1.6} /></span>
           </Show>
           <Show when={p.c.type === "voice"}>
-            <span class="len">{String(p.c.users?.length ?? 0).padStart(2, "0")}/{p.c.limit ?? "∞"}</span>
+            <span class="len">{p.c.limit ? `${String(p.c.users?.length ?? 0).padStart(2, "0")}/${p.c.limit}` : p.c.users?.length ?? 0}</span>
           </Show>
           <Show when={unread() && !active() ? unread() : undefined}>
             {(u) => (
@@ -90,7 +90,7 @@ function ChannelItem(p: { c: Channel }) {
       {/* 本端所在的语音频道以语音服务器的房间成员为准，其余频道显示频道列表中的在线用户。 */}
       <Show when={inRoom()} fallback={
         <For each={p.c.users}>
-          {(id) => <Show when={session.users[id]}>{(u) => <div class="voice-member"><Avatar user={u()} size={20} />{u().name}</div>}</Show>}
+          {(u) => <div class="voice-member"><Avatar user={u} size={20} />{u.name}</div>}
         </For>
       }>
         <For each={roomPeers()}>{(peer) => <RoomMember peer={peer} />}</For>
