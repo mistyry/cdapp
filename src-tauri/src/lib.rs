@@ -4,6 +4,8 @@ mod commands;
 mod devshot;
 pub mod error;
 pub mod kook;
+#[cfg(windows)]
+mod winfocus;
 
 use std::sync::Mutex;
 
@@ -32,6 +34,10 @@ pub fn run() {
             app.manage(VoiceState(tokio::sync::Mutex::new(slot)));
             #[cfg(all(target_os = "macos", debug_assertions))]
             devshot::init(app.handle());
+            #[cfg(windows)]
+            if let Some(window) = app.get_webview_window("main") {
+                winfocus::init(&window);
+            }
             Ok(())
         })
         .manage(Mutex::new(AppState::default()))

@@ -7,7 +7,6 @@ import EmojiInput, { type EmojiInputApi } from "../message/EmojiInput";
 import EmojiPicker from "../message/EmojiPicker";
 import Kmd from "../message/Kmd";
 import { KookHash } from "../common/icons";
-import { dragRegion } from "../../stores/window";
 import { sizeText } from "../../lib/content";
 
 export default function ChatPane() {
@@ -191,7 +190,7 @@ export default function ChatPane() {
     const name = () => (d() ? d()!.nickname || d()!.username || "未知用户" : "私信");
     return (
       <>
-        <header class="room-header" data-tauri-drag-region={dragRegion("deep")}>
+        <header class="room-header">
           <span class="title">{name()}</span>
           <Show when={d()?.identifyNum}><span class="topic">#{d()!.identifyNum}</span></Show>
         </header>
@@ -216,7 +215,7 @@ export default function ChatPane() {
       <Show when={channel()} fallback={<Show when={currentChatCode()} keyed fallback={<div class="chat-empty">{empty()}</div>}>{dmView}</Show>}>
         {(c) => (
           <>
-            <header class="room-header" data-tauri-drag-region={dragRegion("deep")}>
+            <header class="room-header">
               <span class="hash"><KookHash /></span>
               <span class="title">{c().name}</span>
               <span class="topic" />
