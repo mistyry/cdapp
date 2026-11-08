@@ -142,3 +142,16 @@ fn wake_voice(app: &AppHandle) {
         s.control().wake();
     }
 }
+
+/// 前端诊断日志，写入同一日志文件，目标为 `app`。
+#[tauri::command]
+pub async fn client_log(level: String, message: String) -> AppResult<()> {
+    let level = match level.as_str() {
+        "warn" => log::Level::Warn,
+        "debug" => log::Level::Debug,
+        _ => log::Level::Info,
+    };
+    let message: String = message.chars().take(500).collect();
+    log::log!(target: "app", level, "{message}");
+    Ok(())
+}

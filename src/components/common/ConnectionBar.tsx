@@ -1,16 +1,24 @@
 import { Match, Show, Switch, createEffect, createSignal, onCleanup, onMount } from "solid-js";
-import { networkBack, reconnectNow, session, setSession } from "../../stores/session";
+import { diag, networkBack, reconnectNow, session, setSession } from "../../stores/session";
 
 // 网关连接状态条。断线显示原因与倒计时并可立即重连；恢复后短暂提示结果。
 export default function ConnectionBar() {
   const [now, setNow] = createSignal(Date.now());
   const timer = setInterval(() => setNow(Date.now()), 1000);
   // 系统恢复联网时，主网关与语音跳过退避立即重连。
-  const online = () => networkBack();
-  onMount(() => window.addEventListener("online", online));
+  const online = () => {
+    diag("系统网络恢复");
+    networkBack();
+  };
+  const offline = () => diag("系统网络断开", "warn");
+  onMount(() => {
+    window.addEventListener("online", online);
+    window.addEventListener("offline", offline);
+  });
   onCleanup(() => {
     clearInterval(timer);
     window.removeEventListener("online", online);
+    window.removeEventListener("offline", offline);
   });
 
   // 成功恢复的提示 3 秒后消失；部分失败的提示保留到用户关闭或下次恢复。

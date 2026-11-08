@@ -110,6 +110,18 @@ fn decode(msg: Message) -> Option<Value> {
     }
 }
 
+/// 错误及其来源链。reqwest 等错误的 Display 不含底层原因。
+fn chain(e: &dyn std::error::Error) -> String {
+    let mut s = e.to_string();
+    let mut cur = e.source();
+    while let Some(c) = cur {
+        s.push_str(" <- ");
+        s.push_str(&c.to_string());
+        cur = c.source();
+    }
+    s
+}
+
 fn fmt_dur(d: Option<Duration>) -> String {
     d.map_or_else(|| "-".into(), |d| format!("{}ms", d.as_millis()))
 }
@@ -240,10 +252,11 @@ pub async fn run<U, Fut, F>(
             d
         };
         log::warn!(
-            "网关断开：{err:?}；连接持续 {}，距最后一帧 {}，{}ms 后重连",
+            "网关断开：{}；连接持续 {}，距最后一帧 {}，{}ms 后重连",
+            chain(&err),
             fmt_dur(lived),
             fmt_dur(idle),
-            delay.as_millis()
+            delay.as_millis(),
         );
         emit(GatewayEvent::Disconnected {
             reason: err.to_string(),
@@ -252,8 +265,15 @@ pub async fn run<U, Fut, F>(
         if delay.is_zero() {
             continue;
         }
+        let waited = std::time::Instant::now();
         tokio::select! {
-            () = tokio::time::sleep(delay) => {}
+            () = tokio::time::sleep(delay) => {
+                // 实际等待远超计划，通常是系统睡眠或节能暂停了计时器。
+                let real = waited.elapsed();
+                if real > delay + Duration::from_secs(5) {
+                    log::warn!("网关退避计划 {}ms，实际 {}ms", delay.as_millis(), real.as_millis());
+                }
+            }
             () = wake.notified() => {
                 log::info!("网关收到唤醒，提前重连");
                 backoff = cfg.min_backoff;
@@ -392,10 +412,17 @@ async fn pump<F: FnMut(GatewayEvent)>(
     ticker.tick().await;
     let mut pong_deadline: Option<Instant> = None;
     let mut ping_at: Option<Instant> = None;
+    // 使用墙钟：tokio 的 Instant 在系统睡眠期间可能不前进。
+    let mut last_tick = std::time::Instant::now();
     let mut order = Reorder::default();
     loop {
         tokio::select! {
             _ = ticker.tick() => {
+                let gap = last_tick.elapsed();
+                last_tick = std::time::Instant::now();
+                if gap > cfg.heartbeat + cfg.heartbeat / 2 {
+                    log::warn!("网关心跳计时延迟：间隔 {}ms，计划 {}ms", gap.as_millis(), cfg.heartbeat.as_millis());
+                }
                 // 缺失的序号一个心跳周期内仍未到达，放弃等待，按序投递已缓冲事件。
                 if let Some(s) = session.as_mut() {
                     order.flush_stale(&mut s.sn, emit);
@@ -410,7 +437,10 @@ async fn pump<F: FnMut(GatewayEvent)>(
                 ping_at.get_or_insert_with(Instant::now);
                 pong_deadline.get_or_insert(Instant::now() + cfg.pong_timeout);
             }
-            () = until(pong_deadline) => return Err(AppError::Other("心跳超时".into())),
+            () = until(pong_deadline) => {
+                let since = last_tick.elapsed();
+                return Err(AppError::Other(format!("心跳超时，距上次心跳 {}ms", since.as_millis())));
+            }
             () = until(resume_deadline) => {
                 // 续传迟迟未完成：保留连接，但按重建通知上层补偿可能缺失的事件。
                 resume_deadline = None;
@@ -446,7 +476,12 @@ async fn pump<F: FnMut(GatewayEvent)>(
                     }
                     Some(3) => {
                         if let Some(t) = ping_at.take() {
-                            log::debug!("网关心跳回应 {}ms", t.elapsed().as_millis());
+                            let rtt = t.elapsed();
+                            if rtt > Duration::from_secs(2) {
+                                log::warn!("网关心跳回应缓慢 {}ms", rtt.as_millis());
+                            } else {
+                                log::trace!("网关心跳回应 {}ms", rtt.as_millis());
+                            }
                         }
                         pong_deadline = None;
                         out.stable = true;

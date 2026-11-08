@@ -1,6 +1,6 @@
 import { Match, Show, Switch, createEffect, on, onCleanup, onMount } from "solid-js";
 import { ui } from "./stores/ui";
-import { boot, readCurrent, refreshAccess, session, setSession, skipRestore } from "./stores/session";
+import { boot, diag, readCurrent, refreshAccess, session, setSession, skipRestore } from "./stores/session";
 import GuildBar from "./components/layout/GuildBar";
 import ChannelSidebar from "./components/layout/ChannelSidebar";
 import ChatPane from "./components/layout/ChatPane";
@@ -34,7 +34,8 @@ export default function App() {
   onCleanup(() => void unwatch.then((f) => f(), () => {}));
   // 窗口重新获得焦点或变为可见、关闭设置页时，补标当前频道已读。
   // 同时节流刷新当前服务器的权限依据，覆盖变化不保证有推送。
-  const back = () => {
+  const back = (e?: Event) => {
+    if (e?.type === "visibilitychange") diag(`窗口${document.hidden ? "隐藏" : "可见"}`);
     readCurrent();
     if (session.phase === "ready" && ui.view && session.access[ui.view]) void refreshAccess(ui.view);
   };

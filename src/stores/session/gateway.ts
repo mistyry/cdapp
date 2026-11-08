@@ -69,6 +69,7 @@ export async function resync(quiet = false) {
   if (!(await syncUnread())) failed++;
   if (my !== syncGen || gen !== st.account) return;
   syncPending = false;
+  if (failed) diag(`补偿完成，${failed} 项失败`, "warn");
   setSession({ gateway: "online", recovery: quiet && !failed ? null : failed ? "partial" : "rebuilt" });
 }
 
@@ -87,7 +88,11 @@ export type GatewayStatus =
   | { state: "ready"; kind: "new" | "resumed" | "rebuilt" }
   | { state: "disconnected"; reason: string; retry_in_ms: number };
 
+// 诊断日志写入后端日志文件，失败时忽略。
+export const diag = (message: string, level: "info" | "warn" | "debug" = "info") => void api.clientLog(level, message).catch(() => {});
+
 export function onGatewayStatus(st: GatewayStatus) {
+  diag(st.state === "disconnected" ? `网关状态 disconnected，${st.retry_in_ms}ms 后重连` : `网关状态 ready ${st.kind}`);
   if (st.state === "disconnected") {
     syncGen++;
     setSession({ gateway: "reconnecting", gatewayInfo: { reason: st.reason, retryAt: Date.now() + st.retry_in_ms }, recovery: null });

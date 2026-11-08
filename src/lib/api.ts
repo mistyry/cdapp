@@ -142,6 +142,7 @@ export const api = {
   gatewayStart: () => invoke<void>("gateway_start"),
   gatewayReconnect: () => invoke<void>("gateway_reconnect"),
   gatewayStop: () => invoke<void>("gateway_stop"),
+  clientLog: (level: "info" | "warn" | "debug", message: string) => rawInvoke<void>("client_log", { level, message }),
   // 返回会话代次，进度与成员经 voice://event 推送。
   // request 为前端请求序号，后端据此丢弃已被后发的加入或退出取代的加入。
   // password 仅用于本次加入，不保存。

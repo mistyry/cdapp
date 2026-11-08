@@ -35,7 +35,8 @@ fn data_dir_arg() -> Option<std::path::PathBuf> {
     }
 }
 
-/// 日志写入应用日志目录并轮换保留。开发构建默认记录调试级别；`CDAPP_LOG` 可覆盖级别。
+/// 日志写入应用日志目录并轮换保留。本应用模块开发构建为 Debug、发行构建为 Info，依赖库只记录警告；
+/// `CDAPP_LOG` 可覆盖本应用模块的级别。
 fn log_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
     use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
     let default = if cfg!(debug_assertions) {
@@ -51,17 +52,11 @@ fn log_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
     if cfg!(debug_assertions) {
         targets.push(Target::new(TargetKind::Stdout));
     }
-    let deps = log::LevelFilter::Info.min(level);
     tauri_plugin_log::Builder::new()
         .targets(targets)
-        .level(level)
-        .level_for("tungstenite", deps)
-        .level_for("tokio_tungstenite", deps)
-        .level_for("rustls", deps)
-        .level_for("hyper", deps)
-        .level_for("hyper_util", deps)
-        .level_for("reqwest", deps)
-        .level_for("tao", log::LevelFilter::Warn)
+        .level(log::LevelFilter::Warn)
+        .level_for("cdapp_lib", level)
+        .level_for("app", level)
         .max_file_size(2_000_000)
         .rotation_strategy(RotationStrategy::KeepSome(5))
         .timezone_strategy(TimezoneStrategy::UseLocal)
@@ -169,6 +164,7 @@ pub fn run() {
             commands::gateway_start,
             commands::gateway_reconnect,
             commands::gateway_stop,
+            commands::client_log,
             commands::voice_join,
             commands::voice_leave,
             commands::voice_wake,

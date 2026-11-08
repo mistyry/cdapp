@@ -615,7 +615,7 @@ test("续传成功不重新激活也不补拉，状态回到在线", async () =>
   ready("resumed");
   expect(session.gateway).toBe("online");
   expect(session.recovery).toBe("resumed");
-  expect(calls.length).toBe(n);
+  expect(calls.slice(n).filter((c) => c.cmd !== "client_log")).toEqual([]);
 });
 
 test("续传失败重建后：重新激活所有进入过的服务器，补拉全部已缓存频道且当前频道优先", async () => {
