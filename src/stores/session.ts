@@ -8,6 +8,6 @@ export { canSend, msgKey, loadAccess, refreshAccess, permsOf, visible, sendBlock
 export { closeMembers, ensureMembers, refreshMembers, loadMoreMembers } from "./session/members";
 export { cardFileSrcs, onUploadProgress, checkFile, stageFiles, unstage, submit, cancelUpload, send, retry, verify, discard } from "./session/outbox";
 export { canEdit, canDelete, canReact, editMessage, deleteMessage, isReacting, reactFailed, toggleReaction } from "./session/edit";
-export { resync, reconnectNow, networkBack, onGatewayStatus, onEvent } from "./session/gateway";
+export { resync, reconnectNow, networkBack, onGatewayStatus, onEvent, dropSelfFromVoice } from "./session/gateway";
 export { syncUnread, guildUnread, readCurrent } from "./session/unread";
 export { loadDms, dmOf, selectDm, openDmWith, loadDmHistory, loadDmOlder, dmUnreadTotal } from "./session/dm";

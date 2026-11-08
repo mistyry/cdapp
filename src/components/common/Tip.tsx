@@ -6,49 +6,48 @@ import { Portal } from "solid-js/web";
 // 提示只补充视觉说明，语义名称由元素自身的 aria-label 等提供。
 // data-focus-tip 在元素获得焦点时显示，单击聚焦也会显示，用于提示下一步操作。
 // 显示后不随指针移开消失，焦点离开或点击其他位置时隐藏。
+// 指向即时显示，箭头指向目标。
 // side 为 right 时显示在目标右侧并垂直居中（服务器栏），否则显示在上方，空间不足时在下方。
 type Tip = { text: string; x: number; y: number; side: "top" | "bottom" | "right" };
 const [tip, setTip] = createSignal<Tip | null>(null);
 const MARGIN = 8;
+// 目标与提示之间的距离，容纳箭头。
+const GAP = 8;
 
 export function TipLayer() {
   let anchor: HTMLElement | null = null;
-  let timer: ReturnType<typeof setTimeout> | undefined;
   let box: HTMLDivElement | undefined;
   // 当前提示由焦点触发，指针移动不影响。
   let sticky = false;
 
   const hide = () => {
-    clearTimeout(timer);
     anchor = null;
     sticky = false;
     setTip(null);
   };
   const show = (el: HTMLElement, key: "tip" | "focusTip" = "tip") => {
     if (el === anchor) return;
-    clearTimeout(timer);
     anchor = el;
     sticky = key === "focusTip";
     setTip(null);
-    timer = setTimeout(() => {
-      // 文本在显示时读取，延迟期间的变化不会显示旧内容。
-      const text = el.dataset[key];
-      if (anchor !== el || !el.isConnected || !text) return;
-      const r = el.getBoundingClientRect();
-      if (el.dataset.tipSide === "right") {
-        setTip({ text, x: r.right + 8, y: r.top + r.height / 2, side: "right" });
-        return;
-      }
-      const below = r.top < 40;
-      setTip({ text, x: r.left + r.width / 2, y: below ? r.bottom + 6 : r.top - 6, side: below ? "bottom" : "top" });
-      // 渲染后按实际宽度限制在窗口内。
-      queueMicrotask(() => {
-        if (!box) return;
-        const w = box.offsetWidth;
-        const x = Math.min(Math.max(r.left + r.width / 2, MARGIN + w / 2), window.innerWidth - MARGIN - w / 2);
-        box.style.left = `${x}px`;
-      });
-    }, 250);
+    const text = el.dataset[key];
+    if (!el.isConnected || !text) return;
+    const r = el.getBoundingClientRect();
+    if (el.dataset.tipSide === "right") {
+      setTip({ text, x: r.right + GAP, y: r.top + r.height / 2, side: "right" });
+      return;
+    }
+    const below = r.top < 40;
+    const cx = r.left + r.width / 2;
+    setTip({ text, x: cx, y: below ? r.bottom + GAP : r.top - GAP, side: below ? "bottom" : "top" });
+    // 渲染后按实际宽度限制在窗口内，箭头仍指向目标中心。
+    queueMicrotask(() => {
+      if (!box) return;
+      const w = box.offsetWidth;
+      const x = Math.min(Math.max(cx, MARGIN + w / 2), window.innerWidth - MARGIN - w / 2);
+      box.style.left = `${x}px`;
+      box.style.setProperty("--arrow", `${Math.min(Math.max(cx - x + w / 2, 8), w - 8)}px`);
+    });
   };
 
   const tipOf = (n: EventTarget | null) => (n instanceof Element ? n.closest<HTMLElement>("[data-tip]") : null);
@@ -102,7 +101,6 @@ export function TipLayer() {
   onCleanup(() => {
     mo.disconnect();
     cancelAnimationFrame(frame);
-    clearTimeout(timer);
     document.removeEventListener("pointerover", over);
     document.removeEventListener("pointerout", out);
     document.removeEventListener("focusin", focusIn);

@@ -5,6 +5,7 @@ mod devshot;
 pub mod error;
 pub mod kook;
 pub mod storage;
+mod window_state;
 #[cfg(windows)]
 mod winfocus;
 
@@ -37,6 +38,22 @@ fn data_dir_arg() -> Option<std::path::PathBuf> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// 启动应用。
 ///
+/// 关闭对客户端无用的浏览器行为：右键菜单、查找、刷新、打印、下载、查看源码等。
+/// 开发模式保留右键菜单、调试工具与刷新。Shift+Tab 用于键盘导航，不拦截。
+fn prevent_default<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
+    use tauri_plugin_prevent_default::Flags;
+    let builder = tauri_plugin_prevent_default::Builder::new()
+        .with_flags(Flags::debug().difference(Flags::FOCUS_MOVE));
+    // WebView2 原生开关：发行版关闭浏览器快捷键与默认右键菜单。
+    #[cfg(windows)]
+    let builder = builder.platform(
+        tauri_plugin_prevent_default::PlatformOptions::new()
+            .browser_accelerator_keys(cfg!(debug_assertions))
+            .default_context_menus(cfg!(debug_assertions)),
+    );
+    builder.build()
+}
+
 /// # Panics
 ///
 /// 应用初始化失败时触发。
@@ -49,6 +66,7 @@ pub fn run() {
         )
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(prevent_default())
         .setup(|app| {
             use tauri::Manager;
             if let Some(dir) = data_dir_arg() {
@@ -63,9 +81,10 @@ pub fn run() {
             app.manage(VoiceState(tokio::sync::Mutex::new(slot)));
             #[cfg(all(target_os = "macos", debug_assertions))]
             devshot::init(app.handle());
-            #[cfg(windows)]
             if let Some(window) = app.get_webview_window("main") {
+                #[cfg(windows)]
                 winfocus::init(&window);
+                window_state::init(&window);
             }
             Ok(())
         })
@@ -134,6 +153,7 @@ pub fn run() {
             commands::voice_set_master,
             commands::voice_set_gain,
             commands::audio_prefs,
+            commands::set_voice_switches,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

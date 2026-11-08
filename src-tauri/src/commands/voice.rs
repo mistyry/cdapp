@@ -298,3 +298,19 @@ pub async fn audio_prefs(
 ) -> AppResult<crate::audio::store::AudioPrefs> {
     Ok(voice.0.lock().await.prefs())
 }
+
+/// 保存麦克风与耳机开关，下次启动沿用。
+#[tauri::command]
+pub async fn set_voice_switches(
+    muted: bool,
+    deafened: bool,
+    voice: State<'_, VoiceState>,
+) -> AppResult<()> {
+    let mut slot = voice.0.lock().await;
+    if slot.muted != muted || slot.deafened != deafened {
+        slot.muted = muted;
+        slot.deafened = deafened;
+        slot.persist();
+    }
+    Ok(())
+}

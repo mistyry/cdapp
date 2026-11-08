@@ -9,6 +9,7 @@
         "minWidth": 800,
         "minHeight": 560,
         "dragDropEnabled": false,
+        "visible": false,
         "decorations": false,
         "transparent": true,
         "windowEffects": {

@@ -49,7 +49,8 @@ export default function App() {
     <div class={`app ${titleInset() ? "titled" : ""} ${session.phase === "boot" && storage.info?.status !== "ready" && storage.info ? "" : session.phase === "boot" || soundsPending() ? "booting" : ""}`}>
       <Show when={titleInset()}>
         <div class="titlebar">
-          <Show when={session.phase !== "boot"}>
+          {/* 加载页与数据目录异常页不显示应用标识。 */}
+          <Show when={!(storage.info && storage.info.status !== "ready") && session.phase !== "boot" && !soundsPending()}>
             <img src="/icon.svg" alt="" width={20} height={20} draggable={false} />
             <span>cdapp</span>
           </Show>

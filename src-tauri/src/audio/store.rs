@@ -1,4 +1,4 @@
-//! 本机音频偏好：输入输出设备、输入增益与输出总音量。
+//! 本机音频偏好：输入输出设备、输入增益、输出总音量与麦克风耳机开关。
 //! 保存在数据根 `config/audio.json`，与凭据分开。文件损坏或字段缺失时使用默认值。
 
 use std::fs;
@@ -28,6 +28,10 @@ pub struct AudioPrefs {
     pub effect_volume: u16,
     /// 关闭的提示音编号，与官方 `audio_setting` 编号一致。
     pub effects_off: Vec<u8>,
+    /// 麦克风关闭。
+    pub muted: bool,
+    /// 耳机关闭。
+    pub deafened: bool,
 }
 
 impl Default for AudioPrefs {
@@ -39,6 +43,8 @@ impl Default for AudioPrefs {
             master: 100,
             effect_volume: DEFAULT_EFFECT_VOLUME,
             effects_off: Vec::new(),
+            muted: false,
+            deafened: false,
         }
     }
 }
@@ -131,6 +137,8 @@ mod tests {
             master: 80,
             effect_volume: 20,
             effects_off: vec![2, 10],
+            muted: true,
+            deafened: false,
         };
         crate::storage::write_raw(&path, &serde_json::to_vec(&p).unwrap(), false).unwrap();
         assert_eq!(AudioPrefs::parse(&fs::read(&path).unwrap()), p);

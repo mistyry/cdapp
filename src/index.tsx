@@ -19,3 +19,8 @@ void hasBackdrop().then((ok) => {
 });
 
 render(() => <App />, document.getElementById("root") as HTMLElement);
+
+// 图片、图标与链接不可拖出，选中的消息文字仍可拖动。
+document.addEventListener("dragstart", (e) => {
+  if (e.target instanceof Element && e.target.closest("img, svg, a")) e.preventDefault();
+});

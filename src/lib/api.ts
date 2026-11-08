@@ -29,7 +29,7 @@ async function invoke<T>(cmd: string, args?: InvokeArgs, options?: InvokeOptions
 // 后端 audio::capture::InputDevice。
 export type InputDevice = { id: string; name: string; default: boolean };
 // 后端 audio::store::AudioPrefs。设备为 null 时跟随系统默认。
-export type AudioPrefs = { input: string | null; output: string | null; gain: number; master: number; effectVolume: number; effectsOff: number[] };
+export type AudioPrefs = { input: string | null; output: string | null; gain: number; master: number; effectVolume: number; effectsOff: number[]; muted: boolean; deafened: boolean };
 
 // 后端 kook::model::Channel。kind 为 category / text / voice / unknown。
 export type ChannelDto = {
@@ -164,6 +164,7 @@ export const api = {
   // 麦克风输入增益，上限 200，返回实际生效的值。
   voiceSetGain: (percent: number) => invoke<number>("voice_set_gain", { percent }),
   audioPrefs: () => invoke<AudioPrefs>("audio_prefs"),
+  setVoiceSwitches: (muted: boolean, deafened: boolean) => invoke<void>("set_voice_switches", { muted, deafened }),
   effectPlay: (id: number, preview = false) => invoke<void>("effect_play", { id, preview }),
   effectPlayItem: (item: number) => invoke<void>("effect_play_item", { item }),
   setEffectVolume: (percent: number) => invoke<void>("set_effect_volume", { percent }),

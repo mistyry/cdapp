@@ -351,3 +351,9 @@ export function onNotification(body: Raw) {
   if (viewing) return;
   playEffect(extra.mention ? Effect.MENTION : Effect.MESSAGE);
 }
+
+// 本人主动退出语音后立即从频道成员中移除，不等网关事件。
+export function dropSelfFromVoice(channelId: string) {
+  const uid = session.me?.id;
+  if (uid && channelId) onVoicePresence({ id: uid, channel: { id: channelId } }, false);
+}

@@ -65,6 +65,9 @@ pub struct VoiceSlot {
     pub effect_volume: u16,
     /// 关闭的提示音编号。
     pub effects_off: Vec<u8>,
+    /// 麦克风与耳机开关，下次启动沿用。
+    pub muted: bool,
+    pub deafened: bool,
 }
 
 impl VoiceSlot {
@@ -77,6 +80,8 @@ impl VoiceSlot {
             master: Some(p.master),
             effect_volume: p.effect_volume,
             effects_off: p.effects_off.clone(),
+            muted: p.muted,
+            deafened: p.deafened,
             ..Self::default()
         };
         slot.gain.set(p.gain);
@@ -93,6 +98,8 @@ impl VoiceSlot {
             master: self.master.unwrap_or(100),
             effect_volume: self.effect_volume,
             effects_off: self.effects_off.clone(),
+            muted: self.muted,
+            deafened: self.deafened,
         }
     }
 

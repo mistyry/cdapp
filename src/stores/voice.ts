@@ -1,3 +1,4 @@
+import { createEffect, createRoot, createSignal } from "solid-js";
 import { createStore, produce } from "solid-js/store";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { api, errorText, type InputDevice } from "../lib/api";
@@ -97,7 +98,22 @@ type Out = {
 };
 const OUT_IDLE = { active: false, device: null, message: null, busy: false, speaking: [] as string[] };
 export const [output, setOutput] = createStore<Out>({ deafened: false, ...OUT_IDLE, volumes: {}, master: 100, gain: 100 });
-export const isSpeaking = (id: string) => output.speaking.includes(id);
+// 本人说话状态由麦克风电平判定，阈值与远端一致，约 -46 dBov。
+const SELF_SPEAK_LEVEL = 23;
+const SELF_SPEAK_HOLD_MS = 300;
+const [selfSpeaking, setSelfSpeaking] = createSignal(false);
+let selfSpeakTimer: ReturnType<typeof setTimeout> | undefined;
+function onSelfLevel(level: number) {
+  if (level < SELF_SPEAK_LEVEL || mic.muted || output.deafened) return;
+  setSelfSpeaking(true);
+  clearTimeout(selfSpeakTimer);
+  selfSpeakTimer = setTimeout(() => setSelfSpeaking(false), SELF_SPEAK_HOLD_MS);
+}
+function clearSelfSpeaking() {
+  clearTimeout(selfSpeakTimer);
+  setSelfSpeaking(false);
+}
+export const isSpeaking = (id: string) => (id === voice.me?.id ? selfSpeaking() : output.speaking.includes(id));
 export const volumeOf = (id: string) => output.volumes[id] ?? 100;
 
 // 请求序号。加入与退出各取一个，后端据此丢弃被取代的加入，前端据此丢弃迟到的结果。
@@ -310,6 +326,7 @@ export function micHint(): string | null {
 
 // 设置麦克风静音。未连接时只更新本地状态，加入时随请求发送。
 export async function setMuted(muted: boolean) {
+  switchesTouched = true;
   const generation = voice.generation;
   if (!voiceActive() || !generation || joining) {
     if (joining) wanted = muted;
@@ -337,6 +354,7 @@ export const toggleMic = () => setMuted(micFailed() ? false : !mic.muted);
 // 设置耳机关闭。关闭时同时静音麦克风，打开时恢复之前的静音状态。
 // 未连接时只更新本地状态，加入时随请求发送。
 export async function setDeafened(deafened: boolean) {
+  switchesTouched = true;
   const generation = voice.generation;
   if (!voiceActive() || !generation || joining) {
     if (joining) wantedDeaf = deafened;
@@ -411,6 +429,22 @@ export async function setMicGain(percent: number) {
 }
 
 // 启动时读取后端保存的本机音频偏好。读取失败时保持默认值。
+// 麦克风与耳机开关在本机保存，下次启动沿用。读取完成前的变化不写入，避免覆盖保存值。
+let switchesLoaded = false;
+let switchesTouched = false;
+let savedSwitches = "";
+createRoot(() => createEffect(() => {
+  const muted = mic.muted;
+  const deafened = output.deafened;
+  // 关闭耳机时保存关闭前的麦克风状态，恢复耳机后回到该状态。
+  const keepMuted = deafened ? (micBeforeDeaf ?? muted) : muted;
+  if (!switchesLoaded) return;
+  const key = `${keepMuted}:${deafened}`;
+  if (key === savedSwitches) return;
+  savedSwitches = key;
+  void api.setVoiceSwitches(keepMuted, deafened).catch(() => {});
+}));
+
 export async function loadAudioPrefs() {
   const my = [masterSeq, gainSeq, inSeq, outSeq];
   try {
@@ -422,6 +456,14 @@ export async function loadAudioPrefs() {
     if (my[2] === inSeq) { inOk = p.input; setInputs("selected", p.input); }
     if (my[3] === outSeq) { outOk = p.output; setOutputs("selected", p.output); }
     if (typeof p.effectVolume === "number") applyEffectPrefs(p.effectVolume, p.effectsOff ?? []);
+    // 开关只在启动后尚未操作、未进入语音时恢复。
+    if (!switchesTouched && !voiceActive() && !joining) {
+      const deaf = Boolean(p.deafened);
+      setOutput("deafened", deaf);
+      setMic({ muted: deaf || Boolean(p.muted), status: deaf || p.muted ? "muted" : "off" });
+      micBeforeDeaf = deaf ? Boolean(p.muted) : null;
+    }
+    switchesLoaded = true;
   } catch {
     // 使用默认值。
   }
@@ -441,6 +483,7 @@ export function onVoiceEvent(p: VoicePayload) {
         // 会话结束时清除设备状态，静音与耳机偏好保留。
         setMic(MIC_IDLE);
         setOutput(OUT_IDLE);
+        clearSelfSpeaking();
         if (ev.reason === "left") return void setVoice({ ...IDLE });
         if (ev.reason === "password") onPassword(p.channelId);
         setVoice({ phase: "disconnected", reason: ev.reason ?? "lost", message: ev.message ?? null, peers: [], attempt: 0, retryAt: null, quality: null, rtt: null });
@@ -449,6 +492,7 @@ export function onVoiceEvent(p: VoicePayload) {
       if (ev.phase === "reconnecting") {
         setMic({ status: "off", level: 0 });
         setOutput({ active: false, speaking: [] });
+        clearSelfSpeaking();
         setVoice({
           phase: "reconnecting", reason: null, message: ev.message ?? null, quality: null, rtt: null,
           attempt: ev.attempt ?? voice.attempt + 1, maxAttempts: ev.max ?? voice.maxAttempts,
@@ -492,10 +536,11 @@ export function onVoiceEvent(p: VoicePayload) {
       setOutput("speaking", output.deafened ? [] : ev.ids);
       return;
     case "mic":
+      if (ev.status !== "active" || ev.muted) clearSelfSpeaking();
       setMic({ status: ev.status, muted: ev.muted, device: ev.device ?? null, message: ev.message ?? null, ...(ev.status === "active" ? {} : { level: 0 }) });
       return;
     case "mic_level":
-      if (mic.status === "active") setMic("level", ev.level);
+      if (mic.status === "active") { setMic("level", ev.level); onSelfLevel(ev.level); }
       return;
     case "peer_changed": {
       const { id, ...rest } = ev.patch;
