@@ -27,13 +27,12 @@ export function emojiNode(name: string, id: string): HTMLImageElement {
   img.dataset.tip = name;
   img.draggable = false;
   img.referrerPolicy = "no-referrer";
-  img.contentEditable = "false";
   img.dataset.id = id;
   img.dataset.name = name;
-  // 失效资源显示名称，单元仍保留 ID。
+  // 失效资源以名称图形替代，单元仍是同一图片并保留 ID，编辑行为不变。
   img.onerror = () => {
     img.onerror = null;
-    img.removeAttribute("src");
+    img.src = nameImage(name);
     img.classList.add("broken");
   };
   return img;
@@ -59,4 +58,12 @@ export function read(el: Node): string {
   const last = el.lastChild;
   if (last instanceof HTMLBRElement && out.endsWith("\n")) out = out.slice(0, -1);
   return out;
+}
+
+// 以名称绘制的替代图形。
+function nameImage(name: string): string {
+  const w = Math.max(20, [...name].length * 14 + 4);
+  const esc = name.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="20"><text x="2" y="15" font-size="14" fill="#8f959e" font-family="sans-serif">${esc}</text></svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
 }

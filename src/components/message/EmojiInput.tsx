@@ -2,7 +2,7 @@ import { createEffect, on, onCleanup, onMount } from "solid-js";
 import { insertText, type Pick } from "../../lib/emoji";
 import { emojiNode, read, render } from "../../lib/draftDom";
 
-// 图形化输入框。草稿以 KMarkdown 文本为唯一来源：自定义表情显示为不可编辑的图片单元，Unicode 与其他文字为普通文本。
+// 图形化输入框。草稿以 KMarkdown 文本为唯一来源：自定义表情显示为普通行内图片，与文字一样参与光标、选择、复制与删除，Unicode 与其他文字为普通文本。
 // 只读取 DOM 中的文本、换行与表情单元，粘贴一律按纯文本插入，不发送编辑器 DOM 或 HTML。
 
 export type EmojiInputApi = { insert: (p: Pick) => void; focus: () => void };
@@ -106,7 +106,10 @@ export default function EmojiInput(p: {
     if (cut && p.disabled) return void e.preventDefault();
     const box = document.createElement("div");
     box.append(s.getRangeAt(0).cloneContents());
-    e.clipboardData?.setData("text/plain", read(box));
+    const text = read(box);
+    e.clipboardData?.setData("text/plain", text);
+    // 外部程序粘贴时得到名称与图片，本输入框只读取纯文本标记。
+    e.clipboardData?.setData("text/html", box.innerHTML);
     e.preventDefault();
     if (cut) {
       s.getRangeAt(0).deleteContents();

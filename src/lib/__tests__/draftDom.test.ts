@@ -3,7 +3,7 @@ import { Window } from "happy-dom";
 
 const w = new Window();
 Object.assign(globalThis, { window: w, document: w.document, Node: w.Node, HTMLElement: w.HTMLElement, HTMLImageElement: w.HTMLImageElement, HTMLBRElement: w.HTMLBRElement });
-const { read, render } = await import("../draftDom");
+const { emojiNode, read, render } = await import("../draftDom");
 
 const box = () => document.createElement("div") as unknown as HTMLElement;
 const E = "(emj)笑(emj)[100/abc]";
@@ -51,4 +51,28 @@ test("末尾粘贴以换行结尾的文本，补占位后换行不丢失", () =>
   el.append(...frag.childNodes);
   if (el.lastChild === last) el.append(document.createElement("br"));
   expect(read(el)).toBe("abcx\n");
+});
+
+test("表情单元可编辑，部分选区与删除按单个字符处理", () => {
+  const el = box();
+  render(el, `a${E}(emj)笑(emj)[100/def]b`);
+  const imgs = el.querySelectorAll("img");
+  expect(imgs[0].getAttribute("contenteditable")).toBeNull();
+  const r = document.createRange();
+  r.setStartBefore(imgs[0]);
+  r.setEndAfter(imgs[0]);
+  const part = box();
+  part.append(r.cloneContents());
+  expect(read(part)).toBe(E);
+  r.deleteContents();
+  expect(read(el)).toBe("a(emj)笑(emj)[100/def]b");
+});
+
+test("资源失效后仍按原表情读取", () => {
+  const el = box();
+  const img = emojiNode("笑", "100/abc");
+  el.append(img);
+  img.onerror?.(new Event("error") as never);
+  expect(img.classList.contains("broken")).toBe(true);
+  expect(read(el)).toBe(E);
 });

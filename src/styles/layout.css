@@ -380,8 +380,7 @@ button.quote:hover { background: var(--c-fill); }
 .composer-input.empty::before { content: attr(data-placeholder); float: left; height: 0; color: var(--c-placeholder); pointer-events: none; }
 .composer-input.disabled { cursor: not-allowed; }
 .composer-input .emoji { width: 20px; height: 20px; vertical-align: -4px; }
-.composer-input .emoji.broken { width: auto; height: auto; }
-.composer-input .emoji.broken::after { content: attr(alt); }
+.composer-input .emoji.broken { width: auto; }
 .emoji-picker { position: absolute; z-index: 5; display: flex; flex-direction: column; width: 360px; height: 320px;
   background: var(--c-float); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
 .composer-picker { left: 8px; bottom: calc(100% + 8px); }
