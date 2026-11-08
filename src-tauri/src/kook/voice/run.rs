@@ -122,7 +122,7 @@ pub(super) async fn run_loop(
     let mut stats =
         tokio::time::interval_at(tokio::time::Instant::now() + STATS_EVERY, STATS_EVERY);
     stats.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    let (stats_tx, mut stats_rx) = mpsc::unbounded_channel::<Option<UpStats>>();
+    let (stats_tx, mut stats_rx) = mpsc::unbounded_channel::<(Option<UpStats>, Option<u32>)>();
     let mut link = LinkMeter::default();
     // 丢弃收到的媒体包，由故障注入设置。
     #[cfg_attr(not(any(test, feature = "test-media")), allow(unused_mut))]
@@ -146,13 +146,16 @@ pub(super) async fn run_loop(
             _ = stats.tick(), if connected => {
                 let (signal, producer, tx) = (play.signal.clone(), live.producer_id.clone(), stats_tx.clone());
                 tauri::async_runtime::spawn(async move {
+                    let t0 = Instant::now();
                     let r = signal.request("getProducerStats", json!({ "producerId": producer })).await;
-                    let _ = tx.send(r.ok().as_ref().and_then(health::up_stats));
+                    // 信令往返时间作为连接延迟。
+                    let rtt = r.is_ok().then(|| u32::try_from(t0.elapsed().as_millis()).unwrap_or(u32::MAX));
+                    let _ = tx.send((r.ok().as_ref().and_then(health::up_stats), rtt));
                 });
             }
-            Some(up) = stats_rx.recv() => {
+            Some((up, rtt)) = stats_rx.recv() => {
                 let (s, depth) = play.mixer.lock().map(|m| m.stats()).unwrap_or_default();
-                sink(link.event(up, DownStats::from_jitter(&s, depth)));
+                sink(link.event(up, rtt, DownStats::from_jitter(&s, depth)));
             }
             () = &mut deadline, if !connected => {
                 return (lost("语音连接超时"), false);

@@ -79,8 +79,10 @@
 .group .name { padding-left: 2px; }
 
 .channel { margin: 0 0 4px 16px; padding: 0 8px; border-radius: 6px; cursor: pointer; color: var(--c-text); }
-.channel:hover { background: var(--c-hover); }
+.channel:hover, .channel:focus { background: var(--c-hover); }
 .channel.active { background: var(--c-fill); }
+.channel:focus { outline: none; }
+.channel:focus-visible { outline: 2px solid var(--c-brand-text); outline-offset: -2px; }
 .channel-row { display: flex; align-items: center; min-height: 36px; }
 .channel.has-preview .channel-row { min-height: 0; margin-top: 5px; }
 .channel .type { width: 16px; height: 16px; margin-right: 6px; display: flex; align-items: center; justify-content: center; }
@@ -113,24 +115,17 @@
 .voice-box button:disabled { opacity: .4; cursor: not-allowed; }
 .voice-box .icon-btn.danger { color: var(--c-danger); }
 .voice-status { display: flex; align-items: center; gap: 8px; padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid var(--c-line); }
-.voice-info { flex: 1; min-width: 0; }
-.voice-state { font-size: 14px; font-weight: 600; color: var(--c-text-2); }
-.voice-status.connected .voice-state { color: #3ba55d; }
-.voice-status.disconnected .voice-state { color: var(--c-danger); }
-.voice-channel, .voice-note { font-size: 12px; color: var(--c-text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.voice-note { white-space: normal; }
-.mic-note { color: var(--c-danger); }
+.voice-channel { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; color: var(--c-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.voice-channel.pending { color: #d29922; }
+.voice-channel.done { color: #3ba55d; }
+.latency-bars { display: flex; align-items: flex-end; gap: 2px; width: 18px; height: 14px; flex-shrink: 0; }
+.latency-bars > span { flex: 1; border-radius: 1px; background: var(--c-line); }
+.latency-bars.l4 > .on, .latency-bars.l3 > .on { background: #3ba55d; }
+.latency-bars.l2 > .on { background: #d29922; }
+.latency-bars.l1 > .on { background: var(--c-danger); }
+.latency-bars.disconnected > span { background: var(--c-danger); opacity: .4; }
 .link-btn { margin-left: 6px; padding: 0; font-size: 12px; color: var(--c-brand-text); text-decoration: underline; background: none; }
-.mic-meter { height: 3px; margin-top: 4px; border-radius: 2px; background: var(--c-line); overflow: hidden; }
-.mic-meter > div { height: 100%; background: #3ba55d; transition: width .2s linear; }
-.voice-wait { font-weight: 400; font-size: 12px; }
-.voice-quality { margin-left: 6px; padding: 0 4px; font-size: 11px; font-weight: 400; border-radius: 4px; background: var(--c-hover); }
-.voice-quality.good { color: #3ba55d; }
-.voice-quality.fair { color: #d29922; }
-.voice-quality.poor { color: var(--c-danger); }
-.voice-devices { font-size: 12px; color: var(--c-text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.voice-devices.warn { color: var(--c-danger); }
-.rejoin-btn { margin-top: 4px; padding: 2px 8px; font-size: 12px; color: #fff; background: #3ba55d; border-radius: 6px; }
+.rejoin-btn { padding: 2px 8px; font-size: 12px; color: #fff; background: #3ba55d; border-radius: 6px; }
 
 /* ── 消息区 ── */
 .chat { flex: 1; min-width: 0; display: flex; flex-direction: column; border-left: 1px solid var(--c-line); }

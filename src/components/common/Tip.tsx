@@ -4,6 +4,8 @@ import { Portal } from "solid-js/web";
 // 悬停提示。全应用以 data-tip 声明，由此统一显示，不使用浏览器的 title 与 alt 弹出。
 // 事件委托：指针悬停或键盘聚焦（:focus-visible）时显示，全局只有一个提示层。
 // 提示只补充视觉说明，语义名称由元素自身的 aria-label 等提供。
+// data-focus-tip 在元素获得焦点时显示，单击聚焦也会显示，用于提示下一步操作。
+// 显示后不随指针移开消失，焦点离开或点击其他位置时隐藏。
 // side 为 right 时显示在目标右侧并垂直居中（服务器栏），否则显示在上方，空间不足时在下方。
 type Tip = { text: string; x: number; y: number; side: "top" | "bottom" | "right" };
 const [tip, setTip] = createSignal<Tip | null>(null);
@@ -13,20 +15,24 @@ export function TipLayer() {
   let anchor: HTMLElement | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let box: HTMLDivElement | undefined;
+  // 当前提示由焦点触发，指针移动不影响。
+  let sticky = false;
 
   const hide = () => {
     clearTimeout(timer);
     anchor = null;
+    sticky = false;
     setTip(null);
   };
-  const show = (el: HTMLElement) => {
+  const show = (el: HTMLElement, key: "tip" | "focusTip" = "tip") => {
     if (el === anchor) return;
     clearTimeout(timer);
     anchor = el;
+    sticky = key === "focusTip";
     setTip(null);
     timer = setTimeout(() => {
       // 文本在显示时读取，延迟期间的变化不会显示旧内容。
-      const text = el.dataset.tip;
+      const text = el.dataset[key];
       if (anchor !== el || !el.isConnected || !text) return;
       const r = el.getBoundingClientRect();
       if (el.dataset.tipSide === "right") {
@@ -47,16 +53,20 @@ export function TipLayer() {
 
   const tipOf = (n: EventTarget | null) => (n instanceof Element ? n.closest<HTMLElement>("[data-tip]") : null);
   const over = (e: PointerEvent) => {
+    if (sticky) return;
     const el = tipOf(e.target);
     if (el) show(el);
     else if (anchor) hide();
   };
   const out = (e: Event) => {
+    if (sticky && e.type !== "focusout") return;
     const to = (e as PointerEvent | FocusEvent).relatedTarget;
     if (anchor && !(to instanceof Node && anchor.contains(to))) hide();
   };
-  // 只响应键盘聚焦。程序调用 focus() 归还焦点时不弹出提示。
+  // data-tip 只响应键盘聚焦。程序调用 focus() 归还焦点时不弹出提示。
   const focusIn = (e: FocusEvent) => {
+    const f = e.target instanceof HTMLElement && e.target.dataset.focusTip ? e.target : null;
+    if (f) return show(f, "focusTip");
     const el = tipOf(e.target);
     if (el && el.matches(":focus-visible, :has(:focus-visible)")) show(el);
   };

@@ -12,7 +12,12 @@ pub(super) struct LinkMeter {
 }
 
 impl LinkMeter {
-    pub(super) fn event(&mut self, up: Option<UpStats>, down: DownStats) -> VoiceEvent {
+    pub(super) fn event(
+        &mut self,
+        up: Option<UpStats>,
+        rtt: Option<u32>,
+        down: DownStats,
+    ) -> VoiceEvent {
         let dl = health::down_loss(
             down.packets.saturating_sub(self.last.packets),
             down.lost.saturating_sub(self.last.lost),
@@ -25,6 +30,7 @@ impl LinkMeter {
         VoiceEvent::Link {
             quality: health::quality(up.map(|u| u.score), loss),
             up,
+            rtt,
             down,
         }
     }
@@ -225,10 +231,16 @@ mod tests {
             VoiceEvent::Link { quality, .. } => quality,
             _ => None,
         };
-        assert_eq!(q(m.event(Some(up), down(100, 50))), Some(Quality::Poor));
+        assert_eq!(
+            q(m.event(Some(up), None, down(100, 50))),
+            Some(Quality::Poor)
+        );
         // 增量没有丢包。
-        assert_eq!(q(m.event(Some(up), down(200, 50))), Some(Quality::Good));
-        assert_eq!(q(m.event(None, down(200, 50))), None);
+        assert_eq!(
+            q(m.event(Some(up), None, down(200, 50))),
+            Some(Quality::Good)
+        );
+        assert_eq!(q(m.event(None, None, down(200, 50))), None);
     }
 
     #[test]

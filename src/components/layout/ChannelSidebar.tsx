@@ -1,8 +1,8 @@
-import { For, Show, createSignal, onCleanup } from "solid-js";
+import { For, Show, createEffect, createSignal, on, onCleanup } from "solid-js";
 import { CircleHelp, Headphones, HeadphoneOff, Menu, Mic, MicOff, PhoneOff, Settings, UserPlus, X } from "lucide-solid";
 import type { Channel } from "../../stores/types";
 import { accessState, enterVoice, loadDms, permsOf, retryAccess, selectChannel, selectDm, session, visible, voiceBlock } from "../../stores/session";
-import { canRejoin, deviceSummary, dismissVoice, isSpeaking, leaveVoice, mic, micFailed, micHint, output, qualityText, setPeerVolume, toggleDeafen, toggleMic, voice, voiceActive, voiceStatusText, volumeOf, type VoicePeer } from "../../stores/voice";
+import { canRejoin, dismissVoice, isSpeaking, leaveVoice, mic, micFailed, output, setPeerVolume, toggleDeafen, toggleMic, voice, voiceActive, voiceStatusText, volumeOf, type VoicePeer } from "../../stores/voice";
 import { DM_VIEW, currentChannelId, currentChatCode, ui, setUi } from "../../stores/ui";
 import Avatar from "../common/Avatar";
 import { DeviceMenu, VolumePop, type AudioKind } from "./AudioPanel";
@@ -50,18 +50,19 @@ function ChannelItem(p: { c: Channel }) {
   // 可查看但不能连接的语音频道保留显示，并说明原因。
   const noConnect = () => p.c.type === "voice" && voiceBlock(p.c.id) === "denied";
   const icon = () => channelIcon(p.c, permsOf(p.c.id));
+  const canJoin = () => p.c.type === "voice" && !noConnect() && !inRoom();
   return (
     <>
       <div
         aria-label={[p.c.name, ...icon().parts].join(" ")}
         aria-disabled={noConnect() || undefined}
         class={`channel ${p.c.type === "unknown" || noConnect() ? "unsupported" : ""} ${active() ? "active" : ""} ${preview() ? "has-preview" : ""}`}
-        onClick={() => {
-          // 语音频道点击即加入，已在该频道时不重复加入。
-          if (p.c.type === "voice") return void (noConnect() || enterVoice(p.c.id));
-          if (p.c.type !== "text") return;
-          selectChannel(p.c.id);
-        }}
+        // 语音频道单击只聚焦并提示，双击或回车加入；已在该频道时不重复加入。
+        tabIndex={canJoin() ? 0 : undefined}
+        data-focus-tip={canJoin() ? "双击进入频道" : undefined}
+        onDblClick={() => canJoin() && void enterVoice(p.c.id)}
+        onKeyDown={(e) => e.key === "Enter" && canJoin() && void enterVoice(p.c.id)}
+        onClick={() => p.c.type === "text" && selectChannel(p.c.id)}
       >
         <div class="channel-row">
           <span class="type" role="img" aria-label={icon().label} data-tip={icon().label}>
@@ -131,17 +132,27 @@ function DmList() {
   );
 }
 
-// 语音状态栏：当前语音频道、连接状态与断开，麦克风与耳机开关、失败提示。
+// 连接延迟柱状图，延迟越低亮起的柱越多。未连接时显示连接状态。
+function LatencyBars() {
+  const level = () => {
+    const r = voice.rtt;
+    if (voice.phase !== "connected" || r === null) return 0;
+    return r < 100 ? 4 : r < 200 ? 3 : r < 400 ? 2 : 1;
+  };
+  const tip = () => (voice.phase === "connected" && voice.rtt !== null ? `延迟 ${voice.rtt} 毫秒` : voiceStatusText());
+  return (
+    <div class={`latency-bars l${level()} ${voice.phase}`} data-tip={tip()} role="img" aria-label={tip()}>
+      <For each={[1, 2, 3, 4]}>{(i) => <span style={{ height: `${i * 25}%` }} classList={{ on: i <= level() }} />}</For>
+    </div>
+  );
+}
+
+// 语音状态栏：连接延迟、频道名与断开，麦克风与耳机开关。
 function VoiceBox() {
   const name = () => {
-    for (const g of session.guilds) for (const grp of g.groups) for (const c of grp.channels) if (c.id === voice.channelId) return `${c.name} / ${g.name}`;
+    for (const g of session.guilds) for (const grp of g.groups) for (const c of grp.channels) if (c.id === voice.channelId) return c.name;
     return "语音频道";
   };
-  const noSay = () => voiceActive() && voice.me !== null && !voice.me.permissionSay;
-  // 每 0.5 秒刷新重连倒计时。
-  const [now, setNow] = createSignal(Date.now());
-  const timer = setInterval(() => setNow(Date.now()), 500);
-  onCleanup(() => clearInterval(timer));
   // 右键打开设备菜单，按触发位置水平定位；悬停或键盘聚焦时显示音量条，拖动期间保持显示。
   const [menu, setMenu] = createSignal<{ kind: AudioKind; x: number } | null>(null);
   const [hover, setHover] = createSignal<AudioKind | null>(null);
@@ -159,6 +170,19 @@ function VoiceBox() {
     onFocusIn: () => show(k),
     onFocusOut: (e: FocusEvent) => !(e.currentTarget as Element).contains(e.relatedTarget as Node) && setHover(null),
   });
+  // 连接中显示状态，连上后短暂显示已连接，再显示频道名。
+  const [justConnected, setJustConnected] = createSignal(false);
+  let flash: ReturnType<typeof setTimeout> | undefined;
+  createEffect(on(() => voice.phase, (ph, prev) => {
+    clearTimeout(flash);
+    setJustConnected(ph === "connected" && (prev === "connecting" || prev === "reconnecting"));
+    if (justConnected()) flash = setTimeout(() => setJustConnected(false), 1000);
+  }));
+  onCleanup(() => clearTimeout(flash));
+  const label = () =>
+    voice.phase === "connecting" || voice.phase === "reconnecting" ? { text: "连接中", cls: "pending" }
+      : justConnected() ? { text: "已连接", cls: "done" }
+        : null;
   let ctrls!: HTMLDivElement;
   const openMenu = (e: MouseEvent, kind: AudioKind) => {
     e.preventDefault();
@@ -172,42 +196,18 @@ function VoiceBox() {
   };
   let inBtn: HTMLButtonElement | undefined;
   let outBtn: HTMLButtonElement | undefined;
-  const wait = () => (voice.phase === "reconnecting" && voice.retryAt ? Math.max(0, Math.ceil((voice.retryAt - now()) / 1000)) : 0);
   return (
     <div class="voice-box">
-      <Show when={voice.phase !== "idle"}>
+      <Show when={voice.phase !== "idle" && (voice.phase !== "disconnected" || canRejoin())}>
         <div class={`voice-status ${voice.phase}`}>
-          <div class="voice-info">
-            <div class="voice-state">
-              {voiceStatusText()}
-              <Show when={wait() > 0}><span class="voice-wait">{` ${wait()} 秒后重试`}</span></Show>
-              <Show when={voice.phase === "connected" && qualityText()}>
-                {(q) => <span class={`voice-quality ${voice.quality}`} data-tip="链路质量" aria-label={`链路质量 ${q()}`}>{`质量${q()}`}</span>}
-              </Show>
-            </div>
-            <div class="voice-channel" data-tip={voice.message ?? undefined} aria-description={voice.message ?? undefined}>{name()}</div>
-            <Show when={voice.phase === "reconnecting" || voice.phase === "disconnected" ? voice.message : null}>{(m) => <div class="voice-note">{m()}</div>}</Show>
-            <Show when={canRejoin()}>
-              <button class="rejoin-btn" onClick={() => canRejoin() && void enterVoice(voice.channelId)} data-tip="重新加入该语音频道">重新加入</button>
-            </Show>
-            <Show when={noSay()}><div class="voice-note">当前设备没有发言权限，其他人听不到你</div></Show>
-            <Show when={voiceActive() && !noSay() && (micHint() ?? (mic.status === "muted" ? null : mic.message))}>
-              {(m) => (
-                <div class="voice-note mic-note">
-                  {m()}
-                  <Show when={micFailed()}><button class="link-btn" disabled={mic.busy} onClick={() => void toggleMic()}>重试</button></Show>
-                </div>
-              )}
-            </Show>
-            <Show when={voiceActive() && output.message}>{(m) => <div class="voice-note">{m()}</div>}</Show>
-            <Show when={voiceActive() && mic.status === "active"}>
-              <div class="mic-meter" data-tip={mic.device ?? undefined} role="meter" aria-label="麦克风输入电平" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(mic.level)} aria-description={mic.device ?? undefined}><div style={{ width: `${mic.level}%` }} /></div>
-            </Show>
-            <Show when={voice.phase === "connected" ? deviceSummary() : null}>
-              {(d) => <div class={`voice-devices ${d().ok ? "" : "warn"}`} data-tip={d().title} aria-description={d().title}>{d().text}</div>}
-            </Show>
-          </div>
-          <Show when={voiceActive()} fallback={<button class="icon-btn" data-tip="关闭提示" aria-label="关闭提示" onClick={dismissVoice}><X size={18} /></button>}>
+          <LatencyBars />
+          <Show when={label()} fallback={<div class="voice-channel">{name()}</div>}>
+            {(t) => <div class={`voice-channel ${t().cls}`} role="status">{t().text}</div>}
+          </Show>
+          <Show when={canRejoin()}>
+            <button class="rejoin-btn" onClick={() => canRejoin() && void enterVoice(voice.channelId)}>重新加入</button>
+          </Show>
+          <Show when={voiceActive()} fallback={<button class="icon-btn" data-tip="关闭" aria-label="关闭" onClick={dismissVoice}><X size={18} /></button>}>
             <button class="icon-btn danger" data-tip="断开语音" aria-label="断开语音" onClick={() => void leaveVoice()}><PhoneOff size={18} /></button>
           </Show>
         </div>

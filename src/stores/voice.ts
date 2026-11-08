@@ -30,7 +30,7 @@ export type VoiceEvent =
   | { type: "mic_level"; level: number }
   | { type: "output"; deafened: boolean; active: boolean; device?: string; message?: string }
   | { type: "speaking"; ids: string[] }
-  | { type: "link"; quality?: LinkQuality; up?: UpStats; down: DownStats };
+  | { type: "link"; quality?: LinkQuality; up?: UpStats; rtt?: number; down: DownStats };
 // 麦克风状态。denied、no_device、device_lost 与 error 为失败状态，
 // 取消静音即重试。
 export type MicStatus = "off" | "starting" | "active" | "muted" | "denied" | "no_device" | "device_lost" | "error";
@@ -53,9 +53,11 @@ type State = {
   retryAt: number | null;
   // 链路质量，未连接时为 null。
   quality: LinkQuality | null;
+  // 连接延迟，单位毫秒。
+  rtt: number | null;
 };
 
-const IDLE: State = { channelId: "", generation: 0, phase: "idle", reason: null, message: null, me: null, peers: [], attempt: 0, maxAttempts: 0, retryAt: null, quality: null };
+const IDLE: State = { channelId: "", generation: 0, phase: "idle", reason: null, message: null, me: null, peers: [], attempt: 0, maxAttempts: 0, retryAt: null, quality: null, rtt: null };
 
 export const [voice, setVoice] = createStore<State>({ ...IDLE });
 
@@ -417,14 +419,14 @@ export function onVoiceEvent(p: VoicePayload) {
         setOutput(OUT_IDLE);
         if (ev.reason === "left") return void setVoice({ ...IDLE });
         if (ev.reason === "password") onPassword(p.channelId);
-        setVoice({ phase: "disconnected", reason: ev.reason ?? "lost", message: ev.message ?? null, peers: [], attempt: 0, retryAt: null, quality: null });
+        setVoice({ phase: "disconnected", reason: ev.reason ?? "lost", message: ev.message ?? null, peers: [], attempt: 0, retryAt: null, quality: null, rtt: null });
         return;
       }
       if (ev.phase === "reconnecting") {
         setMic({ status: "off", level: 0 });
         setOutput({ active: false, speaking: [] });
         setVoice({
-          phase: "reconnecting", reason: null, message: ev.message ?? null, quality: null,
+          phase: "reconnecting", reason: null, message: ev.message ?? null, quality: null, rtt: null,
           attempt: ev.attempt ?? voice.attempt + 1, maxAttempts: ev.max ?? voice.maxAttempts,
           retryAt: ev.retry_in_ms !== undefined ? Date.now() + ev.retry_in_ms : null,
         });
@@ -434,7 +436,7 @@ export function onVoiceEvent(p: VoicePayload) {
       setVoice({ phase: ev.phase, reason: null, message: null, retryAt: null, ...(ev.phase === "connected" ? { attempt: 0 } : {}) });
       return;
     case "link":
-      setVoice("quality", ev.quality ?? null);
+      setVoice({ quality: ev.quality ?? null, rtt: ev.rtt ?? null });
       return;
     case "joined":
       // 成员列表不含本人。

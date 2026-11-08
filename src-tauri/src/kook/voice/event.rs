@@ -184,6 +184,9 @@ pub enum VoiceEvent {
         quality: Option<Quality>,
         #[serde(skip_serializing_if = "Option::is_none")]
         up: Option<UpStats>,
+        /// 信令往返时间，单位毫秒。
+        #[serde(skip_serializing_if = "Option::is_none")]
+        rtt: Option<u32>,
         down: DownStats,
     },
 }
