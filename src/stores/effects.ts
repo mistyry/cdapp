@@ -28,6 +28,12 @@ export const EFFECT_LIST: { id: EffectId; name: string }[] = [
   { id: Effect.MENTION, name: "提及我的消息通知" },
 ];
 
+// 播放进场音效。成员设有装扮时播放装扮音效，否则播放用户连接。
+export function playJoin(item?: number) {
+  if (item) void api.effectPlayItem(item).catch(() => {});
+  else playEffect(Effect.USER_JOIN);
+}
+
 // 开关与音量由后端判断，失败不影响调用方。
 export function playEffect(id: EffectId) {
   void api.effectPlay(id).catch(() => {});

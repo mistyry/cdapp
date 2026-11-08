@@ -3170,6 +3170,9 @@ test("提示音：连接、成员进出与主动断开", async () => {
     auto.voice_join = () => 1;
     await vs.joinVoice("V1");
     ev(1, { type: "state", phase: "connected" });
+    // 本人信息到达后才播放进入提示音。
+    expect(effectIds()).toEqual([]);
+    ev(1, { type: "joined", me: peer("me"), peers: [] });
     expect(effectIds()).toEqual([1]);
     // 连接后 1 秒内不播放成员进出。
     ev(1, { type: "peer_joined", peer: peer("u2") });
@@ -3214,4 +3217,24 @@ test("提示音：消息通知按会话与提及选择", async () => {
   note({ msg_id: "m4", channel_id: "C9", author_id: "me" });
   note({ msg_id: "m5", channel_id: "C9", author_id: 5, gift_triggered: true });
   expect(effectIds()).toEqual([10, 13, 10]);
+});
+
+test("提示音：成员装扮音效", async () => {
+  const realNow = Date.now;
+  let now = 2_000_000;
+  Date.now = () => now;
+  try {
+    auto.voice_join = () => 1;
+    await vs.joinVoice("V1");
+    ev(1, { type: "joined", me: peer("me", { joinVoice: 10148 }), peers: [] });
+    ev(1, { type: "state", phase: "connected" });
+    now += 1500;
+    ev(1, { type: "peer_joined", peer: peer("u4", { joinVoice: 10011 }) });
+    ev(1, { type: "peer_joined", peer: peer("u5") });
+    const items = calls.filter((c) => c.cmd === "effect_play_item").map((c) => c.args.item);
+    expect(items).toEqual([10148, 10011]);
+    expect(effectIds()).toEqual([1]);
+  } finally {
+    Date.now = realNow;
+  }
 });

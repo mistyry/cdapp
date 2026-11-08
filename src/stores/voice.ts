@@ -1,7 +1,7 @@
 import { createStore, produce } from "solid-js/store";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { api, errorText, type InputDevice } from "../lib/api";
-import { Effect, applyEffectPrefs, playEffect } from "./effects";
+import { Effect, applyEffectPrefs, playEffect, playJoin } from "./effects";
 
 // 语音会话状态。后端在后台完成连接与重建，经 voice://event 推送事件，事件按会话代次过滤。
 // 静音、耳机与成员音量在会话之间保留，退出登录时重置。
@@ -10,6 +10,7 @@ import { Effect, applyEffectPrefs, playEffect } from "./effects";
 export type VoicePeer = {
   id: string; name: string; avatar: string; device: string;
   micOff: boolean; headsetOff: boolean; permissionSay: boolean; serverMute: boolean;
+  joinVoice?: number;
 };
 export type VoicePatch = Partial<Omit<VoicePeer, "avatar" | "device">> & { id: string };
 export type VoicePhase = "idle" | "connecting" | "connected" | "reconnecting" | "disconnected";
@@ -153,6 +154,7 @@ export async function joinVoice(channelId: string, password: string | null = nul
   wanted = null;
   wantedDeaf = null;
   early = [];
+  selfJoinPending = false;
   setVoice({ ...IDLE, channelId, phase: "connecting" });
   setMic(MIC_IDLE);
   setOutput(OUT_IDLE);
@@ -189,6 +191,7 @@ export async function leaveVoice() {
   wanted = null;
   wantedDeaf = null;
   early = [];
+  selfJoinPending = false;
   setVoice({ ...IDLE });
   setMic(MIC_IDLE);
   setOutput(OUT_IDLE);
@@ -205,6 +208,8 @@ export async function disconnectVoice() {
 const PEER_QUIET_MS = 1000;
 const PEER_LIMIT = 30;
 let quietUntil = 0;
+// 首次连接成功时成员信息可能尚未到达，到达后再播放进入提示音。
+let selfJoinPending = false;
 const peerSoundOk = () => voice.phase === "connected" && Date.now() >= quietUntil;
 
 // 需要频道密码时的处理，由会话层注册。
@@ -267,6 +272,7 @@ export function resetVoice() {
   wanted = null;
   wantedDeaf = null;
   early = [];
+  selfJoinPending = false;
   setVoice({ ...IDLE });
   setMic({ muted: false, ...MIC_IDLE });
   setOutput({ deafened: false, ...OUT_IDLE, volumes: {} });
@@ -453,7 +459,8 @@ export function onVoiceEvent(p: VoicePayload) {
       // 首次连接成功时播放进入提示音，重连恢复不播放。
       if (ev.phase === "connected" && voice.phase === "connecting") {
         quietUntil = Date.now() + PEER_QUIET_MS;
-        playEffect(Effect.USER_JOIN);
+        selfJoinPending = true;
+        if (voice.me) { selfJoinPending = false; playJoin(voice.me.joinVoice); }
       } else if (ev.phase === "connected") {
         quietUntil = Date.now() + PEER_QUIET_MS;
       }
@@ -466,10 +473,11 @@ export function onVoiceEvent(p: VoicePayload) {
     case "joined":
       // 成员列表不含本人。
       setVoice({ me: ev.me, peers: ev.peers.filter((x) => x.id !== ev.me.id) });
+      if (selfJoinPending) { selfJoinPending = false; playJoin(ev.me.joinVoice); }
       return;
     case "peer_joined":
       if (ev.peer.id === voice.me?.id) return;
-      if (peerSoundOk() && !voice.peers.some((x) => x.id === ev.peer.id) && voice.peers.length + 2 <= PEER_LIMIT) playEffect(Effect.USER_JOIN);
+      if (peerSoundOk() && !voice.peers.some((x) => x.id === ev.peer.id) && voice.peers.length + 2 <= PEER_LIMIT) playJoin(ev.peer.joinVoice);
       setVoice("peers", (list) => [...list.filter((x) => x.id !== ev.peer.id), ev.peer]);
       return;
     case "peer_left":

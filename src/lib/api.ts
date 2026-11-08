@@ -165,6 +165,7 @@ export const api = {
   voiceSetGain: (percent: number) => invoke<number>("voice_set_gain", { percent }),
   audioPrefs: () => invoke<AudioPrefs>("audio_prefs"),
   effectPlay: (id: number, preview = false) => invoke<void>("effect_play", { id, preview }),
+  effectPlayItem: (item: number) => invoke<void>("effect_play_item", { item }),
   setEffectVolume: (percent: number) => invoke<void>("set_effect_volume", { percent }),
   setEffectEnabled: (id: number, on: boolean) => invoke<void>("set_effect_enabled", { id, on }),
 };

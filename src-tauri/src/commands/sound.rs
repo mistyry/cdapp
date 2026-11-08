@@ -20,6 +20,7 @@ const EFFECTS: &[(u8, &str)] = &[
     (13, "mention-self.mp3"),
 ];
 
+const USER_JOIN: u8 = 1;
 const MENTION: u8 = 10;
 const MENTION_SELF: u8 = 13;
 
@@ -63,6 +64,31 @@ pub async fn effect_play(
         return Ok(());
     }
     effect::play(&path, device, f32::from(volume) / 100.0);
+    Ok(())
+}
+
+/// 播放成员的进场音效，失败时播放用户连接提示音。受用户连接开关控制。
+#[tauri::command]
+pub async fn effect_play_item(item: u64, voice: State<'_, VoiceState>) -> AppResult<()> {
+    let (device, volume, off) = {
+        let slot = voice.0.lock().await;
+        (
+            slot.output.clone(),
+            slot.effect_volume,
+            slot.effects_off.clone(),
+        )
+    };
+    if resolve(USER_JOIN, &off).is_none() {
+        return Ok(());
+    }
+    let api = crate::kook::api::Api::new(None)?;
+    let path = match sound::item_sound(&api, item).await {
+        Some(p) => Some(p),
+        None => file_of(USER_JOIN).and_then(sound::system_file),
+    };
+    if let Some(path) = path.filter(|p| p.is_file()) {
+        effect::play(&path, device, f32::from(volume) / 100.0);
+    }
     Ok(())
 }
 

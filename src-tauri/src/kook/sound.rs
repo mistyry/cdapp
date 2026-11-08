@@ -163,6 +163,26 @@ async fn download(api: &Api, url: &str, path: &std::path::Path) -> bool {
     }
 }
 
+/// 物品音效的本地文件。索引中没有或文件缺失时按 ID 查询并下载，失败返回 None。
+pub async fn item_sound(api: &Api, id: u64) -> Option<PathBuf> {
+    let known = load_index().items.get(&id).cloned();
+    let url = if let Some(u) = known {
+        u
+    } else {
+        let v = api
+            .get("/api/v3/item/list", &[("id", id.to_string())])
+            .await
+            .ok()?;
+        parse_items(&v).remove(&id)?
+    };
+    let path = item_file(&url)?;
+    if path.is_file() || download(api, &url, &path).await {
+        Some(path)
+    } else {
+        None
+    }
+}
+
 /// 检查音效索引并下载本地缺少的文件。`progress` 在开始与每完成一个文件时调用。
 ///
 /// # Errors

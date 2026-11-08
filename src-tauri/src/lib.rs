@@ -82,6 +82,7 @@ pub fn run() {
             commands::sayings,
             commands::sound_sync,
             commands::effect_play,
+            commands::effect_play_item,
             commands::set_effect_volume,
             commands::set_effect_enabled,
             commands::login_qr_code,

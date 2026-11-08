@@ -17,6 +17,9 @@ pub struct Peer {
     pub headset_off: bool,
     pub permission_say: bool,
     pub server_mute: bool,
+    /// 进场音效物品 ID。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub join_voice: Option<u64>,
 }
 
 pub(super) fn id_of(v: Option<&Value>) -> Option<String> {
@@ -47,6 +50,10 @@ impl Peer {
             // 服务端未下发时视为允许发言。
             permission_say: b("permissionSay").unwrap_or(true),
             server_mute: b("isServerMute").unwrap_or(false),
+            join_voice: v
+                .pointer("/extra/decorations/join_voice")
+                .and_then(|x| x.as_u64().or_else(|| x.as_str()?.parse().ok()))
+                .filter(|&x| x > 0),
         })
     }
 }
@@ -210,6 +217,21 @@ impl VoiceEvent {
 mod tests {
     use super::*;
     use crate::kook::voice::*;
+
+    #[test]
+    fn parses_join_voice_decoration() {
+        let p =
+            Peer::parse(&json!({"peerId": "1", "extra": {"decorations": {"join_voice": 10148}}}))
+                .unwrap();
+        assert_eq!(p.join_voice, Some(10148));
+        let p = Peer::parse(&json!({"peerId": "1", "extra": {"decorations": {"join_voice": "0"}}}))
+            .unwrap();
+        assert_eq!(p.join_voice, None);
+        assert_eq!(
+            Peer::parse(&json!({"peerId": "1"})).unwrap().join_voice,
+            None
+        );
+    }
 
     #[test]
     fn parses_peers() {
