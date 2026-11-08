@@ -1,4 +1,5 @@
 import { api, errorText, setUnauthorizedHandler, type Raw } from "../../lib/api";
+import { forgetAccountCache } from "../../lib/accountState";
 import { resetVoice } from "../voice";
 import { resetUi } from "../ui";
 import { resetAccess } from "./access";
@@ -55,6 +56,7 @@ export async function enter(meRaw?: Raw) {
 export function reset(phase: "login" | "boot", notice: string | null = null) {
   st.epoch++;
   st.account++;
+  forgetAccountCache();
   resetHistory();
   resetAccess();
   resetNav();

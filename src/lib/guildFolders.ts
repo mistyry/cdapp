@@ -1,3 +1,4 @@
+import { readAccount, writeAccount } from "./accountState";
 // 服务器栏结构：独立服务器与服务器文件夹。与服务器内的频道分组无关。
 // 服务器业务数据仍按 ID 存放在 session.guilds，这里只保存顺序与归属。
 
@@ -53,22 +54,15 @@ export function folderTint(color: number | null, alpha: number): string {
   return `rgba(${(color >> 16) & 255}, ${(color >> 8) & 255}, ${color & 255}, ${alpha})`;
 }
 
-// 展开状态按账号保存在本地。只保存展开的文件夹，新文件夹默认折叠。
-const openKey = (me: string) => `cdapp.folders.open.${me}`;
+// 展开状态按账号保存在数据目录。只保存展开的文件夹，新文件夹默认折叠。
+export function parseOpen(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string").slice(0, 256) : [];
+}
 
-export function readOpen(me: string): string[] {
-  try {
-    const v = JSON.parse(globalThis.localStorage?.getItem(openKey(me)) ?? "[]");
-    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string").slice(0, 256) : [];
-  } catch {
-    return [];
-  }
+export async function readOpen(me: string): Promise<string[]> {
+  return parseOpen(await readAccount(me, "openFolders"));
 }
 
 export function writeOpen(me: string, ids: readonly string[]) {
-  try {
-    globalThis.localStorage?.setItem(openKey(me), JSON.stringify(ids));
-  } catch {
-    // 本地存储不可用时只保留在内存中。
-  }
+  writeAccount(me, "openFolders", [...ids]);
 }

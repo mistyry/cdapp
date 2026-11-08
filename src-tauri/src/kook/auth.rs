@@ -1,7 +1,6 @@
 use std::fs;
-use std::io::{self, Write};
-use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::io;
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -9,24 +8,17 @@ use serde_json::{Value, json};
 use super::api::{Api, str_field};
 use crate::error::{AppError, AppResult};
 
-/// 凭据文件位置，在应用启动时设置为应用数据目录下的文件。
-static PATH: OnceLock<PathBuf> = OnceLock::new();
-const FILE: &str = "credentials.json";
-
 #[derive(Serialize, Deserialize)]
 struct Stored {
     token: String,
 }
 
-/// 设置凭据所在目录。只在启动时调用一次。
-pub fn init(dir: &Path) {
-    let _ = PATH.set(dir.join(FILE));
-}
-
-fn path() -> AppResult<&'static Path> {
-    PATH.get()
-        .map(PathBuf::as_path)
-        .ok_or_else(|| AppError::Other("凭据存储未初始化".into()))
+fn path() -> AppResult<PathBuf> {
+    #[cfg(test)]
+    if let Some(p) = tests::PATH.get() {
+        return Ok(p.clone());
+    }
+    crate::storage::credentials().ok_or_else(|| AppError::Other("凭据存储未初始化".into()))
 }
 
 /// 读取保存的 token，不存在时返回 None。文件损坏视为没有凭据。
@@ -45,28 +37,16 @@ pub fn load_token() -> AppResult<Option<String>> {
     }
 }
 
-/// 写入临时文件后原子替换，Unix 下权限为仅本人可读写。
+/// 保存在固定目录，原子写入，Unix 下权限为仅本人可读写。
 ///
 /// # Errors
 ///
 /// 目录创建或文件写入失败时返回错误。
 pub fn save_token(token: &str) -> AppResult<()> {
-    let path = path()?;
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)?;
-    }
-    let tmp = path.with_extension("tmp");
-    let mut opts = fs::OpenOptions::new();
-    opts.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
-    let mut f = opts.open(&tmp)?;
-    f.write_all(&serde_json::to_vec(&Stored {
+    let bytes = serde_json::to_vec(&Stored {
         token: token.to_owned(),
-    })?)?;
-    f.sync_all()?;
-    drop(f);
-    fs::rename(&tmp, path)?;
+    })?;
+    crate::storage::write_raw(&path()?, &bytes, true)?;
     Ok(())
 }
 
@@ -135,11 +115,15 @@ pub async fn qr_cancel(api: &Api, content: &str) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::OnceLock;
+
+    const FILE: &str = "credentials.json";
+    pub(super) static PATH: OnceLock<PathBuf> = OnceLock::new();
 
     #[test]
     fn save_load_clear() {
         let dir = std::env::temp_dir().join(format!("cdapp-cred-{}", std::process::id()));
-        init(&dir);
+        let _ = PATH.set(dir.join(FILE));
         assert_eq!(load_token().unwrap(), None);
         save_token("t1").unwrap();
         save_token("t2").unwrap();

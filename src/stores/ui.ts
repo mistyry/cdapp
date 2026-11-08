@@ -29,7 +29,7 @@ const initial = () => ({
   replies: {} as Record<string, Reply | undefined>,
   staged: {} as Record<string, Staged[]>,
   // 打开的全屏设置页，null 表示未打开。
-  settings: null as null | "account" | "voice",
+  settings: null as null | "account" | "voice" | "storage",
   showMembers: true,
   // 消息列表是否位于底部（读到最新）。由 MessageList 维护，用于判断是否可标记已读。
   atBottom: true,

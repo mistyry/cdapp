@@ -15,6 +15,7 @@
   "license": "GPL-3.0-only",
   "dependencies": {
     "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "~2.8",
     "@tauri-apps/plugin-opener": "^2",
     "emojibase-data": "18.0.0",
     "lucide-solid": "1.67.0",

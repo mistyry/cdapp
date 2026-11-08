@@ -13,6 +13,7 @@ mod gateway;
 mod guild;
 mod message;
 mod session;
+mod storage;
 mod upload;
 mod voice;
 
@@ -21,6 +22,7 @@ pub use gateway::*;
 pub use guild::*;
 pub use message::*;
 pub use session::*;
+pub use storage::*;
 pub use upload::*;
 pub use voice::*;
 

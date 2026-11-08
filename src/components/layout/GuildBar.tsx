@@ -41,7 +41,8 @@ export default function GuildBar() {
     const me = session.me?.id ?? "";
     if (me === owner) return;
     owner = me;
-    setOpen(me ? readOpen(me) : []);
+    setOpen([]);
+    if (me) void readOpen(me).then((ids) => owner === me && setOpen(ids));
   });
   const toggle = (id: string) => {
     const next = open().includes(id) ? open().filter((x) => x !== id) : [...open(), id];

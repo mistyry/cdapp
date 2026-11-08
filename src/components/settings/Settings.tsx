@@ -4,6 +4,7 @@ import { logout, session } from "../../stores/session";
 import { setUi, ui } from "../../stores/ui";
 import { deviceOptions, loadInputs, inputs, selectInput, selectionMissing, loadOutputs, outputs, selectOutput, output, setMasterVolume, setMicGain } from "../../stores/voice";
 import Avatar from "../common/Avatar";
+import StorageSettings from "./StorageSettings";
 
 // 全屏设置页，布局参照网页端“个人设置”。只保留本客户端实际支持的项目，不展示商城、背包等运营入口。
 export default function Settings() {
@@ -31,12 +32,15 @@ export default function Settings() {
           <div class="settings-group">个人设置</div>
           <div class={`settings-item ${ui.settings === "account" ? "active" : ""}`} onClick={() => setUi("settings", "account")}>账号设置</div>
           <div class={`settings-item ${ui.settings === "voice" ? "active" : ""}`} onClick={() => setUi("settings", "voice")}>语音设置</div>
+          <div class="settings-group">应用设置</div>
+          <div class={`settings-item ${ui.settings === "storage" ? "active" : ""}`} onClick={() => setUi("settings", "storage")}>数据存储</div>
           <div class="settings-line" />
           <div class="settings-item danger" onClick={() => setConfirming(true)}>退出登录</div>
         </div>
       </nav>
       <div class="settings-main">
         <Show when={ui.settings === "voice"}><VoiceSettings close={close} /></Show>
+        <Show when={ui.settings === "storage"}><StorageSettings close={close} /></Show>
         <div class="settings-page" hidden={ui.settings !== "account"}>
           <header class="settings-header">
             <h1>账号设置</h1>

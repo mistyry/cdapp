@@ -1,9 +1,6 @@
-//! 启动页一言。来源为 `/api/file/config` 的 `saying` 字段，按 etag 缓存到应用数据目录。
+//! 启动页一言。来源为 `/api/file/config` 的 `saying` 字段，按 etag 缓存到数据根 `cache/`。
 
 use std::fs;
-use std::io::Write;
-use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -13,7 +10,6 @@ use crate::error::{AppError, AppResult};
 
 const FILE: &str = "saying.json";
 const HOST: &str = "https://img.kookapp.cn/";
-static PATH: OnceLock<PathBuf> = OnceLock::new();
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Saying {
@@ -28,31 +24,20 @@ struct Cache {
     data: Vec<Saying>,
 }
 
-/// 设置缓存所在目录。只在启动时调用一次。
-pub fn init(dir: &Path) {
-    let _ = PATH.set(dir.join(FILE));
-}
-
 fn load() -> Cache {
-    PATH.get()
+    crate::storage::cache_file(FILE)
         .and_then(|p| fs::read(p).ok())
         .and_then(|b| serde_json::from_slice(&b).ok())
         .unwrap_or_default()
 }
 
 fn save(cache: &Cache) {
-    let Some(path) = PATH.get() else { return };
-    let r = (|| -> std::io::Result<()> {
-        if let Some(dir) = path.parent() {
-            fs::create_dir_all(dir)?;
-        }
-        let tmp = path.with_extension("tmp");
-        let mut f = fs::File::create(&tmp)?;
-        f.write_all(&serde_json::to_vec(cache)?)?;
-        f.sync_all()?;
-        drop(f);
-        fs::rename(&tmp, path)
-    })();
+    let Some(path) = crate::storage::cache_file(FILE) else {
+        return;
+    };
+    let r = serde_json::to_vec(cache)
+        .map_err(std::io::Error::from)
+        .and_then(|b| crate::storage::write(&path, &b));
     if let Err(e) = r {
         log::warn!("一言缓存保存失败：{e}");
     }

@@ -223,6 +223,14 @@ button.quote:hover { background: var(--c-fill); }
 .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); padding: 8px 14px; border-radius: 6px; background: var(--c-danger); color: #fff; font-size: 13px; cursor: pointer; z-index: 10; }
 .boot { flex: 1; display: flex; flex-direction: column; gap: 8px; align-items: center; justify-content: center; }
 .boot > p { margin: 0; opacity: 0.6; }
+.storage-problem { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
+.storage-problem p { margin: 0; }
+.storage-problem .storage-path { max-width: 480px; font-size: 12px; color: var(--c-text-2); overflow-wrap: anywhere; user-select: text; }
+.settings-path { flex: 1; min-width: 0; margin-right: 12px; font-size: 12px; color: var(--c-text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: text; }
+.settings-box.wide { width: auto; }
+.settings-btn { height: 28px; padding: 0 12px; font-size: 12px; border-radius: 8px; border: 1px solid var(--c-line); background: transparent; color: inherit; cursor: pointer; white-space: nowrap; }
+.settings-btn + .settings-btn { margin-left: 8px; }
+.settings-btn:disabled { opacity: 0.5; cursor: default; }
 /* 启动画面为品牌蓝底，铺满含标题栏在内的整个窗口 */
 .app.booting { background: #45A6F7; }
 .app.booting .win-btn { color: rgba(255, 255, 255, 0.85); }

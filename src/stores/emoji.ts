@@ -1,6 +1,7 @@
 import { createStore } from "solid-js/store";
 import { api, errorText } from "../lib/api";
 import { loadUnicode, parseRecent, pushRecent, type CustomEmoji, type Pick, type UnicodeEmoji } from "../lib/emoji";
+import { readAccount, writeAccount } from "../lib/accountState";
 import { accountGen, session } from "./session";
 
 // 表情库。服务器与个人表情按账号读取一次，可手动重试；Unicode 数据首次打开选择器时加载。
@@ -33,16 +34,16 @@ function syncAccount() {
   inflight = null;
   setEmoji(initial());
   const me = session.me?.id ?? "";
-  setEmoji({ recent: me ? readRecent(me) : [], recentOwner: me });
-}
-
-const recentKey = (me: string) => `cdapp.emoji.recent.${me}`;
-function readRecent(me: string): Pick[] {
-  try {
-    return parseRecent(globalThis.localStorage?.getItem(recentKey(me)) ?? null);
-  } catch {
-    return [];
-  }
+  setEmoji({ recent: [], recentOwner: me });
+  if (!me) return;
+  // 读取完成前已有新的使用记录时，合并到读取结果之前。
+  void readAccount(me, "emojiRecent").then((v) => {
+    if (gen !== accountGen()) return;
+    const stored = parseRecent(v == null ? null : JSON.stringify(v));
+    const cur = emoji.recent;
+    setEmoji("recent", cur.reduceRight((acc, p) => pushRecent(acc, p), stored));
+    if (cur.length) writeAccount(me, "emojiRecent", emoji.recent);
+  });
 }
 
 // 打开选择器时调用。已加载或正在加载时不重复请求；force 用于失败后的重试。
@@ -78,18 +79,14 @@ export function ensureEmojis(force = false): Promise<void> {
   return inflight;
 }
 
-// 记录最近使用，按账号保存在本地，最多 24 个。
+// 记录最近使用，按账号保存在数据目录，最多 24 个。
 export function noteRecent(p: Pick) {
   syncAccount();
   const me = session.me?.id;
   if (!me || emoji.recentOwner !== me) return;
   const next = pushRecent(emoji.recent, p);
   setEmoji("recent", next);
-  try {
-    globalThis.localStorage?.setItem(recentKey(me), JSON.stringify(next));
-  } catch {
-    // 本地存储不可用时只保留在内存中。
-  }
+  writeAccount(me, "emojiRecent", next);
 }
 
 // 查找自定义表情所属服务器；不在当前列表中的视为失效。

@@ -1,17 +1,23 @@
 import { beforeEach, expect, mock, test } from "bun:test";
 
+const accounts = new Map<string, Record<string, unknown>>();
 const pending: Array<{ cmd: string; resolve: (v: unknown) => void; reject: (e: unknown) => void }> = [];
 const calls: string[] = [];
 mock.module("@tauri-apps/api/core", () => ({
-  invoke: (cmd: string) => {
+  invoke: (cmd: string, args?: any) => {
     calls.push(cmd);
+    if (cmd === "account_state") return Promise.resolve({ ...accounts.get(args.user) });
+    if (cmd === "set_account_state") {
+      accounts.set(args.user, { ...accounts.get(args.user), [args.key]: args.value });
+      return Promise.resolve(null);
+    }
     if (cmd === "emojis") return new Promise((resolve, reject) => pending.push({ cmd, resolve, reject }));
     return Promise.resolve(null);
   },
 }));
 mock.module("@tauri-apps/api/event", () => ({ listen: async () => () => {} }));
 const store = new Map<string, string>();
-(globalThis as any).localStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => store.set(k, v) };
+(globalThis as any).localStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => store.set(k, v), removeItem: (k: string) => store.delete(k) };
 
 const { emoji, ensureEmojis, noteRecent, customOf, shownGuilds } = await import("../emoji");
 const { setSession, logout } = await import("../session");
@@ -80,7 +86,19 @@ test("最近使用按账号保存，互不影响", async () => {
   await logout();
   login("u1");
   void ensureEmojis();
+  await flush();
   expect(emoji.recent).toEqual([{ kind: "unicode", char: "😀", name: "笑脸" }]);
+});
+
+test("旧版本地存储导入数据目录后删除", async () => {
+  store.set("cdapp.emoji.recent.u9", JSON.stringify([{ kind: "unicode", char: "👍", name: "赞" }]));
+  login("u9");
+  void ensureEmojis();
+  noteRecent({ kind: "unicode", char: "😀", name: "笑脸" });
+  await flush();
+  expect(emoji.recent.map((x) => (x as any).char)).toEqual(["😀", "👍"]);
+  expect(store.has("cdapp.emoji.recent.u9")).toBe(false);
+  expect((accounts.get("u9")!.emojiRecent as any[]).length).toBe(2);
 });
 
 test("服务器表情组按已添加顺序显示，当前服务器未添加时置顶，读取失败时显示全部", async () => {

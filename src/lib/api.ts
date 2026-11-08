@@ -80,7 +80,24 @@ export const UPLOAD_LIMIT = 5 * 1024 * 1024;
 
 export interface Saying { game: string; role_name: string; words: string }
 
+// 后端 storage::Info。
+export type StorageInfo = {
+  status: "ready" | "missing" | "unwritable" | "locked";
+  message?: string;
+  root: string;
+  defaultRoot: string;
+  custom: boolean;
+  cacheBytes: number;
+};
+
 export const api = {
+  storageInfo: () => invoke<StorageInfo>("storage_info"),
+  storageRelocate: (path: string) => invoke<void>("storage_relocate", { path }),
+  storageSwitch: (path: string | null) => invoke<void>("storage_switch", { path }),
+  storageClearCache: () => invoke<void>("storage_clear_cache"),
+  accountState: (user: string) => invoke<Record<string, unknown>>("account_state", { user }),
+  setAccountState: (user: string, key: string, value: unknown) => invoke<void>("set_account_state", { user, key, value }),
+  restart: () => invoke<void>("restart"),
   restoreSession: () => invoke<Restore>("restore_session"),
   sayings: () => invoke<Saying[]>("sayings"),
   loginQrCode: () => invoke<string>("login_qr_code"),

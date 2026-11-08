@@ -11,6 +11,8 @@ import PasswordPrompt from "./components/layout/PasswordPrompt";
 import ConnectionBar from "./components/common/ConnectionBar";
 import { TipLayer } from "./components/common/Tip";
 import { loadAudioPrefs } from "./stores/voice";
+import { loadStorage, storage } from "./stores/storage";
+import StorageProblem from "./components/common/StorageProblem";
 import { dragRegion, titleInset, watchWindow } from "./stores/window";
 import WindowControls from "./components/common/WindowControls";
 import BootLoader from "./components/common/BootLoader";
@@ -20,8 +22,11 @@ import "./styles/layout.css";
 
 export default function App() {
   onMount(() => {
-    void loadAudioPrefs();
-    void boot();
+    void loadStorage().then((info) => {
+      if (info?.status !== "ready") return;
+      void loadAudioPrefs();
+      void boot();
+    });
   });
   const unwatch = watchWindow();
   onCleanup(() => void unwatch.then((f) => f(), () => {}));
@@ -39,7 +44,7 @@ export default function App() {
   });
   createEffect(on(() => ui.settings, (v) => !v && readCurrent(), { defer: true }));
   return (
-    <div class={`app ${titleInset() ? "titled" : ""} ${session.phase === "boot" ? "booting" : ""}`}>
+    <div class={`app ${titleInset() ? "titled" : ""} ${session.phase === "boot" && storage.info?.status !== "ready" && storage.info ? "" : session.phase === "boot" ? "booting" : ""}`}>
       <Show when={titleInset()}>
         <div class="titlebar">
           <Show when={session.phase !== "boot"}>
@@ -50,6 +55,7 @@ export default function App() {
       </Show>
       <TipLayer />
       <Switch>
+        <Match when={storage.info && storage.info.status !== "ready"}><div class="boot" data-tauri-drag-region={dragRegion()}><StorageProblem /></div></Match>
         <Match when={session.phase === "boot"}><div class="boot" data-tauri-drag-region={dragRegion()}><BootLoader /></div></Match>
         <Match when={session.phase === "restore_failed"}>
           <div class="boot" data-tauri-drag-region={dragRegion()}>

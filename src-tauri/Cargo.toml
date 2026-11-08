@@ -42,6 +42,7 @@ bytes = "1"
 # 音频采集播放与 Opus 编解码。cpal 为 Apache-2.0 许可，opus 为 MIT 或 Apache-2.0 许可，libopus 为 BSD 许可。
 cpal = "0.18"
 opus = "0.4"
+tauri-plugin-dialog = "2"
 
 
 # 开发构建的窗口截图。均为 Tauri 已有的传递依赖，版本与 Cargo.lock 一致，MIT 许可。

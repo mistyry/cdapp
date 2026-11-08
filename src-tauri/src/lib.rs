@@ -4,6 +4,7 @@ mod commands;
 mod devshot;
 pub mod error;
 pub mod kook;
+pub mod storage;
 #[cfg(windows)]
 mod winfocus;
 
@@ -25,12 +26,11 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             use tauri::Manager;
-            let dir = app.path().app_data_dir()?;
-            kook::auth::init(&dir);
-            audio::store::init(&dir);
-            kook::saying::init(&dir);
+            let data = app.path().app_data_dir()?;
+            storage::init(&app.path().app_config_dir()?, &data, &data);
             let slot = commands::VoiceSlot::from_prefs(&audio::store::load());
             app.manage(VoiceState(tokio::sync::Mutex::new(slot)));
             #[cfg(all(target_os = "macos", debug_assertions))]
@@ -44,6 +44,13 @@ pub fn run() {
         .manage(Mutex::new(AppState::default()))
         .invoke_handler(tauri::generate_handler![
             commands::restore_session,
+            commands::storage_info,
+            commands::storage_relocate,
+            commands::storage_switch,
+            commands::storage_clear_cache,
+            commands::account_state,
+            commands::set_account_state,
+            commands::restart,
             commands::sayings,
             commands::login_qr_code,
             commands::login_qr_poll,
