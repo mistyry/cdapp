@@ -8,6 +8,7 @@ pub mod gateway;
 pub mod model;
 pub mod perms;
 pub mod saying;
+pub mod sound;
 pub mod voice;
 
 pub const BASE: &str = "https://www.kookapp.cn";

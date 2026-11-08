@@ -16,6 +16,7 @@ import StorageProblem from "./components/common/StorageProblem";
 import { dragRegion, titleInset, watchWindow } from "./stores/window";
 import WindowControls from "./components/common/WindowControls";
 import BootLoader from "./components/common/BootLoader";
+import { soundsPending, syncSounds } from "./stores/sounds";
 import { isWindows } from "./lib/platform";
 import "./styles/theme.css";
 import "./styles/layout.css";
@@ -25,6 +26,7 @@ export default function App() {
     void loadStorage().then((info) => {
       if (info?.status !== "ready") return;
       void loadAudioPrefs();
+      void syncSounds();
       void boot();
     });
   });
@@ -44,7 +46,7 @@ export default function App() {
   });
   createEffect(on(() => ui.settings, (v) => !v && readCurrent(), { defer: true }));
   return (
-    <div class={`app ${titleInset() ? "titled" : ""} ${session.phase === "boot" && storage.info?.status !== "ready" && storage.info ? "" : session.phase === "boot" ? "booting" : ""}`}>
+    <div class={`app ${titleInset() ? "titled" : ""} ${session.phase === "boot" && storage.info?.status !== "ready" && storage.info ? "" : session.phase === "boot" || soundsPending() ? "booting" : ""}`}>
       <Show when={titleInset()}>
         <div class="titlebar">
           <Show when={session.phase !== "boot"}>
@@ -56,7 +58,7 @@ export default function App() {
       <TipLayer />
       <Switch>
         <Match when={storage.info && storage.info.status !== "ready"}><div class="boot" data-tauri-drag-region={dragRegion()}><StorageProblem /></div></Match>
-        <Match when={session.phase === "boot"}><div class="boot" data-tauri-drag-region={dragRegion()}><BootLoader /></div></Match>
+        <Match when={session.phase === "boot" || soundsPending()}><div class="boot" data-tauri-drag-region={dragRegion()}><BootLoader /></div></Match>
         <Match when={session.phase === "restore_failed"}>
           <div class="boot" data-tauri-drag-region={dragRegion()}>
             <p>无法连接到 KOOK，登录信息已保留</p>

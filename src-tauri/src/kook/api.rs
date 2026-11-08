@@ -115,6 +115,22 @@ impl Api {
         Ok(serde_json::from_slice(&bytes)?)
     }
 
+    /// 下载 KOOK 静态资源的原始内容，不附带凭据。调用方负责限定地址。
+    ///
+    /// # Errors
+    ///
+    /// 网络错误或 HTTP 错误时返回错误。
+    pub async fn get_bytes(&self, url: &str) -> AppResult<bytes::Bytes> {
+        Ok(self
+            .http
+            .get(url)
+            .send()
+            .await?
+            .error_for_status()?
+            .bytes()
+            .await?)
+    }
+
     /// # Errors
     ///
     /// 网络错误、HTTP 错误或接口返回非零 code 时返回错误。

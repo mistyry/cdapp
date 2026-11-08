@@ -111,3 +111,15 @@ pub async fn logout(
     }
     cleared
 }
+
+/// 检查音效索引并下载缺少的音效，进度经 `progress` 推送。不需要登录。
+#[tauri::command]
+pub async fn sound_sync(
+    progress: tauri::ipc::Channel<crate::kook::sound::Progress>,
+) -> AppResult<crate::kook::sound::Summary> {
+    let api = Api::new(None)?;
+    crate::kook::sound::sync(&api, |p| {
+        let _ = progress.send(p);
+    })
+    .await
+}

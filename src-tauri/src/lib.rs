@@ -12,6 +12,28 @@ use std::sync::Mutex;
 
 use commands::{AppState, VoiceState};
 
+/// 启动参数 `--data-dir <目录>` 或环境变量 `CDAPP_DATA_DIR` 指定独立的数据目录，用于测试。
+fn data_dir_arg() -> Option<std::path::PathBuf> {
+    let mut args = std::env::args().skip(1);
+    let mut found = None;
+    while let Some(a) = args.next() {
+        if let Some(v) = a.strip_prefix("--data-dir=") {
+            found = Some(v.to_owned());
+        } else if a == "--data-dir" {
+            found = args.next();
+        }
+    }
+    let dir = found
+        .or_else(|| std::env::var("CDAPP_DATA_DIR").ok())
+        .filter(|s| !s.is_empty())?;
+    let path = std::path::PathBuf::from(dir);
+    if path.is_absolute() {
+        Some(path)
+    } else {
+        std::env::current_dir().ok().map(|c| c.join(path))
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// 启动应用。
 ///
@@ -29,8 +51,14 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             use tauri::Manager;
-            let data = app.path().app_data_dir()?;
-            storage::init(&app.path().app_config_dir()?, &data, &data);
+            if let Some(dir) = data_dir_arg() {
+                // 独立目录：固定目录与数据根都放在其中，不读取系统位置的配置。
+                let fixed = dir.join("fixed");
+                storage::init(&fixed, &dir.join("data"), &fixed);
+            } else {
+                let data = app.path().app_data_dir()?;
+                storage::init(&app.path().app_config_dir()?, &data, &data);
+            }
             let slot = commands::VoiceSlot::from_prefs(&audio::store::load());
             app.manage(VoiceState(tokio::sync::Mutex::new(slot)));
             #[cfg(all(target_os = "macos", debug_assertions))]
@@ -52,6 +80,7 @@ pub fn run() {
             commands::set_account_state,
             commands::restart,
             commands::sayings,
+            commands::sound_sync,
             commands::login_qr_code,
             commands::login_qr_poll,
             commands::login_qr_cancel,

@@ -1,6 +1,7 @@
 import { Show, createSignal, onCleanup, onMount } from "solid-js";
 import { api, type Saying } from "../../lib/api";
 import { startDisc } from "../../lib/discLoader";
+import { bootLabel } from "../../stores/sounds";
 
 // 图形区参照官方 420×330，光盘略小于区域高度；矮窗口时按高度收小。
 const MAX = 300;
@@ -66,7 +67,7 @@ export default function BootLoader() {
           </div>
         )}
       </Show>
-      <p class="boot-label">加载中...</p>
+      <p class="boot-label">{bootLabel()}</p>
     </div>
   );
 }

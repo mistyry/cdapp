@@ -1,4 +1,4 @@
-import { invoke as rawInvoke, type InvokeArgs, type InvokeOptions } from "@tauri-apps/api/core";
+import { invoke as rawInvoke, type Channel, type InvokeArgs, type InvokeOptions } from "@tauri-apps/api/core";
 import type { GuildAccess, Overwrite, UserOverwrite } from "./perms";
 
 // 后端命令封装。接口返回原始 JSON，字段以网页端抓包为准。
@@ -100,6 +100,8 @@ export const api = {
   restart: () => invoke<void>("restart"),
   restoreSession: () => invoke<Restore>("restore_session"),
   sayings: () => invoke<Saying[]>("sayings"),
+  soundSync: (progress: Channel<{ done: number; total: number }>) =>
+    invoke<{ total: number; downloaded: number; failed: number }>("sound_sync", { progress }),
   loginQrCode: () => invoke<string>("login_qr_code"),
   loginQrPoll: (content: string) => invoke<QrStatus>("login_qr_poll", { content }),
   loginQrCancel: (content: string) => invoke<void>("login_qr_cancel", { content }),
