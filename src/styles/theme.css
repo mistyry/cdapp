@@ -42,9 +42,9 @@
   --c-strong: rgba(255, 255, 255, 0.87);
   --shadow: 0 2px 8px rgba(0, 0, 0, 0.24);
 }
-/* macOS 窗口透明，底层为系统侧栏材质：应用底色保留 72% 不透明度，透出少量桌面颜色。主面板与浮层保持不透明。 */
-:root[data-platform="macos"] { --c-app: rgba(238, 240, 243, 0.72); }
-:root[data-platform="macos"][data-theme="dark"] { --c-app: rgba(23, 24, 26, 0.72); }
+/* 窗口透明且底层有系统材质时：macOS 为侧栏材质，Windows 11 为 Mica。应用底色保留 72% 不透明度，透出少量桌面颜色。主面板与浮层保持不透明。 */
+:root[data-backdrop] { --c-app: rgba(238, 240, 243, 0.72); }
+:root[data-backdrop][data-theme="dark"] { --c-app: rgba(23, 24, 26, 0.72); }
 
 * { box-sizing: border-box; }
 html, body, #root { margin: 0; height: 100%; }

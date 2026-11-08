@@ -91,6 +91,30 @@ impl Api {
         unwrap(body)
     }
 
+    /// 读取 KOOK 静态资源上的 JSON，不附带凭据。调用方负责限定地址。
+    ///
+    /// # Errors
+    ///
+    /// 网络错误、HTTP 错误或响应不是 JSON 时返回错误。
+    pub async fn get_external(&self, url: &str) -> AppResult<Value> {
+        let bytes = self
+            .http
+            .get(url)
+            .send()
+            .await?
+            .error_for_status()?
+            .bytes()
+            .await?;
+        // 静态资源 CDN 无视 Accept-Encoding 始终返回 gzip，客户端未启用自动解压，这里按魔数判断。
+        if bytes.starts_with(&[0x1f, 0x8b]) {
+            let mut out = Vec::new();
+            std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(&bytes[..]), &mut out)
+                .map_err(|e| AppError::Format(format!("解压失败：{e}")))?;
+            return Ok(serde_json::from_slice(&out)?);
+        }
+        Ok(serde_json::from_slice(&bytes)?)
+    }
+
     /// # Errors
     ///
     /// 网络错误、HTTP 错误或接口返回非零 code 时返回错误。

@@ -13,6 +13,7 @@ import { TipLayer } from "./components/common/Tip";
 import { loadAudioPrefs } from "./stores/voice";
 import { dragRegion, titleInset, watchWindow } from "./stores/window";
 import WindowControls from "./components/common/WindowControls";
+import BootLoader from "./components/common/BootLoader";
 import { isWindows } from "./lib/platform";
 import "./styles/theme.css";
 import "./styles/layout.css";
@@ -38,16 +39,18 @@ export default function App() {
   });
   createEffect(on(() => ui.settings, (v) => !v && readCurrent(), { defer: true }));
   return (
-    <div class={`app ${titleInset() ? "titled" : ""}`}>
+    <div class={`app ${titleInset() ? "titled" : ""} ${session.phase === "boot" ? "booting" : ""}`}>
       <Show when={titleInset()}>
         <div class="titlebar">
-          <img src="/icon.svg" alt="" width={20} height={20} draggable={false} />
-          <span>cdapp</span>
+          <Show when={session.phase !== "boot"}>
+            <img src="/icon.svg" alt="" width={20} height={20} draggable={false} />
+            <span>cdapp</span>
+          </Show>
         </div>
       </Show>
       <TipLayer />
       <Switch>
-        <Match when={session.phase === "boot"}><div class="boot" data-tauri-drag-region={dragRegion()}>加载中</div></Match>
+        <Match when={session.phase === "boot"}><div class="boot" data-tauri-drag-region={dragRegion()}><BootLoader /></div></Match>
         <Match when={session.phase === "restore_failed"}>
           <div class="boot" data-tauri-drag-region={dragRegion()}>
             <p>无法连接到 KOOK，登录信息已保留</p>

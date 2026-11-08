@@ -78,8 +78,11 @@ export type UploadProgress = { id: string; sent: number; total: number };
 // 实测普通账号上限 5 MiB（含）；空文件会被服务端换成默认图片。后端同样检查。
 export const UPLOAD_LIMIT = 5 * 1024 * 1024;
 
+export interface Saying { game: string; role_name: string; words: string }
+
 export const api = {
   restoreSession: () => invoke<Restore>("restore_session"),
+  sayings: () => invoke<Saying[]>("sayings"),
   loginQrCode: () => invoke<string>("login_qr_code"),
   loginQrPoll: (content: string) => invoke<QrStatus>("login_qr_poll", { content }),
   loginQrCancel: (content: string) => invoke<void>("login_qr_cancel", { content }),

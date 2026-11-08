@@ -30,6 +30,7 @@ pub fn run() {
             let dir = app.path().app_data_dir()?;
             kook::auth::init(&dir);
             audio::store::init(&dir);
+            kook::saying::init(&dir);
             let slot = commands::VoiceSlot::from_prefs(&audio::store::load());
             app.manage(VoiceState(tokio::sync::Mutex::new(slot)));
             #[cfg(all(target_os = "macos", debug_assertions))]
@@ -43,6 +44,7 @@ pub fn run() {
         .manage(Mutex::new(AppState::default()))
         .invoke_handler(tauri::generate_handler![
             commands::restore_session,
+            commands::sayings,
             commands::login_qr_code,
             commands::login_qr_poll,
             commands::login_qr_cancel,
