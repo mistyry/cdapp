@@ -2,7 +2,7 @@ import { For, Show, createEffect, createSignal, on, onCleanup } from "solid-js";
 import { CircleHelp, Headphones, HeadphoneOff, Menu, Mic, MicOff, PhoneOff, Settings, UserPlus, X } from "lucide-solid";
 import type { Channel } from "../../stores/types";
 import { accessState, enterVoice, loadDms, permsOf, retryAccess, selectChannel, selectDm, session, visible, voiceBlock } from "../../stores/session";
-import { canRejoin, dismissVoice, isSpeaking, leaveVoice, mic, micFailed, output, setPeerVolume, toggleDeafen, toggleMic, voice, voiceActive, voiceStatusText, volumeOf, type VoicePeer } from "../../stores/voice";
+import { canRejoin, dismissVoice, isSpeaking, disconnectVoice, mic, micFailed, output, setPeerVolume, toggleDeafen, toggleMic, voice, voiceActive, voiceStatusText, volumeOf, type VoicePeer } from "../../stores/voice";
 import { DM_VIEW, currentChannelId, currentChatCode, ui, setUi } from "../../stores/ui";
 import Avatar from "../common/Avatar";
 import { DeviceMenu, VolumePop, type AudioKind } from "./AudioPanel";
@@ -208,7 +208,7 @@ function VoiceBox() {
             <button class="rejoin-btn" onClick={() => canRejoin() && void enterVoice(voice.channelId)}>重新加入</button>
           </Show>
           <Show when={voiceActive()} fallback={<button class="icon-btn" data-tip="关闭" aria-label="关闭" onClick={dismissVoice}><X size={18} /></button>}>
-            <button class="icon-btn danger" data-tip="断开语音" aria-label="断开语音" onClick={() => void leaveVoice()}><PhoneOff size={18} /></button>
+            <button class="icon-btn danger" data-tip="断开语音" aria-label="断开语音" onClick={() => void disconnectVoice()}><PhoneOff size={18} /></button>
           </Show>
         </div>
       </Show>

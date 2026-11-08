@@ -11,6 +11,8 @@ use super::dsp::MAX_GAIN;
 use super::mixer::MAX_VOLUME;
 
 const FILE: &str = "audio.json";
+/// 提示音默认音量百分比。
+pub const DEFAULT_EFFECT_VOLUME: u16 = 30;
 
 /// 音频偏好。设备为 None 时跟随系统默认。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -22,6 +24,10 @@ pub struct AudioPrefs {
     pub gain: u16,
     /// 输出总音量百分比，0 至 200。
     pub master: u16,
+    /// 提示音音量百分比，0 至 100。
+    pub effect_volume: u16,
+    /// 关闭的提示音编号，与官方 `audio_setting` 编号一致。
+    pub effects_off: Vec<u8>,
 }
 
 impl Default for AudioPrefs {
@@ -31,6 +37,8 @@ impl Default for AudioPrefs {
             output: None,
             gain: 100,
             master: 100,
+            effect_volume: DEFAULT_EFFECT_VOLUME,
+            effects_off: Vec::new(),
         }
     }
 }
@@ -43,6 +51,9 @@ impl AudioPrefs {
         self.master = self.master.min(MAX_VOLUME);
         self.input = self.input.filter(|s| !s.is_empty());
         self.output = self.output.filter(|s| !s.is_empty());
+        self.effect_volume = self.effect_volume.min(100);
+        self.effects_off.sort_unstable();
+        self.effects_off.dedup();
         self
     }
 
@@ -118,6 +129,8 @@ mod tests {
             output: None,
             gain: 150,
             master: 80,
+            effect_volume: 20,
+            effects_off: vec![2, 10],
         };
         crate::storage::write_raw(&path, &serde_json::to_vec(&p).unwrap(), false).unwrap();
         assert_eq!(AudioPrefs::parse(&fs::read(&path).unwrap()), p);

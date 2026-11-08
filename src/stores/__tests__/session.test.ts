@@ -3159,3 +3159,59 @@ test("历史消息带作者服务器昵称与系统标记", async () => {
   expect(n.system).toBeUndefined();
   expect(n.name).toBe("服务器名");
 });
+
+const effectIds = () => calls.filter((c) => c.cmd === "effect_play").map((c) => c.args.id);
+
+test("提示音：连接、成员进出与主动断开", async () => {
+  const realNow = Date.now;
+  let now = 1_000_000;
+  Date.now = () => now;
+  try {
+    auto.voice_join = () => 1;
+    await vs.joinVoice("V1");
+    ev(1, { type: "state", phase: "connected" });
+    expect(effectIds()).toEqual([1]);
+    // 连接后 1 秒内不播放成员进出。
+    ev(1, { type: "peer_joined", peer: peer("u2") });
+    expect(effectIds()).toEqual([1]);
+    now += 1500;
+    ev(1, { type: "peer_joined", peer: peer("u3") });
+    ev(1, { type: "peer_joined", peer: peer("u3") });
+    ev(1, { type: "peer_left", id: "u2" });
+    ev(1, { type: "peer_left", id: "nobody" });
+    expect(effectIds()).toEqual([1, 1, 2]);
+    // 重连恢复不播放进入提示音。
+    ev(1, { type: "state", phase: "reconnecting" });
+    ev(1, { type: "state", phase: "connected" });
+    expect(effectIds()).toEqual([1, 1, 2]);
+    await vs.disconnectVoice();
+    expect(effectIds()).toEqual([1, 1, 2, 3]);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test("提示音：开关麦与耳机", async () => {
+  auto.voice_join = () => 1;
+  await vs.joinVoice("V1");
+  ev(1, { type: "state", phase: "connected" });
+  calls.length = 0;
+  await vs.setMuted(true);
+  await vs.setMuted(false);
+  await vs.setDeafened(true);
+  await vs.setDeafened(false);
+  expect(effectIds()).toEqual([4, 5, 8, 9]);
+});
+
+test("提示音：消息通知按会话与提及选择", async () => {
+  setSession("me", { id: "me" } as any);
+  const note = (extra: Record<string, unknown>) => onEvent({ type: "SYS_MSG", content: JSON.stringify({ type: "desktop_notification", body: { extra } }) });
+  calls.length = 0;
+  note({ msg_id: "m1", channel_id: "C9", author_id: 5 });
+  note({ msg_id: "m1", channel_id: "C9", author_id: 5 });
+  note({ msg_id: "m2", channel_id: "C9", author_id: 5, mention: true });
+  note({ msg_id: "m3", chat_user_id: 5 });
+  note({ msg_id: "m4", channel_id: "C9", author_id: "me" });
+  note({ msg_id: "m5", channel_id: "C9", author_id: 5, gift_triggered: true });
+  expect(effectIds()).toEqual([10, 13, 10]);
+});

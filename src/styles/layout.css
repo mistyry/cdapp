@@ -306,6 +306,9 @@ button.quote:hover { background: var(--c-fill); }
 .settings-label { font-size: 12px; font-weight: 600; }
 .settings-value { font-size: 12px; color: var(--c-text-2); user-select: text; }
 .settings-select { max-width: 60%; height: 28px; padding: 0 8px; font-size: 12px; border-radius: 8px; border: 1px solid var(--c-line); background: transparent; color: inherit; }
+.settings-row .settings-label.grow { flex: 1; }
+.settings-try { margin-right: 10px; font-size: 12px; color: var(--c-text-2); }
+.settings-try:hover { color: var(--c-text); }
 .settings-note { padding: 6px 12px 0; font-size: 12px; color: var(--c-text-2); }
 
 .dialog-mask { position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.6); }

@@ -13,6 +13,7 @@ mod gateway;
 mod guild;
 mod message;
 mod session;
+mod sound;
 mod storage;
 mod upload;
 mod voice;
@@ -22,6 +23,7 @@ pub use gateway::*;
 pub use guild::*;
 pub use message::*;
 pub use session::*;
+pub use sound::*;
 pub use storage::*;
 pub use upload::*;
 pub use voice::*;
@@ -59,6 +61,10 @@ pub struct VoiceSlot {
     pub volumes: std::collections::HashMap<String, u16>,
     /// 总音量百分比，None 为 100。
     pub master: Option<u16>,
+    /// 提示音音量百分比。
+    pub effect_volume: u16,
+    /// 关闭的提示音编号。
+    pub effects_off: Vec<u8>,
 }
 
 impl VoiceSlot {
@@ -69,6 +75,8 @@ impl VoiceSlot {
             input: p.input.clone(),
             output: p.output.clone(),
             master: Some(p.master),
+            effect_volume: p.effect_volume,
+            effects_off: p.effects_off.clone(),
             ..Self::default()
         };
         slot.gain.set(p.gain);
@@ -83,6 +91,8 @@ impl VoiceSlot {
             output: self.output.clone(),
             gain: self.gain.percent(),
             master: self.master.unwrap_or(100),
+            effect_volume: self.effect_volume,
+            effects_off: self.effects_off.clone(),
         }
     }
 

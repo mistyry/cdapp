@@ -4,6 +4,7 @@ import { logout, session } from "../../stores/session";
 import { setUi, ui } from "../../stores/ui";
 import { deviceOptions, loadInputs, inputs, selectInput, selectionMissing, loadOutputs, outputs, selectOutput, output, setMasterVolume, setMicGain } from "../../stores/voice";
 import Avatar from "../common/Avatar";
+import { EFFECT_LIST, effectOn, effects, previewEffect, setEffectEnabled, setEffectVolume } from "../../stores/effects";
 import StorageSettings from "./StorageSettings";
 
 // 全屏设置页，布局参照网页端“个人设置”。只保留本客户端实际支持的项目，不展示商城、背包等运营入口。
@@ -151,6 +152,27 @@ function VoiceSettings(p: { close: () => void }) {
         <Show when={selectionMissing(outputs)}><div class="settings-note">所选扬声器不可用。</div></Show>
         <div class="settings-note">成员音量可在语音频道中点击成员调节，范围 0% 至 200%。</div>
         <div class="settings-note">未提供回声消除与降噪。外放时对方可能听到回声，建议使用耳机。</div>
+      </section>
+      <h2 class="settings-panel-title">提示音</h2>
+      <section class="settings-panel">
+        <div class="settings-box">
+          <div class="settings-row">
+            <span class="settings-label">提示音音量</span>
+            <input type="range" min="0" max="100" step="5" value={effects.volume} aria-label="提示音音量" onInput={(e) => void setEffectVolume(Number(e.currentTarget.value))} />
+            <span>{effects.volume}%</span>
+          </div>
+          <For each={EFFECT_LIST}>
+            {(x) => (
+              <div class="settings-row">
+                <span class="settings-label grow">{x.name}</span>
+                <button class="settings-try" aria-label={`试听${x.name}`} onClick={() => previewEffect(x.id)}>试听</button>
+                <input type="checkbox" checked={effectOn(x.id)} aria-label={x.name} onChange={(e) => void setEffectEnabled(x.id, e.currentTarget.checked)} />
+              </div>
+            )}
+          </For>
+        </div>
+        <div class="settings-note">提示音从扬声器播放。</div>
+        <div class="settings-note">提及我的消息通知关闭时，提及消息使用普通消息通知。</div>
       </section>
     </div>
   );

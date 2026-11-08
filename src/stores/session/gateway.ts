@@ -3,7 +3,8 @@ import { api, MsgType, type Raw } from "../../lib/api";
 import type { Message } from "../types";
 import { isText, parseCards, toAttachment, Kind } from "../../lib/content";
 import { voiceNetworkBack } from "../voice";
-import { ui, currentChannelId } from "../ui";
+import { Effect, playEffect } from "../effects";
+import { ui, currentChannelId, currentChatCode } from "../ui";
 import { loadAccess } from "./access";
 import { expire } from "./auth";
 import { parse, plainContent, remember, rememberRefs, stamp, toQuote, toUser, voiceUsers } from "./convert";
@@ -13,7 +14,7 @@ import { append, refreshLatest } from "./history";
 import { dropSubscription, ensureMembers, invalidateMembers, onUserList, patchMember } from "./members";
 import { activate, activated, refreshGuild, reloadChannels, visited } from "./nav";
 import { dmKey, guildOf, isDmKey, report, session, setSession, st } from "./state";
-import { noteRead, noteUnread, syncUnread } from "./unread";
+import { noteRead, noteUnread, syncUnread, windowActive } from "./unread";
 
 // 网关
 
@@ -266,6 +267,9 @@ export function onSystem(c: Raw | null, target = "") {
         { id, name: String(body.emoji?.name ?? id) }, user, c.type.startsWith("add"));
       break;
     }
+    case "desktop_notification":
+      onNotification(body);
+      break;
     case "unread_count_changed": {
       // 频道由已读变为未读，或新增提及。未激活的服务器同样下发。
       const id = String(body.channel_id ?? "");
@@ -324,4 +328,26 @@ export function resetGateway() {
   syncGen++;
   syncPending = false;
   seenMsgs.clear();
+}
+
+// 桌面通知推送已按服务端通知级别过滤，据此播放消息提示音。正在查看的会话不播放。
+const notified = new Set<string>();
+export function onNotification(body: Raw) {
+  const extra: Raw = body.extra ?? {};
+  const id = String(extra.msg_id ?? "");
+  if (id) {
+    if (notified.has(id)) return;
+    notified.add(id);
+    if (notified.size > 500) notified.delete(notified.values().next().value!);
+  }
+  if (extra.gift_triggered) return;
+  const author = String(extra.author_id ?? extra.chat_user_id ?? "");
+  if (author && author === session.me?.id) return;
+  const channelId = String(extra.channel_id ?? "");
+  const viewing = windowActive() && !ui.settings && (
+    (channelId && channelId !== "0" && channelId === currentChannelId()) ||
+    (!channelId && !!extra.chat_user_id && session.dms.some((c) => c.code === currentChatCode() && c.target.id === String(extra.chat_user_id)))
+  );
+  if (viewing) return;
+  playEffect(extra.mention ? Effect.MENTION : Effect.MESSAGE);
 }

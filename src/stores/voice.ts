@@ -1,6 +1,7 @@
 import { createStore, produce } from "solid-js/store";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { api, errorText, type InputDevice } from "../lib/api";
+import { Effect, applyEffectPrefs, playEffect } from "./effects";
 
 // 语音会话状态。后端在后台完成连接与重建，经 voice://event 推送事件，事件按会话代次过滤。
 // 静音、耳机与成员音量在会话之间保留，退出登录时重置。
@@ -194,6 +195,18 @@ export async function leaveVoice() {
   await api.voiceLeave(my).catch(() => {});
 }
 
+// 用户主动断开语音，播放断开提示音。
+export async function disconnectVoice() {
+  if (voiceActive()) playEffect(Effect.EXIT_CHANNEL);
+  await leaveVoice();
+}
+
+// 成员进出提示音：连接后 1 秒内与重连期间不播放，人数较多时不播放。
+const PEER_QUIET_MS = 1000;
+const PEER_LIMIT = 30;
+let quietUntil = 0;
+const peerSoundOk = () => voice.phase === "connected" && Date.now() >= quietUntil;
+
 // 需要频道密码时的处理，由会话层注册。
 let onPassword: (channelId: string) => void = () => {};
 export const setPasswordHandler = (f: (channelId: string) => void) => (onPassword = f);
@@ -294,6 +307,7 @@ export async function setMuted(muted: boolean) {
   const generation = voice.generation;
   if (!voiceActive() || !generation || joining) {
     if (joining) wanted = muted;
+    if (muted !== mic.muted) playEffect(muted ? Effect.MIC_MUTE : Effect.MIC_UNMUTE);
     setMic({ muted, status: muted ? "muted" : "off", message: null });
     // 取消静音时同时打开耳机，与后端一致。
     if (!muted && output.deafened) setOutput("deafened", false);
@@ -302,6 +316,7 @@ export async function setMuted(muted: boolean) {
   setMic({ muted, busy: true, message: null, ...(muted ? { level: 0 } : {}) });
   try {
     await api.voiceSetMic(generation, muted);
+    if (voice.generation === generation) playEffect(muted ? Effect.MIC_MUTE : Effect.MIC_UNMUTE);
   } catch (e) {
     if (voice.generation !== generation) return;
     // 静音状态以后端随后的事件为准。
@@ -320,6 +335,7 @@ export async function setDeafened(deafened: boolean) {
   if (!voiceActive() || !generation || joining) {
     if (joining) wantedDeaf = deafened;
     if (deafened === output.deafened) return;
+    playEffect(deafened ? Effect.DEAFEN : Effect.UNDEAFEN);
     if (deafened) {
       micBeforeDeaf = mic.muted;
       setMic({ muted: true, status: "muted", message: null });
@@ -334,6 +350,7 @@ export async function setDeafened(deafened: boolean) {
   setOutput({ deafened, busy: true, message: null, ...(deafened ? { speaking: [] } : {}) });
   try {
     await api.voiceSetDeafen(generation, deafened);
+    if (voice.generation === generation) playEffect(deafened ? Effect.DEAFEN : Effect.UNDEAFEN);
   } catch (e) {
     if (voice.generation !== generation) return;
     setOutput({ message: errorText(e) });
@@ -398,6 +415,7 @@ export async function loadAudioPrefs() {
     if (my[1] === gainSeq) { gainOk = clampVolume(p.gain); setOutput("gain", gainOk); }
     if (my[2] === inSeq) { inOk = p.input; setInputs("selected", p.input); }
     if (my[3] === outSeq) { outOk = p.output; setOutputs("selected", p.output); }
+    if (typeof p.effectVolume === "number") applyEffectPrefs(p.effectVolume, p.effectsOff ?? []);
   } catch {
     // 使用默认值。
   }
@@ -432,6 +450,13 @@ export function onVoiceEvent(p: VoicePayload) {
         });
         return;
       }
+      // 首次连接成功时播放进入提示音，重连恢复不播放。
+      if (ev.phase === "connected" && voice.phase === "connecting") {
+        quietUntil = Date.now() + PEER_QUIET_MS;
+        playEffect(Effect.USER_JOIN);
+      } else if (ev.phase === "connected") {
+        quietUntil = Date.now() + PEER_QUIET_MS;
+      }
       // 连接成功后重置重连次数。
       setVoice({ phase: ev.phase, reason: null, message: null, retryAt: null, ...(ev.phase === "connected" ? { attempt: 0 } : {}) });
       return;
@@ -444,9 +469,11 @@ export function onVoiceEvent(p: VoicePayload) {
       return;
     case "peer_joined":
       if (ev.peer.id === voice.me?.id) return;
+      if (peerSoundOk() && !voice.peers.some((x) => x.id === ev.peer.id) && voice.peers.length + 2 <= PEER_LIMIT) playEffect(Effect.USER_JOIN);
       setVoice("peers", (list) => [...list.filter((x) => x.id !== ev.peer.id), ev.peer]);
       return;
     case "peer_left":
+      if (peerSoundOk() && voice.peers.some((x) => x.id === ev.id) && voice.peers.length + 1 < PEER_LIMIT) playEffect(Effect.USER_LEAVE);
       setVoice("peers", (list) => list.filter((x) => x.id !== ev.id));
       setOutput("speaking", (s) => s.filter((x) => x !== ev.id));
       return;
