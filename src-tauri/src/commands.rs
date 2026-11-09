@@ -12,6 +12,7 @@ mod dm;
 mod gateway;
 mod guild;
 mod message;
+mod moderation;
 mod session;
 mod sound;
 mod storage;
@@ -22,6 +23,7 @@ pub use dm::*;
 pub use gateway::*;
 pub use guild::*;
 pub use message::*;
+pub use moderation::*;
 pub use session::*;
 pub use sound::*;
 pub use storage::*;
@@ -59,8 +61,10 @@ pub struct VoiceSlot {
     pub gain: crate::audio::dsp::Gain,
     /// 降噪开关，与当前会话共享，修改立即生效。
     pub denoise: crate::audio::denoise::Denoise,
-    /// 成员音量百分比，按用户 ID 记录。跨会话保留，只保存在内存中。
+    /// 成员音量百分比，按用户 ID 记录。前端按账号持久化，加入语音前同步。
     pub volumes: std::collections::HashMap<String, u16>,
+    /// 开启降噪的成员 ID。前端按账号持久化，加入语音前同步。
+    pub denoised: std::collections::HashSet<String>,
     /// 总音量百分比，None 为 100。
     pub master: Option<u16>,
     /// 提示音音量百分比。
@@ -131,6 +135,7 @@ impl VoiceSlot {
     /// 设备、输入增益与总音量属于本机设置，保留不变。
     pub fn reset_account(&mut self) {
         self.volumes.clear();
+        self.denoised.clear();
     }
 
     /// 登记退出请求。序号更小且尚未拿到锁的加入随之作废。

@@ -99,6 +99,8 @@ pub enum DisconnectKind {
     JoinFailed,
     /// 41101，被同账号的新会话替换。
     Replaced,
+    /// 41106，被管理员移出语音频道。
+    Kicked,
     /// 41110，正常退出。
     Exited,
     /// 其他错误码。
@@ -111,6 +113,7 @@ impl DisconnectKind {
         match code {
             41100 => Self::JoinFailed,
             41101 => Self::Replaced,
+            41106 => Self::Kicked,
             41110 => Self::Exited,
             c => Self::Other(c),
         }
@@ -445,6 +448,8 @@ mod tests {
         assert_eq!(DisconnectKind::from_code(41100), DisconnectKind::JoinFailed);
         assert_eq!(DisconnectKind::from_code(41101), DisconnectKind::Replaced);
         assert_eq!(DisconnectKind::from_code(41110), DisconnectKind::Exited);
+        assert_eq!(DisconnectKind::from_code(41106), DisconnectKind::Kicked);
+        assert!(!DisconnectKind::Kicked.may_retry());
         assert_eq!(DisconnectKind::from_code(1), DisconnectKind::Other(1));
         assert!(!DisconnectKind::Replaced.may_retry());
         assert!(!DisconnectKind::Exited.may_retry());

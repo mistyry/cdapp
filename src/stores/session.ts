@@ -4,7 +4,7 @@ export { names, plainContent, toGroups } from "./session/convert";
 export { boot, enter, logout, expire, skipRestore } from "./session/auth";
 export { loadFolders, loadGuilds, openDm, selectGuild, selectChannel, retryAccess } from "./session/nav";
 export { loadHistory, loadOlder, loadNewer, jumpLatest, type JumpResult, jumpTo } from "./session/history";
-export { canSend, msgKey, loadAccess, refreshAccess, permsOf, visible, sendBlock, voiceBlock, accessState, enterVoice, cancelPassword, pwPrompt } from "./session/access";
+export { canSend, msgKey, loadAccess, refreshAccess, permsOf, checkChannelPerms, visible, sendBlock, voiceBlock, accessState, enterVoice, cancelPassword, pwPrompt } from "./session/access";
 export { closeMembers, ensureMembers, refreshMembers, loadMoreMembers } from "./session/members";
 export { cardFileSrcs, onUploadProgress, checkFile, stageFiles, unstage, submit, cancelUpload, send, retry, verify, discard } from "./session/outbox";
 export { canEdit, canDelete, canReact, editMessage, deleteMessage, isReacting, reactFailed, toggleReaction } from "./session/edit";

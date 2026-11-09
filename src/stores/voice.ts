@@ -3,6 +3,7 @@ import { createStore, produce } from "solid-js/store";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { api, errorText, type DenoiseMode, type InputDevice } from "../lib/api";
 import { Effect, applyEffectPrefs, playEffect, playJoin } from "./effects";
+import { readAccount, writeAccount } from "../lib/accountState";
 
 // 语音会话状态。后端在后台完成连接与重建，经 voice://event 推送事件，事件按会话代次过滤。
 // 静音、耳机与成员音量在会话之间保留，退出登录时重置。
@@ -10,12 +11,12 @@ import { Effect, applyEffectPrefs, playEffect, playJoin } from "./effects";
 
 export type VoicePeer = {
   id: string; name: string; avatar: string; device: string;
-  micOff: boolean; headsetOff: boolean; permissionSay: boolean; serverMute: boolean;
+  micOff: boolean; headsetOff: boolean; permissionSay: boolean; serverMute: boolean; serverDeafen?: boolean;
   joinVoice?: number;
 };
 export type VoicePatch = Partial<Omit<VoicePeer, "avatar" | "device">> & { id: string };
 export type VoicePhase = "idle" | "connecting" | "connected" | "reconnecting" | "disconnected";
-export type EndReason = "left" | "replaced" | "exited" | "join_failed" | "lost" | "unauthorized" | "password" | "revoked";
+export type EndReason = "left" | "replaced" | "exited" | "kicked" | "join_failed" | "lost" | "unauthorized" | "password" | "revoked";
 
 export type LinkQuality = "good" | "fair" | "poor";
 export type UpStats = { score: number; loss: number; packets: number; lost: number; bitrate: number };
@@ -80,7 +81,7 @@ type Mic = {
 const MIC_IDLE = { status: "off" as MicStatus, device: null, message: null, level: 0, busy: false };
 export const [mic, setMic] = createStore<Mic>({ muted: false, ...MIC_IDLE });
 
-// 降噪开关与方式。语音栏只切换开关，方式在设置页选择，关闭时也保留。
+// 降噪开关与模型。开关只作用于本人麦克风，模型同时用于成员降噪，关闭时也保留。
 // 使用 KOOK AI 降噪 2.0 时后端先获取许可，失败则回到之前的状态。
 export const DENOISE_MODES: { id: DenoiseMode; name: string }[] = [
   { id: "kook", name: "KOOK AI 降噪 2.0" },
@@ -88,12 +89,15 @@ export const DENOISE_MODES: { id: DenoiseMode; name: string }[] = [
 ];
 export const [denoise, setDenoiseState] = createSignal(false);
 export const [denoiseMode, setDenoiseModeState] = createSignal<DenoiseMode>("kook");
+// KOOK AI 降噪出现故障，当前用 RNNoise 代替。修改设置或重新加入语音时重新尝试。
+export const [kookFallback, setKookFallback] = createSignal(false);
 let denoiseSeq = 0;
 export async function applyDenoise(on: boolean, mode: DenoiseMode) {
   const my = ++denoiseSeq;
   const prev = [denoise(), denoiseMode()] as const;
   setDenoiseState(on);
   setDenoiseModeState(mode);
+  setKookFallback(false);
   try {
     await api.voiceSetDenoise(on, mode);
   } catch (e) {
@@ -103,18 +107,16 @@ export async function applyDenoise(on: boolean, mode: DenoiseMode) {
     setMic("message", `降噪未开启：${errorText(e)}`);
   }
 }
-// 降噪因故障被后端关闭。
-let denoiseOffListening: Promise<UnlistenFn> | null = null;
-export function watchDenoiseOff() {
-  denoiseOffListening ??= listen<string>("denoise://off", () => {
-    ++denoiseSeq;
-    setDenoiseState(false);
-    setMic("message", "降噪出现故障，已关闭");
+// KOOK AI 降噪故障，后端已改用 RNNoise。
+let denoiseFallbackListening: Promise<UnlistenFn> | null = null;
+export function watchDenoiseFallback() {
+  denoiseFallbackListening ??= listen<string>("denoise://fallback", () => {
+    setKookFallback(true);
   }).catch((e) => {
-    denoiseOffListening = null;
+    denoiseFallbackListening = null;
     throw e;
   });
-  return denoiseOffListening;
+  return denoiseFallbackListening;
 }
 export const setDenoise = (on: boolean) => applyDenoise(on, denoiseMode());
 export const setDenoiseMode = (mode: DenoiseMode) => applyDenoise(denoise(), mode);
@@ -131,12 +133,14 @@ type Out = {
   speaking: string[];
   // 成员音量百分比，100 不记录。
   volumes: Record<string, number>;
+  // 开启降噪的成员。
+  denoised: Record<string, boolean>;
   master: number;
   // 麦克风输入增益百分比。
   gain: number;
 };
 const OUT_IDLE = { active: false, device: null, message: null, busy: false, speaking: [] as string[] };
-export const [output, setOutput] = createStore<Out>({ deafened: false, ...OUT_IDLE, volumes: {}, master: 100, gain: 100 });
+export const [output, setOutput] = createStore<Out>({ deafened: false, ...OUT_IDLE, volumes: {}, denoised: {}, master: 100, gain: 100 });
 // 本人说话状态由麦克风电平判定，阈值与远端一致，约 -46 dBov。
 const SELF_SPEAK_LEVEL = 23;
 const SELF_SPEAK_HOLD_MS = 300;
@@ -174,6 +178,7 @@ const REASONS: Record<EndReason, string> = {
   left: "已退出语音",
   replaced: "已在其他设备加入语音",
   exited: "语音已结束",
+  kicked: "已被管理员移出语音频道",
   join_failed: "加入语音失败",
   lost: "语音连接已断开",
   unauthorized: "登录已失效",
@@ -206,6 +211,7 @@ export async function joinVoice(channelId: string, password: string | null = nul
   if (voiceActive() && voice.channelId === channelId) return;
   if (micTest.on) { ++testSeq; setMicTest({ on: false, level: 0 }); }
   const my = ++seq;
+  setKookFallback(false);
   joining = true;
   wanted = null;
   wantedDeaf = null;
@@ -331,7 +337,9 @@ export function resetVoice() {
   selfJoinPending = false;
   setVoice({ ...IDLE });
   setMic({ muted: false, ...MIC_IDLE });
-  setOutput({ deafened: false, ...OUT_IDLE, volumes: {} });
+  setOutput({ deafened: false, ...OUT_IDLE, volumes: {}, denoised: {} });
+  volumeOwner = "";
+  for (const k of Object.keys(beforeMute)) delete beforeMute[k];
   micBeforeDeaf = null;
 }
 
@@ -425,10 +433,75 @@ export async function setDeafened(deafened: boolean) {
 
 export const toggleDeafen = () => setDeafened(!output.deafened);
 
+// 成员音量按账号保存在 accounts/<id>/state.json 的 peerVolumes，键为用户 ID，100 不记录。
+let volumeOwner = "";
+export function parseVolumes(v: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!v || typeof v !== "object" || Array.isArray(v)) return out;
+  for (const [id, n] of Object.entries(v)) {
+    if (typeof n !== "number" || !Number.isFinite(n)) continue;
+    const c = Math.max(0, Math.min(200, Math.round(n)));
+    if (c !== 100) out[id] = c;
+  }
+  return out;
+}
+
+export function parseDenoised(v: unknown): string[] {
+  return Array.isArray(v) ? [...new Set(v.filter((x): x is string => typeof x === "string" && x !== ""))] : [];
+}
+
+// 登录后读取本账号保存的成员音量与成员降噪并同步到后端。读取期间已修改的成员以修改为准。
+export async function loadPeerVolumes(me: string) {
+  volumeOwner = me;
+  const [rawVol, rawDn] = await Promise.all([readAccount(me, "peerVolumes"), readAccount(me, "peerDenoise")]);
+  if (volumeOwner !== me) return;
+  const stored = parseVolumes(rawVol);
+  for (const id of parseDenoised(rawDn)) {
+    if (id in output.denoised) continue;
+    setOutput("denoised", id, true);
+    void api.voiceSetPeerDenoise(id, true).catch(() => {});
+  }
+  for (const [id, v] of Object.entries(stored)) {
+    if (id in output.volumes) continue;
+    setOutput("volumes", id, v);
+    await api.voiceSetVolume(id, v).catch(() => {});
+  }
+}
+
+// 静音前的音量，取消静音时恢复，只保存在内存中。
+const beforeMute: Record<string, number> = {};
+export async function togglePeerMute(id: string) {
+  const v = volumeOf(id);
+  if (v > 0) {
+    beforeMute[id] = v;
+    await setPeerVolume(id, 0);
+  } else {
+    const back = beforeMute[id] ?? 100;
+    delete beforeMute[id];
+    await setPeerVolume(id, back);
+  }
+}
+
+export const peerDenoised = (id: string) => output.denoised[id] === true;
+
+// 开启或关闭成员降噪，按账号保存。
+export async function setPeerDenoise(id: string, on: boolean) {
+  setOutput("denoised", id, on);
+  if (volumeOwner) writeAccount(volumeOwner, "peerDenoise", Object.keys(output.denoised).filter((k) => output.denoised[k]));
+  await api.voiceSetPeerDenoise(id, on).catch((e) => {
+    setOutput("denoised", id, !on);
+    setOutput({ message: errorText(e) });
+  });
+}
+
 // 设置成员音量，范围 0 至 200。
 export async function setPeerVolume(id: string, percent: number) {
   const v = Math.max(0, Math.min(200, Math.round(percent)));
   setOutput("volumes", id, v);
+  if (volumeOwner) {
+    const all = parseVolumes({ ...output.volumes });
+    writeAccount(volumeOwner, "peerVolumes", all);
+  }
   await api.voiceSetVolume(id, v).catch((e) => setOutput({ message: errorText(e) }));
 }
 
@@ -485,8 +558,22 @@ createRoot(() => createEffect(() => {
   void api.setVoiceSwitches(keepMuted, deafened).catch(() => {});
 }));
 
+// 设备增减或默认设备变化时由后端通知，刷新已加载过的列表。
+let devicesListening: Promise<UnlistenFn> | null = null;
+export function watchDevices() {
+  devicesListening ??= listen<{ input: boolean; output: boolean }>("audio://devices", ({ payload }) => {
+    if (payload.input && inputs.loaded) void loadInputs();
+    if (payload.output && outputs.loaded) void loadOutputs();
+  }).catch((e) => {
+    devicesListening = null;
+    throw e;
+  });
+  return devicesListening;
+}
+
 export async function loadAudioPrefs() {
-  void watchDenoiseOff().catch(() => {});
+  void watchDenoiseFallback().catch(() => {});
+  void watchDevices().catch(() => {});
   const my = [masterSeq, gainSeq, inSeq, outSeq, denoiseSeq];
   try {
     const p = await api.audioPrefs();
@@ -698,6 +785,9 @@ export const selectionMissing = (list: DeviceList) =>
   list.loaded && !list.error && list.selected !== null && !list.devices.some((d) => d.id === list.selected);
 
 // 当前系统默认设备的名称，作为系统默认项的提示。
+// 界面显示的选中项。所选设备不可用时实际使用系统默认设备，显示为系统默认；保存的选择不变，设备恢复后自动切回。
+export const shownSelection = (list: DeviceList) => (selectionMissing(list) ? null : list.selected);
+
 export function defaultName(list: DeviceList): string {
   return list.devices.find((x) => x.default)?.name ?? "系统默认";
 }

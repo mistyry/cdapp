@@ -3,7 +3,9 @@
 //! 模块是 Emscripten 编译的 wasm，由 wasmtime 加载，宿主导入在此实现。
 //! 没有可用的 Rust 实现或 C 接口可替代，只能按模块的导入表补齐宿主函数。
 //! 采集回调按 128 样本块处理 48 kHz 单声道音频。实例创建较慢，在采集线程中完成后交给回调。
-//! KOOK AI 降噪实例出错或无法创建时，关闭降噪并通知界面，不中断采集。输出持续为零只记录日志。
+//! KOOK AI 降噪尚未就绪时用 `RNNoise` 处理。实例出错或无法创建时改用 `RNNoise` 并通知界面，
+//! 直到下次加入语音或修改降噪设置时再尝试。输出持续为零只记录日志。
+//! 同一实现也用于远端成员，每路音轨一个阶段。
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -34,6 +36,19 @@ const MUTED_LOG: usize = 48_000 * 2;
 static MODULE: OnceLock<(Engine, Module)> = OnceLock::new();
 /// 当前许可证书，只保存在内存中。
 static LICENSE: Mutex<Option<String>> = Mutex::new(None);
+/// KOOK AI 降噪已出现故障，全部阶段改用 `RNNoise`。
+static BROKEN: AtomicBool = AtomicBool::new(false);
+
+/// KOOK AI 降噪是否已出现故障。
+#[must_use]
+pub fn broken() -> bool {
+    BROKEN.load(Ordering::SeqCst)
+}
+
+/// 清除故障标记，下次需要时重新创建 KOOK AI 降噪实例。
+pub fn retry_kook() {
+    BROKEN.store(false, Ordering::SeqCst);
+}
 
 /// 设置许可证书。
 pub fn set_license(cert: Option<String>) {
@@ -445,16 +460,17 @@ impl Mode {
 
 struct Inner {
     on: AtomicBool,
-    mode: AtomicU8,
+    /// 降噪方式，与派生的成员降噪共享。
+    mode: Arc<AtomicU8>,
     /// 采集回调正持有可用实例。
     armed: AtomicBool,
     /// 采集线程创建好、等待回调取走的实例。
     slot: Mutex<Option<Denoiser>>,
-    /// 降噪因故障关闭时的通知，参数为原因。
-    on_fail: Mutex<Option<FailHook>>,
+    /// KOOK AI 降噪故障、改用 `RNNoise` 时的通知，参数为原因。
+    on_fail: Arc<Mutex<Option<FailHook>>>,
 }
 
-/// 降噪因故障关闭时的回调。
+/// KOOK AI 降噪故障时的回调。
 pub type FailHook = Box<dyn Fn(String) + Send + Sync>;
 
 /// 降噪开关，与命令层共享，修改立即作用于采集。
@@ -465,15 +481,27 @@ impl Default for Denoise {
     fn default() -> Self {
         Self(Arc::new(Inner {
             on: AtomicBool::new(false),
-            mode: AtomicU8::new(0),
+            mode: Arc::new(AtomicU8::new(0)),
             armed: AtomicBool::new(false),
             slot: Mutex::new(None),
-            on_fail: Mutex::new(None),
+            on_fail: Arc::new(Mutex::new(None)),
         }))
     }
 }
 
 impl Denoise {
+    /// 派生一路已开启的降噪，用于远端成员。方式与故障通知随本实例，实例单独创建。
+    #[must_use]
+    pub fn child(&self) -> Self {
+        Self(Arc::new(Inner {
+            on: AtomicBool::new(true),
+            mode: self.0.mode.clone(),
+            armed: AtomicBool::new(false),
+            slot: Mutex::new(None),
+            on_fail: self.0.on_fail.clone(),
+        }))
+    }
+
     #[must_use]
     pub fn on(&self) -> bool {
         self.0.on.load(Ordering::Relaxed)
@@ -483,7 +511,7 @@ impl Denoise {
         self.0.on.store(on, Ordering::Relaxed);
     }
 
-    /// 设置降噪因故障关闭时的通知。
+    /// 设置 KOOK AI 降噪故障时的通知。
     pub fn on_fail(&self, hook: FailHook) {
         if let Ok(mut h) = self.0.on_fail.lock() {
             *h = Some(hook);
@@ -499,12 +527,12 @@ impl Denoise {
         self.0.mode.store(mode.as_u8(), Ordering::Relaxed);
     }
 
-    /// 关闭降噪并通知界面。已关闭时不重复通知。
+    /// 标记 KOOK AI 降噪故障并通知。已标记时不重复通知。
     fn fail(&self, e: &wasmtime::Error) {
-        if !self.0.on.swap(false, Ordering::SeqCst) {
+        if BROKEN.swap(true, Ordering::SeqCst) {
             return;
         }
-        log::warn!("KOOK AI 降噪故障，已关闭降噪：{e:#}");
+        log::warn!("KOOK AI 降噪故障，改用 RNNoise：{e:#}");
         if let Ok(h) = self.0.on_fail.lock()
             && let Some(h) = h.as_ref()
         {
@@ -512,10 +540,11 @@ impl Denoise {
         }
     }
 
-    /// 在采集线程中定期调用：需要时创建实例，交给采集回调。
+    /// 在采集或播放线程中定期调用：需要时创建实例，交给处理阶段。
     pub fn maintain(&self) {
         if !self.on()
             || self.mode() != Mode::Kook
+            || broken()
             || self.0.armed.load(Ordering::SeqCst)
             || !ready()
             || !has_license()
@@ -545,6 +574,7 @@ impl Denoise {
             rnn: None,
             active: None,
             pending: Vec::with_capacity(RNN_FRAME * 2),
+            fallback: false,
             muted: 0,
             muted_logged: false,
         }
@@ -559,6 +589,8 @@ pub struct Stage {
     /// 正在使用的方式，切换时先送出缓冲中的样本。
     active: Option<Mode>,
     pending: Vec<f32>,
+    /// 选择 KOOK AI 降噪但没有可用实例，正在用 `RNNoise` 处理。
+    fallback: bool,
     /// 输入有声而输出为零的连续样本数。
     muted: usize,
     /// 本段静音是否已记录。
@@ -582,6 +614,11 @@ impl Stage {
         }
     }
 
+    /// 丢弃缓冲中尚未处理的样本。
+    pub fn clear(&mut self) {
+        self.pending.clear();
+    }
+
     /// 处理 48 kHz 单声道样本，结果写回 `samples`。
     pub fn process(&mut self, samples: &mut Vec<f32>) {
         let want = self.shared.on().then(|| self.shared.mode());
@@ -591,6 +628,7 @@ impl Stage {
                 self.drop_inst();
             }
             self.rnn = None;
+            self.fallback = false;
             self.active = want;
         }
         match want {
@@ -619,8 +657,21 @@ impl Stage {
         samples.extend(self.pending.drain(..full));
     }
 
+    /// 切换 KOOK AI 降噪与 `RNNoise` 保底时，先送出缓冲中的样本。
+    fn set_fallback(&mut self, on: bool, samples: &mut Vec<f32>) {
+        if self.fallback != on {
+            self.flush(samples);
+            self.rnn = None;
+            self.fallback = on;
+        }
+    }
+
     fn kook(&mut self, samples: &mut Vec<f32>) {
+        if self.inst.is_some() && broken() {
+            self.drop_inst();
+        }
         if self.inst.is_none()
+            && !broken()
             && let Some(d) = self
                 .shared
                 .0
@@ -632,6 +683,11 @@ impl Stage {
             self.inst = Some(d);
             self.shared.0.armed.store(true, Ordering::SeqCst);
         }
+        if self.inst.is_none() {
+            self.set_fallback(true, samples);
+            return self.rnnoise(samples);
+        }
+        self.set_fallback(false, samples);
         let Some(inst) = self.inst.as_mut() else {
             return;
         };
@@ -677,6 +733,9 @@ impl Drop for Stage {
 mod tests {
     use super::*;
 
+    /// 故障标记为全局状态，相关测试串行执行。
+    static SERIAL: Mutex<()> = Mutex::new(());
+
     #[test]
     fn civil_dates() {
         assert_eq!(civil(0), (1970, 1, 1));
@@ -685,17 +744,42 @@ mod tests {
     }
 
     #[test]
-    fn stage_passes_through_without_instance() {
+    fn kook_without_instance_falls_back_to_rnnoise() {
+        let _g = SERIAL
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let d = Denoise::default();
         let mut s = d.stage();
         let mut x = vec![0.5f32; 300];
         s.process(&mut x);
-        assert_eq!(x.len(), 300);
+        // 关闭时原样通过。
+        assert_eq!(x, vec![0.5f32; 300]);
         d.set(true);
         let mut x = vec![0.5f32; 300];
         s.process(&mut x);
-        // 没有实例时原样通过。
-        assert_eq!(x, vec![0.5f32; 300]);
+        // 没有实例时按 RNNoise 分帧，剩余样本留到下次。
+        assert!(s.fallback);
+        assert_eq!(x.len() + s.pending.len(), 300);
+    }
+
+    #[test]
+    fn child_shares_mode_and_hook() {
+        let _g = SERIAL
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let d = Denoise::default();
+        let hits = Arc::new(Mutex::new(0));
+        let h = hits.clone();
+        d.on_fail(Box::new(move |_| *h.lock().unwrap() += 1));
+        let c = d.child();
+        assert!(c.on());
+        d.set_mode(Mode::Rnnoise);
+        assert_eq!(c.mode(), Mode::Rnnoise);
+        retry_kook();
+        c.fail(&format_err!("x"));
+        assert_eq!(*hits.lock().unwrap(), 1);
+        assert!(broken());
+        retry_kook();
     }
 
     #[test]
@@ -719,22 +803,26 @@ mod tests {
     }
 
     #[test]
-    fn failure_turns_denoise_off_and_notifies_once() {
+    fn failure_marks_broken_and_notifies_once() {
+        let _g = SERIAL
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let d = Denoise::default();
         let hits = Arc::new(Mutex::new(Vec::new()));
         let h = hits.clone();
         d.on_fail(Box::new(move |r| h.lock().unwrap().push(r)));
         d.set(true);
+        retry_kook();
         d.fail(&format_err!("陷入"));
-        assert!(!d.on());
-        // 已关闭时不重复通知。
+        // 降噪保持开启，改用 RNNoise。
+        assert!(d.on() && broken());
         d.fail(&format_err!("再次"));
         assert_eq!(*hits.lock().unwrap(), vec!["陷入".to_owned()]);
-        // 用户重新开启后，再次故障仍会关闭并通知。
-        d.set(true);
+        // 重新尝试后再次故障仍会通知。
+        retry_kook();
         d.fail(&format_err!("第三次"));
-        assert!(!d.on());
         assert_eq!(hits.lock().unwrap().len(), 2);
+        retry_kook();
     }
 
     #[test]

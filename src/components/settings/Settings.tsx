@@ -2,11 +2,11 @@ import { For, Show, createSignal, onCleanup, onMount, type JSX } from "solid-js"
 import { HardDrive, LogOut, Mic, User, X } from "lucide-solid";
 import { logout, session } from "../../stores/session";
 import { setUi, ui } from "../../stores/ui";
-import { DENOISE_MODES, applyDenoise, mic, denoise, denoiseMode, setDenoise, deviceOptions, loadInputs, inputs, selectInput, selectionMissing, loadOutputs, outputs, selectOutput, output, setMasterVolume, setMicGain, micTest, stopMicTest, toggleMicTest, voiceActive } from "../../stores/voice";
+import { DENOISE_MODES, applyDenoise, kookFallback, mic, denoise, denoiseMode, setDenoise, deviceOptions, shownSelection, loadInputs, inputs, selectInput, loadOutputs, outputs, selectOutput, output, setMasterVolume, setMicGain, micTest, stopMicTest, toggleMicTest, voiceActive } from "../../stores/voice";
 import Avatar from "../common/Avatar";
 import { effects, setEffectVolume } from "../../stores/effects";
 import StorageSettings from "./StorageSettings";
-import { Note, Row, Section, Select, Slider } from "./parts";
+import { Note, Row, Section, Select, Slider, Switch } from "./parts";
 import type { DenoiseMode } from "../../lib/api";
 
 type Page = "account" | "voice" | "storage";
@@ -145,10 +145,8 @@ function VoiceSettings() {
         title="设备和音量"
         notes={
           <>
-            <Show when={selectionMissing(inputs)}><Note warn>所选麦克风不可用。</Note></Show>
             <Show when={inputs.error}>{(m) => <Note warn>{m()}</Note>}</Show>
             <Show when={!inputs.error && !inputs.loading && inputs.devices.length === 0}><Note warn>没有找到麦克风。</Note></Show>
-            <Show when={selectionMissing(outputs)}><Note warn>所选扬声器不可用。</Note></Show>
             <Show when={outputs.error}>{(m) => <Note warn>{m()}</Note>}</Show>
             <Show when={!outputs.error && !outputs.loading && outputs.devices.length === 0}><Note warn>没有找到扬声器。</Note></Show>
             <Show when={micTest.error}>{(m) => <Note warn>{m()}</Note>}</Show>
@@ -157,17 +155,15 @@ function VoiceSettings() {
         }
       >
         <Row label="输入设备" for="st-input">
-          <Select id="st-input" label="输入设备" disabled={inputs.loading} value={inputs.selected ?? ""} onChange={(v) => void selectInput(v || null)}>
+          <Select id="st-input" label="输入设备" disabled={inputs.loading} value={shownSelection(inputs) ?? ""} onChange={(v) => void selectInput(v || null)}>
             <option value="">系统默认</option>
             <For each={deviceOptions(inputs)}>{(d) => <option value={d.id} title={d.title}>{d.label}</option>}</For>
-            <Show when={selectionMissing(inputs)}><option value={inputs.selected!}>所选设备不可用</option></Show>
           </Select>
         </Row>
         <Row label="输出设备" for="st-output">
-          <Select id="st-output" label="输出设备" disabled={outputs.loading} value={outputs.selected ?? ""} onChange={(v) => void selectOutput(v || null)}>
+          <Select id="st-output" label="输出设备" disabled={outputs.loading} value={shownSelection(outputs) ?? ""} onChange={(v) => void selectOutput(v || null)}>
             <option value="">系统默认</option>
             <For each={deviceOptions(outputs)}>{(d) => <option value={d.id} title={d.title}>{d.label}</option>}</For>
-            <Show when={selectionMissing(outputs)}><option value={outputs.selected!}>所选设备不可用</option></Show>
           </Select>
         </Row>
         <div class="st-divider" />
@@ -196,13 +192,10 @@ function VoiceSettings() {
 
       <Section title="音频设置">
         <Row label="降噪" for="st-denoise">
-          <Select
-            id="st-denoise"
-            label="降噪"
-            value={denoise() ? denoiseMode() : "off"}
-            onChange={(v) => void (v === "off" ? setDenoise(false) : applyDenoise(true, v as DenoiseMode))}
-          >
-            <option value="off">关闭</option>
+          <Switch id="st-denoise" label="降噪" checked={denoise()} onChange={(v) => void setDenoise(v)} />
+        </Row>
+        <Row label="降噪模型" for="st-denoise-mode" desc={kookFallback() && denoiseMode() === "kook" ? "KOOK AI 降噪 2.0 不可用，正在使用 RNNoise" : undefined}>
+          <Select id="st-denoise-mode" label="降噪模型" value={denoiseMode()} onChange={(v) => void applyDenoise(denoise(), v as DenoiseMode)}>
             <For each={DENOISE_MODES}>{(m) => <option value={m.id}>{m.name}</option>}</For>
           </Select>
         </Row>

@@ -164,6 +164,13 @@ export const api = {
   setAudioOutput: (id: string | null) => invoke<void>("set_audio_output", { id }),
   // 成员音量与总音量的上限为 200。
   voiceSetVolume: (userId: string, percent: number) => invoke<void>("voice_set_volume", { userId, percent }),
+  guildMute: (guildId: string, userId: string, kind: "mute" | "deafen", on: boolean) => invoke<void>("guild_mute", { guildId, userId, kind, on }),
+  guildMutes: (guildId: string) => invoke<{ mute: string[]; deafen: string[] }>("guild_mutes", { guildId }),
+  voiceKick: (channelId: string, userId: string) => invoke<void>("voice_kick", { channelId, userId }),
+  voiceMove: (channelId: string, userId: string) => invoke<void>("voice_move", { channelId, userId }),
+  guildKick: (guildId: string, userId: string) => invoke<void>("guild_kick", { guildId, userId }),
+  guildBan: (guildId: string, userId: string) => invoke<void>("guild_ban", { guildId, userId }),
+  voiceSetPeerDenoise: (userId: string, on: boolean) => invoke<void>("voice_set_peer_denoise", { userId, on }),
   voiceSetMaster: (percent: number) => invoke<void>("voice_set_master", { percent }),
   // 麦克风输入增益，上限 200，返回实际生效的值。
   voiceSetGain: (percent: number) => invoke<number>("voice_set_gain", { percent }),

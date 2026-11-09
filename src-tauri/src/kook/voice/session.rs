@@ -120,6 +120,11 @@ impl VoiceControl {
         let _ = self.0.send(Ctl::Volume(peer, percent));
     }
 
+    /// 开启或关闭成员降噪。
+    pub fn set_peer_denoise(&self, peer: String, on: bool) {
+        let _ = self.0.send(Ctl::PeerDenoise(peer, on));
+    }
+
     /// 设置总音量，上限为 `MAX_VOLUME`。
     pub fn set_master(&self, percent: u16) {
         let _ = self.0.send(Ctl::Master(percent));

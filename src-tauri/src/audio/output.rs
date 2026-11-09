@@ -74,19 +74,8 @@ pub enum Sink {
 /// 播放线程发出的事件，`epoch` 用于区分播放轮次。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OutputEvent {
-    Started {
-        epoch: u64,
-        device: String,
-    },
-    /// 所选设备不可用，已改用系统默认设备。
-    Lost {
-        epoch: u64,
-        message: String,
-    },
-    Failed {
-        epoch: u64,
-        message: String,
-    },
+    Started { epoch: u64, device: String },
+    Failed { epoch: u64, message: String },
 }
 
 /// 一次播放。持有播放线程。
@@ -224,6 +213,7 @@ fn run_null(
     let start = std::time::Instant::now();
     let mut k: u32 = 0;
     while !stop.load(Ordering::SeqCst) {
+        maintain(mixer);
         render.fill(&mut buf);
         k += 1;
         let due = start + Duration::from_millis(10) * k;
@@ -236,6 +226,14 @@ fn run_null(
         {
             break;
         }
+    }
+}
+
+/// 为开启降噪的成员创建 KOOK AI 降噪实例。只在取列表时持有混音锁。
+fn maintain(mixer: &Arc<Mutex<Mixer>>) {
+    let list = mixer.lock().map(|m| m.denoisers()).unwrap_or_default();
+    for d in list {
+        d.maintain();
     }
 }
 
@@ -328,16 +326,18 @@ fn run_device(
     let failed = |message| {
         let _ = events.send(OutputEvent::Failed { epoch, message });
     };
-    let mut target = id.map(str::to_owned);
+    // 所选设备不可用时改用系统默认设备，并定期检查，所选设备恢复后自动切回。
+    let chosen = id.map(str::to_owned);
+    let mut target = chosen.clone();
     loop {
         let Some((device, fell_back)) = find_device(target.as_deref()) else {
             return failed("没有可用的扬声器".into());
         };
         if fell_back {
-            let _ = events.send(OutputEvent::Lost {
-                epoch,
-                message: "所选扬声器不可用，已改用系统默认设备".into(),
-            });
+            log::warn!(
+                "所选扬声器不可用，改用系统默认设备 {}",
+                device_name(&device)
+            );
             target = None;
         }
         let (sig_tx, sig_rx) = std::sync::mpsc::channel();
@@ -353,7 +353,21 @@ fn run_device(
             epoch,
             device: device_name(&device),
         });
+        let mut last_probe = std::time::Instant::now();
         let lost = loop {
+            // 成员降噪实例在此创建，不占用设备回调的时间。
+            maintain(mixer);
+            if target.is_none()
+                && let Some(c) = chosen.as_deref()
+                && last_probe.elapsed() >= crate::audio::capture::RESTORE_PROBE
+            {
+                last_probe = std::time::Instant::now();
+                if find_device(Some(c)).is_some_and(|(_, fell_back)| !fell_back) {
+                    log::info!("所选扬声器已恢复，切回该设备");
+                    target.clone_from(&chosen);
+                    break None;
+                }
+            }
             if stop.load(Ordering::SeqCst)
                 || !matches!(
                     wait.recv_timeout(Duration::from_millis(100)),
@@ -364,20 +378,32 @@ fn run_device(
             }
             if let Ok(e) = sig_rx.try_recv() {
                 match e.kind() {
-                    ErrorKind::DeviceNotAvailable | ErrorKind::StreamInvalidated => break e,
+                    ErrorKind::DeviceNotAvailable | ErrorKind::StreamInvalidated => break Some(e),
                     ErrorKind::DeviceChanged | ErrorKind::Xrun => {}
                     _ => log::warn!("扬声器流错误：{e}"),
                 }
             }
         };
         drop(stream);
+        let Some(lost) = lost else {
+            continue;
+        };
+        log::warn!("扬声器 {} 断开：{lost}", device_name(&device));
+        // 正在使用系统默认设备时：所选设备已恢复则切回，否则重新查找当前的默认设备。
         if target.is_none() {
+            if let Some(c) = chosen.as_deref()
+                && find_device(Some(c)).is_some_and(|(_, fell_back)| !fell_back)
+            {
+                target.clone_from(&chosen);
+                continue;
+            }
+            if find_device(None).is_some() {
+                log::info!("改用新的系统默认扬声器");
+                continue;
+            }
+            log::warn!("没有可用的扬声器，停止播放");
             return failed(format!("扬声器已断开：{lost}"));
         }
-        let _ = events.send(OutputEvent::Lost {
-            epoch,
-            message: "扬声器已断开，已改用系统默认设备".into(),
-        });
         target = None;
     }
 }
@@ -493,15 +519,23 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn null_playback_thread_exits_on_stop() {
-        let base = live_outputs();
+        // 线程计数为全进程共享，并发测试会同时增减，这里以本线程的退出信号为准。
         let (tx, mut rx) = mpsc::unbounded_channel();
         let p = Playback::start(Sink::Null, Arc::default(), 7, tx);
         assert!(matches!(
             rx.recv().await,
             Some(OutputEvent::Started { epoch: 7, .. })
         ));
-        p.stop().await;
-        assert!(live_outputs() <= base, "停止后线程退出");
+        let Playback {
+            stop,
+            wake,
+            released,
+            ..
+        } = p;
+        stop.store(true, Ordering::SeqCst);
+        let _ = wake.send(());
+        let done = tokio::time::timeout(Duration::from_secs(1), released).await;
+        assert!(matches!(done, Ok(Ok(()))), "停止后线程退出");
     }
 
     #[tokio::test(flavor = "multi_thread")]

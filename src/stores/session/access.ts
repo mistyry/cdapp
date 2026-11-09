@@ -1,5 +1,5 @@
 import { api } from "../../lib/api";
-import { channelPerms, has, Perm } from "../../lib/perms";
+import { channelPerms, checkPerms, has, Perm, type PermCheck } from "../../lib/perms";
 import type { Channel } from "../types";
 import { ui, setUi, NONE, type Target } from "../ui";
 import { createStore } from "solid-js/store";
@@ -82,6 +82,19 @@ export function permsOf(channelId: string): number | null {
   const a = hit && session.access[hit.guildId];
   if (!hit || a?.status !== "ready" || !a.data || !session.me) return null;
   return channelPerms(a.data, session.me.id, hit.channel.overwrites, hit.channel.userOverwrites);
+}
+
+// 校验本人在频道中的最终权限，附逐层计算过程。依据未就绪时为 null。
+// fresh 为 true 时先重新获取服务器权限依据。
+export async function checkChannelPerms(channelId: string, fresh = false): Promise<(PermCheck & { channelId: string; guildId: string; name: string }) | null> {
+  const hit = channelById(channelId);
+  if (!hit) return null;
+  if (fresh || session.access[hit.guildId]?.status !== "ready") await loadAccess(hit.guildId, fresh);
+  const a = session.access[hit.guildId];
+  const cur = channelById(channelId);
+  if (!cur || a?.status !== "ready" || !a.data || !session.me) return null;
+  const r = checkPerms(a.data, session.me.id, cur.channel.overwrites, cur.channel.userOverwrites);
+  return { ...r, channelId, guildId: cur.guildId, name: cur.channel.name };
 }
 
 // 是否可见。服务端列表不过滤无查看频道，依据未知时也不显示，避免暴露名称与预览。

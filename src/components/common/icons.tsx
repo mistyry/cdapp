@@ -66,3 +66,15 @@ export function DenoiseOff(p: { size?: number }) {
     </svg>
   );
 }
+
+// 成员已被本地静音。喇叭取自 lucide Volume2，斜杠为危险色。
+export function SpeakerOffMark(p: { size?: number }) {
+  const s = p.size ?? 20;
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z" />
+      <path d="M16 9a5 5 0 0 1 0 6M19.364 18.364a9 9 0 0 0 0-12.728" />
+      <path d="m2 2 20 20" stroke="var(--c-danger)" />
+    </svg>
+  );
+}

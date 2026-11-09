@@ -3238,3 +3238,65 @@ test("提示音：成员装扮音效", async () => {
     Date.now = realNow;
   }
 });
+
+// 成员管理
+
+test("被移动到其他语音频道时加入目标频道，未在语音或已在目标时忽略", async () => {
+  auto.voice_join = ({ channelId }) => (channelId === "V-a" ? 1 : 2);
+  auto.channels = () => [raw("A-t1", "t1"), vraw("V-a"), vraw("V-b")];
+  auto.guild_access = ({ guildId }) => access(guildId, { everyone: VIEW | SEND | CONNECT });
+  await selectGuild("A");
+  sys("move_to_channel", { id: "V-b" });
+  await flush();
+  expect(calls.some((c) => c.cmd === "voice_join")).toBe(false);
+  await enterVoice("V-a");
+  ev(1, { type: "state", phase: "connected" }, "V-a");
+  sys("move_to_channel", { id: "V-a" });
+  await flush();
+  expect(calls.filter((c) => c.cmd === "voice_join").length).toBe(1);
+  sys("move_to_channel", { id: "V-b" });
+  await flush();
+  await flush();
+  expect(calls.filter((c) => c.cmd === "voice_join").map((c) => c.args.channelId)).toEqual(["V-a", "V-b"]);
+  await vs.leaveVoice();
+});
+
+test("被移出语音频道显示原因，不提供重新加入", async () => {
+  auto.voice_join = () => 1;
+  await vs.joinVoice("V1");
+  ev(1, { type: "state", phase: "connected" });
+  ev(1, { type: "state", phase: "disconnected", reason: "kicked" });
+  expect(vs.voiceStatusText()).toBe("已被管理员移出语音频道");
+  expect(vs.canRejoin()).toBe(false);
+});
+
+test("管理权限按语音频道有效权限判断，频道覆盖可拒绝", async () => {
+  const { modPerms, anyMod, moveTargets } = await import("../moderation");
+  const VM = 1 << 16, MUTE = 1 << 25, DEAF = 1 << 24;
+  auto.channels = () => [raw("A-t1", "t1"), vraw("V-a"), vraw("V-b", [{ roleId: 0, allow: 0, deny: VM | MUTE }]), vraw("V-hide", [{ roleId: 0, allow: 0, deny: VIEW }])];
+  auto.guild_access = ({ guildId }) => access(guildId, { everyone: VIEW | CONNECT | VM | MUTE | DEAF + 2 ** 32 });
+  await selectGuild("A");
+  expect(modPerms("V-a")).toEqual({ voiceManage: true, mute: true, deafen: true, kick: false, ban: false });
+  expect(modPerms("V-b")).toEqual({ voiceManage: false, mute: false, deafen: true, kick: false, ban: false });
+  expect(anyMod(modPerms("V-b"))).toBe(true);
+  expect(moveTargets("V-a").map((c) => c.id)).toEqual(["V-b"]);
+});
+
+test("服务器闭麦与静音成功后更新成员，失败返回原因", async () => {
+  const { setServerMute } = await import("../moderation");
+  auto.voice_join = () => 1;
+  auto.channels = () => [raw("A-t1", "t1"), vraw("V-a")];
+  auto.guild_access = ({ guildId }) => access(guildId, { everyone: VIEW | CONNECT });
+  await selectGuild("A");
+  await vs.joinVoice("V-a");
+  ev(1, { type: "joined", me: peer("me"), peers: [peer("u1")] }, "V-a");
+  expect(await setServerMute("V-a", "u1", "mute", true)).toBeNull();
+  expect(calls.find((c) => c.cmd === "guild_mute")!.args).toEqual({ guildId: "A", userId: "u1", kind: "mute", on: true });
+  expect(vs.voice.peers[0].serverMute).toBe(true);
+  ev(1, { type: "peer_changed", patch: { id: "u1", serverDeafen: true } }, "V-a");
+  expect(vs.voice.peers[0].serverDeafen).toBe(true);
+  auto.guild_mute = () => { throw new Error("你没有权限进行此操作"); };
+  expect(await setServerMute("V-a", "u1", "deafen", false)).toContain("没有权限");
+  expect(vs.voice.peers[0].serverDeafen).toBe(true);
+  await vs.leaveVoice();
+});

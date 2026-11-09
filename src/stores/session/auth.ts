@@ -1,6 +1,6 @@
 import { api, errorText, setUnauthorizedHandler, type Raw } from "../../lib/api";
 import { forgetAccountCache } from "../../lib/accountState";
-import { resetVoice } from "../voice";
+import { loadPeerVolumes, resetVoice } from "../voice";
 import { resetUi } from "../ui";
 import { resetAccess } from "./access";
 import { remember, toUser } from "./convert";
@@ -38,6 +38,7 @@ export async function enter(meRaw?: Raw) {
     me.online = true;
     remember(me);
     setSession({ me, phase: "ready", notice: null, error: null });
+    void loadPeerVolumes(me.id);
     await startGateway(gen);
   } catch (e) {
     if (gen !== st.account) return;

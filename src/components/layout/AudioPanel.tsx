@@ -1,8 +1,8 @@
 import { For, Show, createSignal, onCleanup, onMount } from "solid-js";
 import { setUi } from "../../stores/ui";
 import {
-  clampVolume, defaultName, deviceOptions, inputs, loadInputs, loadOutputs, output, outputs,
-  selectInput, selectOutput, selectionMissing, setMasterVolume, setMicGain,
+  DENOISE_MODES, clampVolume, defaultName, denoiseMode, deviceOptions, inputs, kookFallback, loadInputs, loadOutputs, output, outputs, setDenoiseMode,
+  selectInput, selectOutput, shownSelection, setMasterVolume, setMicGain,
 } from "../../stores/voice";
 
 export type AudioKind = "input" | "output";
@@ -81,6 +81,57 @@ export function VolumePop(p: { kind: AudioKind; onDrag: (dragging: boolean) => v
 }
 
 // 右键麦克风或耳机按钮打开的设备菜单。只读取设备列表，不打开设备，不改变静音状态。
+// 降噪模型菜单。与设置页共用 denoiseMode，任一处修改两处同步。
+export function DenoiseMenu(p: { x: number; onClose: (refocus: boolean) => void }) {
+  let root!: HTMLDivElement;
+  onMount(() => (root.querySelector<HTMLElement>("[aria-checked=true]") ?? root.querySelector<HTMLElement>("button"))?.focus());
+  const onDown = (e: PointerEvent) => {
+    if (!root.contains(e.target as Node)) p.onClose(false);
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key !== "Escape") return;
+    e.stopPropagation();
+    p.onClose(true);
+  };
+  const onFocusOut = (e: FocusEvent) => {
+    const t = e.relatedTarget as Node | null;
+    if (t && !root.contains(t)) p.onClose(false);
+  };
+  document.addEventListener("pointerdown", onDown, true);
+  document.addEventListener("keydown", onKey, true);
+  onCleanup(() => {
+    document.removeEventListener("pointerdown", onDown, true);
+    document.removeEventListener("keydown", onKey, true);
+  });
+  const onListKey = (e: KeyboardEvent) => {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    const items = [...root.querySelectorAll<HTMLElement>(".audio-item")];
+    const i = items.indexOf(document.activeElement as HTMLElement);
+    items[(i + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length]?.focus();
+    e.preventDefault();
+  };
+  return (
+    <div class="audio-panel" ref={root} role="menu" aria-label="降噪模型" style={{ left: `${p.x}px` }} onFocusOut={onFocusOut} onKeyDown={onListKey}>
+      <div class="audio-head">降噪模型</div>
+      <div class="audio-list">
+        <For each={DENOISE_MODES}>
+          {(m) => (
+            <button class="audio-item" role="menuitemradio" aria-checked={denoiseMode() === m.id} onClick={() => void setDenoiseMode(m.id)}>
+              <span class="audio-name">{m.name}</span>
+              <span class="audio-radio" />
+            </button>
+          )}
+        </For>
+      </div>
+      <Show when={kookFallback() && denoiseMode() === "kook"}>
+        <div class="audio-note" role="status">正在使用 RNNoise</div>
+      </Show>
+      <div class="audio-line" />
+      <button class="audio-item audio-link" role="menuitem" onClick={() => { p.onClose(false); setUi("settings", "voice"); }}>语音设置</button>
+    </div>
+  );
+}
+
 export function DeviceMenu(p: { kind: AudioKind; x: number; onClose: (refocus: boolean) => void }) {
   const isIn = p.kind === "input";
   const list = () => (isIn ? inputs : outputs);
@@ -121,7 +172,7 @@ export function DeviceMenu(p: { kind: AudioKind; x: number; onClose: (refocus: b
 
   const title = isIn ? "输入设备" : "输出设备";
   const item = (id: string | null, label: string, tip: string) => (
-    <button class="audio-item" role="menuitemradio" aria-checked={list().selected === id} data-tip={tip} aria-label={tip} onClick={() => select(id)}>
+    <button class="audio-item" role="menuitemradio" aria-checked={shownSelection(list()) === id} data-tip={tip} aria-label={tip} onClick={() => select(id)}>
       <span class="audio-name">{label}</span>
       <span class="audio-radio" />
     </button>
@@ -134,9 +185,6 @@ export function DeviceMenu(p: { kind: AudioKind; x: number; onClose: (refocus: b
         {item(null, "系统默认", defaultName(list()))}
         <For each={deviceOptions(list())}>{(d) => item(d.id, d.label, d.title)}</For>
       </div>
-      <Show when={selectionMissing(list())}>
-        <div class="audio-note" role="status">{isIn ? "所选麦克风不可用" : "所选扬声器不可用"}</div>
-      </Show>
       <Show when={list().loading && !list().loaded}><div class="audio-note">正在读取设备</div></Show>
       <Show when={list().error}>
         {(m) => (

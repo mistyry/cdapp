@@ -117,12 +117,18 @@ pub async fn voice_join(
         deafen: Deafen::with_mic_before(deafened, mic_before_deaf),
         output: output::Sink::Device(slot.output.clone()),
         volumes: slot.volumes.clone(),
+        denoised: slot.denoised.clone(),
         master: slot.master.unwrap_or(100),
         password: password.filter(|p| !p.is_empty()),
         ..MicPrefs::default()
     };
-    // 降噪在启动时已开启而尚无许可，在后台获取，取得后采集线程自动启用。
-    if slot.denoise.on() && slot.denoise.mode() == crate::audio::denoise::Mode::Kook {
+    // 每次加入语音重新尝试 KOOK AI 降噪。
+    crate::audio::denoise::retry_kook();
+    // 降噪在启动时已开启而尚无许可，在后台获取，取得后自动启用，此前用 RNNoise。
+    let peers_denoised = !slot.denoised.is_empty();
+    if (slot.denoise.on() || peers_denoised)
+        && slot.denoise.mode() == crate::audio::denoise::Mode::Kook
+    {
         spawn_license(api.clone());
     }
     slot.session = Some(VoiceSession::start_with(
@@ -277,6 +283,31 @@ pub async fn voice_set_volume(
     Ok(())
 }
 
+/// 开启或关闭成员降噪，使用本机选择的降噪方式。
+#[tauri::command]
+pub async fn voice_set_peer_denoise(
+    user_id: String,
+    on: bool,
+    state: State<'_, Mutex<AppState>>,
+    voice: State<'_, VoiceState>,
+) -> AppResult<()> {
+    let mut slot = voice.0.lock().await;
+    if on {
+        slot.denoised.insert(user_id.clone());
+    } else {
+        slot.denoised.remove(&user_id);
+    }
+    if let Some(s) = slot.session.as_ref().filter(|s| !s.is_finished()) {
+        s.control().set_peer_denoise(user_id, on);
+    }
+    let kook = on && slot.denoise.mode() == crate::audio::denoise::Mode::Kook;
+    drop(slot);
+    if kook && let Ok(a) = api(&state) {
+        spawn_license(a);
+    }
+    Ok(())
+}
+
 /// 设置总音量，上限 200%。
 #[tauri::command]
 pub async fn voice_set_master(percent: u16, voice: State<'_, VoiceState>) -> AppResult<()> {
@@ -326,15 +357,13 @@ async fn need_license(state: &State<'_, Mutex<AppState>>, voice: &State<'_, Voic
     }
 }
 
-/// 降噪因故障关闭时保存关闭状态，并以 `denoise://off` 通知界面，内容为原因。
+/// KOOK AI 降噪故障、改用 `RNNoise` 时以 `denoise://fallback` 通知界面，内容为原因。
 pub fn watch_denoise(app: &AppHandle, denoise: &crate::audio::denoise::Denoise) {
     let app = app.clone();
     denoise.on_fail(Box::new(move |reason| {
         let app = app.clone();
         tauri::async_runtime::spawn(async move {
-            use tauri::Manager;
-            app.state::<VoiceState>().0.lock().await.persist();
-            if let Err(e) = app.emit("denoise://off", reason) {
+            if let Err(e) = app.emit("denoise://fallback", reason) {
                 log::warn!("事件广播失败：{e}");
             }
         });
@@ -358,6 +387,8 @@ pub async fn voice_set_denoise(
         crate::kook::denoise_asset::ensure_license(&api(&state)?).await?;
     }
     let slot = voice.0.lock().await;
+    // 修改设置时重新尝试 KOOK AI 降噪。
+    crate::audio::denoise::retry_kook();
     slot.denoise.set_mode(mode);
     slot.denoise.set(on);
     slot.persist();

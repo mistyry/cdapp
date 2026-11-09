@@ -233,6 +233,18 @@ pub(super) async fn run_loop(
                         m.set_volume(&peer, v);
                     }
                 }
+                Some(Ctl::PeerDenoise(peer, on)) => {
+                    if let Ok(mut p) = mic.prefs.lock() {
+                        if on {
+                            p.denoised.insert(peer.clone());
+                        } else {
+                            p.denoised.remove(&peer);
+                        }
+                    }
+                    if let Ok(mut m) = play.mixer.lock() {
+                        m.set_peer_denoise(&peer, on);
+                    }
+                }
                 Some(Ctl::Master(v)) => {
                     let v = v.min(crate::audio::mixer::MAX_VOLUME);
                     if let Ok(mut p) = mic.prefs.lock() {

@@ -49,6 +49,14 @@ export function Select(p: { id?: string; value: string; disabled?: boolean; labe
   );
 }
 
+export function Switch(p: { id?: string; checked: boolean; label: string; onChange: (v: boolean) => void }) {
+  return (
+    <button id={p.id} class="st-switch" classList={{ on: p.checked }} role="switch" aria-checked={p.checked} aria-label={p.label} onClick={() => p.onChange(!p.checked)}>
+      <span class="st-switch-knob" />
+    </button>
+  );
+}
+
 export function Note(p: { children: JSX.Element; warn?: boolean }) {
   return <p class={`st-note ${p.warn ? "warn" : ""}`}>{p.children}</p>;
 }

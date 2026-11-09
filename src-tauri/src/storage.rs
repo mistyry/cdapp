@@ -24,7 +24,7 @@ const CACHE_LIMIT: u64 = 512 * 1024 * 1024;
 /// 单个账号状态文件上限。
 const ACCOUNT_LIMIT: usize = 256 * 1024;
 /// 允许前端写入的账号状态字段。
-const ACCOUNT_KEYS: &[&str] = &["emojiRecent", "openFolders"];
+const ACCOUNT_KEYS: &[&str] = &["emojiRecent", "openFolders", "peerVolumes", "peerDenoise"];
 
 #[derive(Default, Serialize, Deserialize)]
 struct Location {

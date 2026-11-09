@@ -22,6 +22,8 @@ pub struct MicPrefs {
     pub output: output::Sink,
     /// 成员音量百分比，按用户 ID 记录。
     pub volumes: HashMap<String, u16>,
+    /// 开启降噪的成员 ID。
+    pub denoised: std::collections::HashSet<String>,
     /// 总音量百分比。
     pub master: u16,
     /// 频道密码，只保存在内存中，不写入日志。
@@ -44,6 +46,7 @@ impl Default for MicPrefs {
             deafen: Deafen::default(),
             output: output::Sink::Device(None),
             volumes: HashMap::new(),
+            denoised: std::collections::HashSet::new(),
             master: 100,
             password: None,
             #[cfg(any(test, feature = "test-media"))]
@@ -74,6 +77,8 @@ pub(super) enum Ctl {
     Output(output::Sink),
     /// 设置成员音量。
     Volume(String, u16),
+    /// 开启或关闭成员降噪。
+    PeerDenoise(String, bool),
     /// 设置总音量。
     Master(u16),
     /// 系统唤醒。等待重建时立即重试，媒体连接已断开时立即重建。
@@ -179,6 +184,15 @@ pub(super) fn offline_ctl(c: Ctl, sink: &Sink, prefs: &Prefs) {
             if let Ok(mut p) = prefs.lock() {
                 p.volumes
                     .insert(peer, v.min(crate::audio::mixer::MAX_VOLUME));
+            }
+        }
+        Ctl::PeerDenoise(peer, on) => {
+            if let Ok(mut p) = prefs.lock() {
+                if on {
+                    p.denoised.insert(peer);
+                } else {
+                    p.denoised.remove(&peer);
+                }
             }
         }
         Ctl::Master(v) => {

@@ -1,11 +1,13 @@
 //! 多路远端音频混音。
 //! 每路音轨有独立的抖动缓冲与 Opus 解码器，按成员音量与总音量混合后经限幅输出。
+//! 开启成员降噪时，该成员的音轨在解码后、混合前经过降噪。
 //! 同时统计说话状态与接收质量。
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use bytes::Bytes;
 
+use super::denoise::{Denoise, Stage};
 use super::dsp::RATE;
 use super::jitter::{Jitter, Pull, Stats};
 
@@ -74,6 +76,8 @@ struct Track {
     frame: usize,
     /// 最近一次说话结束时的混音时钟。
     spoke: Option<u64>,
+    /// 成员降噪，未开启时为 None。
+    denoise: Option<Stage>,
 }
 
 impl Track {
@@ -97,7 +101,13 @@ impl Track {
                 continue;
             }
             self.frame = got;
-            self.pcm.extend(&scratch[..got]);
+            if let Some(d) = self.denoise.as_mut() {
+                let mut v = scratch[..got].to_vec();
+                d.process(&mut v);
+                self.pcm.extend(v);
+            } else {
+                self.pcm.extend(&scratch[..got]);
+            }
         }
         true
     }
@@ -109,6 +119,10 @@ pub struct Mixer {
     tracks: HashMap<u32, Track>,
     /// 成员音量，100 不记录。
     volumes: HashMap<String, u16>,
+    /// 开启降噪的成员及其降噪实例来源。
+    denoised: HashMap<String, Denoise>,
+    /// 成员降噪的方式与故障通知来源。
+    denoise_base: Denoise,
     master: u16,
     /// 已输出的样本数。
     clock: u64,
@@ -139,6 +153,8 @@ impl Mixer {
         Self {
             tracks: HashMap::new(),
             volumes: HashMap::new(),
+            denoised: HashMap::new(),
+            denoise_base: Denoise::default(),
             master: 100,
             clock: 0,
             scratch: vec![0.0; MAX_FRAME],
@@ -163,8 +179,56 @@ impl Mixer {
                 pcm: VecDeque::new(),
                 frame: 960,
                 spoke: None,
+                denoise: self.denoised.get(peer).map(Denoise::stage),
             },
         );
+    }
+
+    /// 设置成员降噪的方式来源，通常为本机降噪设置。
+    pub fn set_denoise_base(&mut self, base: Denoise) {
+        self.denoise_base = base;
+        let peers: HashSet<String> = self.denoised.keys().cloned().collect();
+        self.denoised.clear();
+        self.set_denoised(&peers);
+    }
+
+    /// 开启或关闭成员降噪，立即作用于该成员的音轨。
+    pub fn set_peer_denoise(&mut self, peer: &str, on: bool) {
+        if on == self.denoised.contains_key(peer) {
+            return;
+        }
+        if on {
+            self.denoised
+                .insert(peer.to_owned(), self.denoise_base.child());
+        } else {
+            self.denoised.remove(peer);
+        }
+        let d = self.denoised.get(peer);
+        for t in self.tracks.values_mut().filter(|t| t.peer == peer) {
+            t.denoise = d.map(Denoise::stage);
+        }
+    }
+
+    /// 按集合设置开启降噪的成员。
+    pub fn set_denoised(&mut self, peers: &HashSet<String>) {
+        let old: Vec<String> = self
+            .denoised
+            .keys()
+            .filter(|p| !peers.contains(*p))
+            .cloned()
+            .collect();
+        for p in old {
+            self.set_peer_denoise(&p, false);
+        }
+        for p in peers {
+            self.set_peer_denoise(p, true);
+        }
+    }
+
+    /// 成员降噪实例来源，供播放线程在混音锁之外创建实例。
+    #[must_use]
+    pub fn denoisers(&self) -> Vec<Denoise> {
+        self.denoised.values().cloned().collect()
     }
 
     /// 移除音轨，统计计入累计。
@@ -192,6 +256,9 @@ impl Mixer {
             t.jitter.clear();
             t.pcm.clear();
             t.spoke = None;
+            if let Some(d) = t.denoise.as_mut() {
+                d.clear();
+            }
         }
     }
 
@@ -201,6 +268,9 @@ impl Mixer {
             t.jitter.clear();
             t.pcm.clear();
             t.spoke = None;
+            if let Some(d) = t.denoise.as_mut() {
+                d.clear();
+            }
         }
     }
 
@@ -473,5 +543,36 @@ mod tests {
         let t2 = t0 + Duration::from_millis(210);
         assert_eq!(t.update(t2, vec![]), Some(vec![]), "间隔后上报");
         assert_eq!(t.update(t2, vec![]), None);
+    }
+
+    #[test]
+    fn peer_denoise_applies_to_existing_and_new_tracks() {
+        let mut m = mixer();
+        m.add_track(1, "a");
+        m.set_peer_denoise("a", true);
+        assert!(m.tracks[&1].denoise.is_some());
+        m.add_track(2, "a");
+        m.add_track(3, "b");
+        assert!(m.tracks[&2].denoise.is_some());
+        assert!(m.tracks[&3].denoise.is_none());
+        assert_eq!(m.denoisers().len(), 1);
+        m.set_denoised(&HashSet::from(["b".to_owned()]));
+        assert!(m.tracks[&1].denoise.is_none());
+        assert!(m.tracks[&3].denoise.is_some());
+    }
+
+    #[test]
+    fn denoised_track_still_renders() {
+        let mut m = mixer();
+        m.denoise_base
+            .set_mode(super::super::denoise::Mode::Rnnoise);
+        m.add_track(1, "a");
+        m.set_peer_denoise("a", true);
+        feed(&mut m, 1, 50, 0, 20);
+        let mut total = 0;
+        for _ in 0..30 {
+            total += render(&mut m, 480).len();
+        }
+        assert_eq!(total, 30 * 480);
     }
 }

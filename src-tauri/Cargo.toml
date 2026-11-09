@@ -109,3 +109,7 @@ required-features = ["test-media"]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "test-util"] }
 # 测试中读取进程资源占用。
 libc = "0.2"
+
+[[test]]
+name = "live_moderation"
+required-features = ["test-media"]

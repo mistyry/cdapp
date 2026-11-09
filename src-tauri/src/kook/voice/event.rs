@@ -17,6 +17,8 @@ pub struct Peer {
     pub headset_off: bool,
     pub permission_say: bool,
     pub server_mute: bool,
+    /// 被服务器静音，听不到其他成员。
+    pub server_deafen: bool,
     /// 进场音效物品 ID。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub join_voice: Option<u64>,
@@ -50,6 +52,7 @@ impl Peer {
             // 服务端未下发时视为允许发言。
             permission_say: b("permissionSay").unwrap_or(true),
             server_mute: b("isServerMute").unwrap_or(false),
+            server_deafen: b("isServerMuteHeadset").unwrap_or(false),
             join_voice: v
                 .pointer("/extra/decorations/join_voice")
                 .and_then(|x| x.as_u64().or_else(|| x.as_str()?.parse().ok()))
@@ -73,6 +76,8 @@ pub struct PeerPatch {
     pub permission_say: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub server_mute: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_deafen: Option<bool>,
 }
 
 impl PeerPatch {
@@ -91,6 +96,7 @@ impl PeerPatch {
             headset_off: b("pausedHeadset"),
             permission_say: b("permissionSay"),
             server_mute: b("isServerMute"),
+            server_deafen: b("isServerMuteHeadset"),
         })
     }
 }
@@ -115,6 +121,8 @@ pub enum EndReason {
     Replaced,
     /// 服务端通知正常退出。
     Exited,
+    /// 被管理员移出语音频道（41106）。
+    Kicked,
     /// 服务端拒绝加入。
     JoinFailed,
     /// 连接中断，重建次数已用尽。

@@ -222,13 +222,13 @@ async fn device_open_close() {
         assert!(ok);
         assert_eq!(live_outputs(), 0);
     }
-    // 所选设备不存在时改用默认设备。
+    // 所选设备不存在时直接改用默认设备，不另行通知。
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let p = Playback::start(Out::Device(Some("missing:0".into())), mixer, 9, tx);
     let first = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await;
     println!(
         "改用默认设备={}",
-        matches!(first, Ok(Some(OutputEvent::Lost { .. })))
+        matches!(first, Ok(Some(OutputEvent::Started { .. })))
     );
     p.stop().await;
     assert_eq!(live_outputs(), 0);

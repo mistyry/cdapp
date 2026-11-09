@@ -233,14 +233,6 @@ impl MicCtl {
         out
     }
 
-    /// 所选设备丢失，采集已改用默认设备。
-    pub fn on_lost(&mut self, message: String) -> Vec<MicAction> {
-        if !self.running {
-            return Vec::new();
-        }
-        vec![MicAction::Report(MicStatus::DeviceLost, Some(message))]
-    }
-
     /// 切换输入设备，正在采集时重新打开。
     pub fn on_device_changed(&mut self) -> Vec<MicAction> {
         let mut out = Vec::new();
@@ -431,20 +423,15 @@ mod tests {
     }
 
     #[test]
-    fn device_switch_and_loss() {
+    fn device_switch() {
         let mut m = MicCtl::new(false);
         m.on_connected(true, false);
         assert_eq!(
             m.on_device_changed(),
             vec![Stop, Start, Report(MicStatus::Starting, None)]
         );
-        assert!(matches!(
-            m.on_lost("已切换到默认设备".into()).as_slice(),
-            [Report(MicStatus::DeviceLost, _)]
-        ));
         m.set_muted(true);
         assert_eq!(m.on_device_changed().len(), 0, "静音时不打开设备");
-        assert_eq!(m.on_lost("x".into()).len(), 0);
     }
 
     #[test]

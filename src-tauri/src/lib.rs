@@ -89,6 +89,8 @@ fn prevent_default<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
 /// # Panics
 ///
 /// 应用初始化失败时触发。
+// 主要篇幅是命令注册表，拆分不会更清楚。
+#[allow(clippy::too_many_lines)]
 pub fn run() {
     kook::emoji_cache::protocol(tauri::Builder::default())
         .plugin(log_plugin())
@@ -108,6 +110,17 @@ pub fn run() {
             let slot = commands::VoiceSlot::from_prefs(&audio::store::load());
             commands::watch_denoise(app.handle(), &slot.denoise);
             app.manage(VoiceState(tokio::sync::Mutex::new(slot)));
+            // 设备增减或默认设备变化时通知界面刷新列表。
+            let handle = app.handle().clone();
+            audio::watch::start(move |input, output| {
+                use tauri::Emitter;
+                if let Err(e) = handle.emit(
+                    "audio://devices",
+                    serde_json::json!({ "input": input, "output": output }),
+                ) {
+                    log::warn!("事件广播失败：{e}");
+                }
+            });
             #[cfg(all(target_os = "macos", debug_assertions))]
             devshot::init(app.handle());
             if let Some(window) = app.get_webview_window("main") {
@@ -181,6 +194,13 @@ pub fn run() {
             commands::audio_outputs,
             commands::set_audio_output,
             commands::voice_set_volume,
+            commands::voice_set_peer_denoise,
+            commands::guild_mute,
+            commands::guild_mutes,
+            commands::voice_kick,
+            commands::voice_move,
+            commands::guild_kick,
+            commands::guild_ban,
             commands::voice_set_master,
             commands::mic_test,
             commands::voice_set_gain,

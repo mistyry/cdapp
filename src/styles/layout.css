@@ -99,18 +99,36 @@
 .channel .badge { margin-left: 6px; }
 .channel .badge.at { background: var(--c-mention); }
 .channel .dot { width: 8px; height: 8px; margin-left: 6px; border-radius: 50%; background: var(--c-text); flex: none; }
-.voice-member { display: flex; align-items: center; gap: 8px; height: 32px; margin: 0 8px 0 38px; font-size: 14px; color: var(--c-text-2); }
+.voice-member { display: flex; align-items: center; gap: 8px; height: 36px; margin: 0 8px 0 38px; font-size: 14px; color: var(--c-text-2); }
 
 .voice-member .voice-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 右侧与频道人数右对齐。 */
 .voice-member > span[role="img"] { display: flex; color: var(--c-text-2); }
 .voice-member { cursor: default; }
 /* 说话时整行淡绿底，右侧绿色麦克风。圆角底色向左右各延伸 6px，不移动内容。 */
-.voice-member.speaking { background: color-mix(in srgb, var(--c-good) 12%, transparent); border-radius: 8px; margin-left: 32px; margin-right: 2px; padding: 0 6px; }
+/* 悬停整行高亮，形状与说话时一致；说话的绿底优先。 */
+.voice-member:not(.elsewhere):hover { background: var(--c-hover); border-radius: 8px; margin-left: 32px; margin-right: 2px; padding: 0 6px; }
+.voice-member.speaking, .voice-member.speaking:hover { background: color-mix(in srgb, var(--c-good) 12%, transparent); border-radius: 8px; margin-left: 32px; margin-right: 2px; padding: 0 6px; }
 .voice-member > span.voice-speaking { color: var(--c-good); }
-.voice-member .voice-vol { font-size: 12px; color: var(--c-text-3, var(--c-text-2)); }
-.voice-member-volume { display: flex; align-items: center; gap: 8px; margin: 0 8px 4px 66px; font-size: 12px; color: var(--c-text-2); }
-.voice-member-volume .range { flex: 1; min-width: 0; }
+.voice-member > span.server-off { color: var(--c-danger); }
+/* 成员菜单：每行左右内边距 10px，右侧控件统一占 20px 宽的列，与滑条喇叭、复选框、箭头对齐。 */
+.member-menu { position: fixed; z-index: 20; display: flex; flex-direction: column; width: 200px; padding: 4px; background: var(--c-float); border-radius: 10px; box-shadow: 0 4px 16px rgba(15, 23, 42, 0.12); }
+.member-menu .audio-head { padding: 4px 8px 2px; }
+.member-menu .audio-item { min-height: 30px; padding: 0 8px; font-size: 13px; }
+.member-menu .menu-sep { height: 1px; margin: 4px 8px; background: var(--c-line); }
+.member-menu .audio-item.danger { color: var(--c-danger); }
+.member-menu .audio-item:disabled { opacity: .5; cursor: default; }
+.member-menu .menu-trail { display: flex; align-items: center; justify-content: center; flex: none; width: 20px; margin-left: auto; }
+.member-menu .menu-caret { color: var(--c-text-3); }
+.member-menu .menu-sub-host > .audio-item[aria-expanded="true"] { background: var(--c-hover); }
+.member-menu.menu-sub { visibility: hidden; width: 180px; max-height: min(320px, calc(100vh - 16px)); overflow-y: auto; }
+.member-menu .menu-check > span { display: flex; align-items: center; justify-content: center; width: 16px; height: 16px; border: 1.5px solid var(--c-text-3); border-radius: 4px; color: #fff; }
+.member-menu .menu-check.on > span { border-color: var(--c-brand); background: var(--c-brand); }
+.member-volume { display: flex; flex-direction: column; }
+.member-volume-head { padding: 4px 8px 2px; font-size: 12px; color: var(--c-text-3); }
+.member-volume-row { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 0 8px; }
+.member-volume-row .range { flex: 1; min-width: 0; }
+.member-volume-row .menu-trail.icon-btn { width: 20px; height: 20px; border-radius: 4px; color: var(--c-text-2); }
 
 .voice-box { margin: 0 12px 12px; padding: 12px 16px 8px; border: 1px solid var(--c-line); border-radius: 16px; }
 .voice-box .voice-ctrls { display: flex; align-items: center; justify-content: space-between; }
@@ -356,18 +374,18 @@ button.quote:hover { background: var(--c-fill); }
 .vol-mid { position: absolute; left: 50%; bottom: 50%; width: 8px; height: 1px; margin-left: -4px; background: var(--c-text-3); opacity: .5; }
 .vol-knob { position: absolute; left: 50%; width: 14px; height: 14px; margin: 0 0 -7px -7px; border: 3px solid var(--c-brand); border-radius: 50%; background: var(--c-float); box-sizing: border-box; }
 .vol-track:focus-visible { outline: 2px solid var(--c-brand); outline-offset: 2px; border-radius: 6px; }
-.audio-panel { position: absolute; bottom: calc(100% + 8px); z-index: 6; display: flex; flex-direction: column; width: 272px; max-width: calc(100vw - 24px); max-height: min(420px, calc(100vh - 120px)); padding: 6px; transform: translateX(-50%); background: var(--c-float); border-radius: 12px; box-shadow: 0 8px 24px rgba(15, 23, 42, 0.16); }
-.audio-head { padding: 6px 10px 4px; font-size: 12px; color: var(--c-text-3); }
+.audio-panel { position: absolute; bottom: calc(100% + 8px); z-index: 6; display: flex; flex-direction: column; width: 232px; max-width: calc(100vw - 24px); max-height: min(400px, calc(100vh - 120px)); padding: 4px; transform: translateX(-50%); background: var(--c-float); border-radius: 10px; box-shadow: 0 4px 16px rgba(15, 23, 42, 0.12); }
+.audio-head { padding: 4px 8px 2px; font-size: 12px; color: var(--c-text-3); }
 .audio-list { display: flex; flex-direction: column; overflow-y: auto; min-height: 0; }
-.audio-item { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--c-text); font-size: 14px; text-align: left; cursor: pointer; }
+.audio-item { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 30px; padding: 0 8px; border: 0; border-radius: 8px; background: transparent; color: var(--c-text); font-size: 13px; text-align: left; cursor: pointer; }
 .audio-item:hover { background: var(--c-hover); }
 .audio-item:focus-visible { outline: 2px solid var(--c-brand); outline-offset: -2px; }
 .audio-name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .audio-radio { flex: none; width: 14px; height: 14px; border: 1px solid var(--c-text-3); border-radius: 50%; box-sizing: border-box; }
 .audio-item[aria-checked="true"] .audio-radio { border: 4px solid var(--c-brand); }
-.audio-note { padding: 4px 10px; font-size: 12px; line-height: 18px; color: var(--c-text-2); }
+.audio-note { padding: 4px 8px; font-size: 12px; line-height: 18px; color: var(--c-text-2); }
 .audio-note.warn { color: var(--c-danger); }
-.audio-line { flex: none; height: 1px; margin: 6px 4px; background: var(--c-line); }
+.audio-line { flex: none; height: 1px; margin: 4px 8px; background: var(--c-line); }
 
 /* ── 表情 ── */
 /* 单个表情：Unicode 50px；自定义表情 120px，原图更小时按原图尺寸（与官方网页端一致）。 */
@@ -449,6 +467,10 @@ button.quote:hover { background: var(--c-fill); }
 .st-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--c-text) 12%, transparent); }
 .st-btn:disabled { opacity: 0.45; cursor: default; }
 .st-select { position: relative; width: 260px; }
+.st-switch { position: relative; width: 36px; height: 20px; padding: 0; border: 0; border-radius: 10px; background: var(--c-line); cursor: pointer; transition: background .15s; }
+.st-switch.on { background: var(--c-brand); }
+.st-switch-knob { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.2); transition: transform .15s; }
+.st-switch.on .st-switch-knob { transform: translateX(16px); }
 .st-select select { width: 100%; height: 32px; padding: 0 30px 0 10px; font: inherit; font-size: 13px; color: inherit; border-radius: 8px; border: 1px solid var(--c-line); background: var(--c-float); appearance: none; text-overflow: ellipsis; cursor: pointer; }
 .st-select select:hover:not(:disabled) { border-color: var(--c-text-3); }
 .st-select select:disabled { opacity: 0.5; cursor: default; }

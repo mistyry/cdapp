@@ -176,7 +176,8 @@ impl Room {
                     sink(VoiceEvent::PeerLeft { id });
                 }
             }
-            "peerInfoChanged" => {
+            // 服务器闭麦与静音经 peerPermissionChanged 下发。
+            "peerInfoChanged" | "peerPermissionChanged" => {
                 if let Some(p) = PeerPatch::parse(data) {
                     sink(VoiceEvent::PeerChanged { patch: p });
                 }
@@ -403,5 +404,26 @@ mod tests {
         assert_eq!(count(), 2);
         room.on_notification("peerClosed", &json!({"peerId": "u3"}), &p, &sink);
         assert_eq!(count(), 1, "成员离开移除其音轨");
+    }
+
+    #[test]
+    fn permission_change_reports_server_mute_and_deafen() {
+        let (sink, got) = recorder();
+        let mut room = Room::default();
+        let p = params();
+        room.on_notification(
+            "peerPermissionChanged",
+            &json!({"peerId": "u1", "isServerMute": true, "isServerMuteHeadset": false, "permissionSay": true}),
+            &p,
+            &sink,
+        );
+        let ev = got.lock().unwrap().pop().unwrap();
+        let VoiceEvent::PeerChanged { patch } = ev else {
+            panic!()
+        };
+        assert_eq!(
+            (patch.server_mute, patch.server_deafen),
+            (Some(true), Some(false))
+        );
     }
 }

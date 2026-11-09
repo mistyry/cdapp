@@ -2,10 +2,10 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { api, MsgType, type Raw } from "../../lib/api";
 import type { Message } from "../types";
 import { isText, parseCards, toAttachment, Kind } from "../../lib/content";
-import { voiceNetworkBack } from "../voice";
+import { voice, voiceActive, voiceNetworkBack } from "../voice";
 import { Effect, playEffect } from "../effects";
 import { ui, currentChannelId, currentChatCode } from "../ui";
-import { loadAccess } from "./access";
+import { enterVoice, loadAccess } from "./access";
 import { expire } from "./auth";
 import { parse, plainContent, remember, rememberRefs, stamp, toQuote, toUser, voiceUsers } from "./convert";
 import { loadDms, noteDmRead, onPrivate, refreshDm } from "./dm";
@@ -202,6 +202,12 @@ export function onSystem(c: Raw | null, target = "") {
     case "updated_user_list": {
       const data = body.user_list_data?.data;
       if (Array.isArray(data)) onUserList(String(body.channel_id ?? ""), data);
+      break;
+    }
+    // 被管理员移动到其他语音频道。服务端不迁移连接，由客户端加入目标频道。
+    case "move_to_channel": {
+      const to = String(body.id ?? "");
+      if (to && voiceActive() && voice.channelId !== to) void enterVoice(to);
       break;
     }
     case "joined_channel":

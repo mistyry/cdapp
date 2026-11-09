@@ -42,7 +42,7 @@ pub(super) fn producer_queue(
 
 /// 从成员信息变化中读取本人的发言权限。
 pub(super) fn own_say(method: &str, data: &Value, me: &str) -> Option<bool> {
-    if method != "peerInfoChanged" {
+    if method != "peerInfoChanged" && method != "peerPermissionChanged" {
         return None;
     }
     PeerPatch::parse(data)
@@ -147,9 +147,6 @@ impl MicRun<'_> {
             CaptureEvent::Started { epoch, device } if epoch == self.epoch => {
                 self.failed_at = None;
                 self.mic.on_started(Some(device))
-            }
-            CaptureEvent::Lost { epoch, message } if epoch == self.epoch => {
-                self.mic.on_lost(message)
             }
             CaptureEvent::Failed {
                 epoch,

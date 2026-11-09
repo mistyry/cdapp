@@ -611,6 +611,110 @@ impl Api {
 
     /// 删除消息。成功为 204；重复删除同样为 204；无权删除他人消息为 HTTP 403。
     ///
+    /// 服务器闭麦或静音。`kind` 1 为闭麦，2 为静音，已用两个测试账号核对。
+    ///
+    /// # Errors
+    ///
+    /// 请求失败或没有权限（HTTP 403）时返回错误。
+    pub async fn guild_mute(
+        &self,
+        guild_id: &str,
+        user_id: &str,
+        kind: u8,
+        on: bool,
+    ) -> AppResult<()> {
+        let body = json!({ "type": kind, "guild_id": guild_id, "user_id": user_id });
+        if on {
+            self.post("/api/v2/guild-mutes", &body).await.map(drop)
+        } else {
+            self.delete_json("/api/v2/guild-mutes", &body)
+                .await
+                .map(drop)
+        }
+    }
+
+    /// 服务器中被闭麦与静音的用户 ID，依次为闭麦、静音。无人时接口返回 204。
+    ///
+    /// # Errors
+    ///
+    /// 请求失败时返回错误。
+    pub async fn guild_mutes(&self, guild_id: &str) -> AppResult<(Vec<String>, Vec<String>)> {
+        let v = self
+            .get(&format!("/api/v2/guild-mutes/{guild_id}"), &())
+            .await?;
+        let ids = |k: &str| -> Vec<String> {
+            v.get(k)
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| match x {
+                            Value::String(s) if !s.is_empty() => Some(s.clone()),
+                            Value::Number(n) => Some(n.to_string()),
+                            _ => None,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        Ok((ids("1"), ids("2")))
+    }
+
+    /// 把成员移出语音频道。`channel_id` 须为成员当前所在频道，否则返回成功但没有效果。
+    ///
+    /// # Errors
+    ///
+    /// 请求失败或没有语音管理权限时返回错误。
+    pub async fn voice_kick(&self, channel_id: &str, user_id: &str) -> AppResult<()> {
+        self.post(
+            "/api/v3/channel/kickout",
+            &json!({ "channel_id": channel_id, "user_id": user_id }),
+        )
+        .await
+        .map(drop)
+    }
+
+    /// 移动成员到语音频道。服务端只通知被移动的客户端，由其自行切换。
+    ///
+    /// # Errors
+    ///
+    /// 请求失败或没有语音管理权限时返回错误。
+    pub async fn voice_move(&self, channel_id: &str, user_id: &str) -> AppResult<()> {
+        self.post(
+            "/api/v3/channel/move-user",
+            &json!({ "target_id": channel_id, "user_ids": [user_id] }),
+        )
+        .await
+        .map(drop)
+    }
+
+    /// 踢出服务器，需要第 6 位权限。v2 接口对无效目标也返回成功且权限判定不同，改用 v3。
+    ///
+    /// # Errors
+    ///
+    /// 请求失败、没有踢出权限或目标为服务器主时返回错误。
+    pub async fn guild_kick(&self, guild_id: &str, user_id: &str) -> AppResult<()> {
+        self.post(
+            "/api/v3/guild/kickout",
+            &json!({ "guild_id": guild_id, "target_id": user_id }),
+        )
+        .await
+        .map(drop)
+    }
+
+    /// 踢出并加入服务器黑名单，不删除历史消息。
+    ///
+    /// # Errors
+    ///
+    /// 请求失败、没有黑名单权限或目标无效时返回错误。
+    pub async fn guild_ban(&self, guild_id: &str, user_id: &str) -> AppResult<()> {
+        self.post(
+            "/api/v3/blacklist/create",
+            &json!({ "guild_id": guild_id, "target_id": user_id, "remark": "", "del_msg_days": 0 }),
+        )
+        .await
+        .map(drop)
+    }
+
     /// # Errors
     ///
     /// 请求失败时返回错误。

@@ -56,6 +56,7 @@ pub(super) fn closed_outcome(disconnect: Option<i64>) -> Outcome {
     match disconnect.map(DisconnectKind::from_code) {
         Some(DisconnectKind::Replaced) => Outcome::End(EndReason::Replaced, None),
         Some(DisconnectKind::Exited) => Outcome::End(EndReason::Exited, None),
+        Some(DisconnectKind::Kicked) => Outcome::End(EndReason::Kicked, None),
         Some(DisconnectKind::JoinFailed) => Outcome::End(EndReason::JoinFailed, None),
         Some(DisconnectKind::Other(c)) => lost(format!("语音连接已断开，错误码 {c}。")),
         None => lost("语音信令连接已断开。"),

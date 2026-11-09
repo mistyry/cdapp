@@ -84,9 +84,6 @@ impl Play<'_> {
                 self.device = Some(device);
                 self.report(true, None);
             }
-            OutputEvent::Lost { epoch, message } if epoch == self.epoch => {
-                self.report(true, Some(message));
-            }
             OutputEvent::Failed { epoch, message } if epoch == self.epoch => {
                 // 线程已退出，丢弃句柄即可。
                 playback.take();
@@ -145,6 +142,8 @@ pub(super) fn new_mixer(prefs: &Prefs) -> Arc<Mutex<Mixer>> {
     let p = prefs_get(prefs);
     let mut m = Mixer::default();
     m.set_volumes(&p.volumes);
+    m.set_denoise_base(p.denoise.clone());
+    m.set_denoised(&p.denoised);
     m.set_master(p.master);
     #[cfg(any(test, feature = "test-media"))]
     {

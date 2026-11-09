@@ -105,11 +105,6 @@ pub enum CaptureEvent {
         epoch: u64,
         device: String,
     },
-    /// 所选设备不可用，已改用系统默认设备。
-    Lost {
-        epoch: u64,
-        message: String,
-    },
     Failed {
         epoch: u64,
         status: MicStatus,
@@ -505,6 +500,44 @@ fn pick_device<D>(
         .ok_or((MicStatus::NoDevice, "没有可用的麦克风".into()))
 }
 
+/// 采集流信号的处理结果。
+enum Next {
+    /// 设备断开，需要重新打开。
+    Lost(cpal::Error),
+    /// 结束采集。
+    Fail(MicStatus, String),
+}
+
+fn classify(sig: Signal) -> Option<Next> {
+    match sig {
+        Signal::Silent => Some(Next::Fail(
+            MicStatus::Denied,
+            "麦克风没有输入。请在系统设置中允许 cdapp 使用麦克风".into(),
+        )),
+        Signal::Error(e) => match e.kind() {
+            ErrorKind::DeviceNotAvailable | ErrorKind::StreamInvalidated => Some(Next::Lost(e)),
+            // 设备切换与缓冲欠载由系统处理。
+            ErrorKind::DeviceChanged | ErrorKind::Xrun => None,
+            ErrorKind::PermissionDenied => Some(Next::Fail(
+                MicStatus::Denied,
+                format!("麦克风权限被拒绝：{e}"),
+            )),
+            _ => {
+                log::warn!("麦克风流错误：{e}");
+                None
+            }
+        },
+    }
+}
+
+/// 所选设备已重新可用。未选择具体设备时为 false。
+fn chosen_back(chosen: Option<&str>) -> bool {
+    chosen.is_some_and(|c| find_device(Some(c)).is_ok_and(|(_, fell_back)| !fell_back))
+}
+
+/// 回退到系统默认设备期间，检查所选设备是否恢复的间隔。
+pub(crate) const RESTORE_PROBE: Duration = Duration::from_secs(2);
+
 fn find_device(id: Option<&str>) -> Result<(Device, bool), (MicStatus, String)> {
     let host = cpal::default_host();
     pick_device(
@@ -610,17 +643,16 @@ fn run_device(
             message,
         });
     };
-    let mut target = id.map(str::to_owned);
+    // 所选设备不可用时改用系统默认设备，并定期检查，所选设备恢复后自动切回。
+    let chosen = id.map(str::to_owned);
+    let mut target = chosen.clone();
+    let mut restored = false;
     loop {
         let (sig_tx, sig_rx) = std::sync::mpsc::channel();
         let device = match find_device(target.as_deref()) {
             Ok((d, fell_back)) => {
-                // 所选设备不可用，改用系统默认设备。
                 if fell_back {
-                    let _ = events.send(CaptureEvent::Lost {
-                        epoch,
-                        message: "所选麦克风不可用，已改用系统默认设备".into(),
-                    });
+                    log::warn!("所选麦克风不可用，改用系统默认设备 {}", device_name(&d));
                     target = None;
                 }
                 d
@@ -635,10 +667,23 @@ fn run_device(
             epoch,
             device: device_name(&device),
         });
+        if restored {
+            log::info!("所选麦克风已恢复，切回该设备");
+            restored = false;
+        }
+        let mut last_probe = std::time::Instant::now();
         // 等待停止信号，同时处理流错误与全零检测。
         let lost = loop {
             if stop.load(Ordering::SeqCst) {
                 return;
+            }
+            if target.is_none() && last_probe.elapsed() >= RESTORE_PROBE {
+                last_probe = std::time::Instant::now();
+                if chosen_back(chosen.as_deref()) {
+                    target.clone_from(&chosen);
+                    restored = true;
+                    break None;
+                }
             }
             // 降噪实例在此创建，不占用采集回调的时间。
             denoise.maintain();
@@ -648,36 +693,34 @@ fn run_device(
             ) {
                 return;
             }
-            match sig_rx.try_recv() {
-                Ok(Signal::Silent) => {
+            match sig_rx.try_recv().ok().and_then(classify) {
+                Some(Next::Lost(e)) => break Some(e),
+                Some(Next::Fail(status, message)) => {
                     drop(stream);
-                    return failed(
-                        MicStatus::Denied,
-                        "麦克风没有输入。请在系统设置中允许 cdapp 使用麦克风".into(),
-                    );
+                    return failed(status, message);
                 }
-                Ok(Signal::Error(e)) => match e.kind() {
-                    ErrorKind::DeviceNotAvailable | ErrorKind::StreamInvalidated => break e,
-                    // 设备切换与缓冲欠载由系统处理。
-                    ErrorKind::DeviceChanged | ErrorKind::Xrun => {}
-                    ErrorKind::PermissionDenied => {
-                        drop(stream);
-                        return failed(MicStatus::Denied, format!("麦克风权限被拒绝：{e}"));
-                    }
-                    _ => log::warn!("麦克风流错误：{e}"),
-                },
-                Err(_) => {}
+                None => {}
             }
         };
         drop(stream);
-        // 默认设备也已丢失时结束采集。
+        let Some(lost) = lost else {
+            continue;
+        };
+        log::warn!("麦克风 {} 断开：{lost}", device_name(&device));
+        // 正在使用系统默认设备时：所选设备已恢复则切回，否则重新查找当前的默认设备。
         if target.is_none() {
+            if chosen_back(chosen.as_deref()) {
+                target.clone_from(&chosen);
+                restored = true;
+                continue;
+            }
+            if find_device(None).is_ok() {
+                log::info!("改用新的系统默认麦克风");
+                continue;
+            }
+            log::warn!("没有可用的麦克风，停止采集");
             return failed(MicStatus::DeviceLost, format!("麦克风已断开：{lost}"));
         }
-        let _ = events.send(CaptureEvent::Lost {
-            epoch,
-            message: "麦克风已断开，已改用系统默认设备".into(),
-        });
         target = None;
     }
 }
