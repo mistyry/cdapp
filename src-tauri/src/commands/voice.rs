@@ -113,6 +113,7 @@ pub async fn voice_join(
         muted: muted || deafened,
         source: mic_source(slot.input.clone()),
         gain: slot.gain.clone(),
+        denoise: slot.denoise.clone(),
         deafen: Deafen::with_mic_before(deafened, mic_before_deaf),
         output: output::Sink::Device(slot.output.clone()),
         volumes: slot.volumes.clone(),
@@ -120,6 +121,10 @@ pub async fn voice_join(
         password: password.filter(|p| !p.is_empty()),
         ..MicPrefs::default()
     };
+    // 降噪在启动时已开启而尚无许可，在后台获取，取得后采集线程自动启用。
+    if slot.denoise.on() && slot.denoise.mode() == crate::audio::denoise::Mode::Kook {
+        spawn_license(api.clone());
+    }
     slot.session = Some(VoiceSession::start_with(
         api, channel_id, generation, sink, mic,
     ));
@@ -298,6 +303,52 @@ pub async fn voice_set_gain(percent: u16, voice: State<'_, VoiceState>) -> AppRe
     Ok(slot.gain.percent())
 }
 
+/// 在后台获取 KOOK AI 降噪许可。已有许可时不请求。
+fn spawn_license(api: crate::kook::api::Api) {
+    if crate::audio::denoise::has_license() {
+        return;
+    }
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = crate::kook::denoise_asset::ensure_license(&api).await {
+            log::warn!("降噪许可获取失败：{e}");
+        }
+    });
+}
+
+/// 降噪开启且使用 KOOK AI 降噪 2.0 时，在后台获取许可。未登录时跳过。
+async fn need_license(state: &State<'_, Mutex<AppState>>, voice: &State<'_, VoiceState>) {
+    let d = voice.0.lock().await.denoise.clone();
+    if d.on()
+        && d.mode() == crate::audio::denoise::Mode::Kook
+        && let Ok(a) = api(state)
+    {
+        spawn_license(a);
+    }
+}
+
+/// 开启或关闭降噪。`mode` 为空时沿用当前方式。
+/// 使用 KOOK AI 降噪 2.0 时先获取许可，正在采集时立即生效。
+#[tauri::command]
+pub async fn voice_set_denoise(
+    on: bool,
+    mode: Option<crate::audio::denoise::Mode>,
+    state: State<'_, Mutex<AppState>>,
+    voice: State<'_, VoiceState>,
+) -> AppResult<()> {
+    let mode = match mode {
+        Some(m) => m,
+        None => voice.0.lock().await.denoise.mode(),
+    };
+    if on && mode == crate::audio::denoise::Mode::Kook {
+        crate::kook::denoise_asset::ensure_license(&api(&state)?).await?;
+    }
+    let slot = voice.0.lock().await;
+    slot.denoise.set_mode(mode);
+    slot.denoise.set(on);
+    slot.persist();
+    Ok(())
+}
+
 /// 本机音频偏好，启动时读取一次。
 #[tauri::command]
 pub async fn audio_prefs(
@@ -329,10 +380,18 @@ enum MicTestEvent {
     Failed { message: String },
 }
 
-/// 开始或停止麦克风测试。开始时把输入按当前增益与总音量播放到所选扬声器，电平经 `mic-test://event` 上报。
+/// 开始或停止麦克风测试。开始时把将要推送的音频按总音量播放到所选扬声器，电平经 `mic-test://event` 上报。
 /// 在语音频道中时不允许开始，避免两路采集同时占用麦克风。
 #[tauri::command]
-pub async fn mic_test(on: bool, app: AppHandle, voice: State<'_, VoiceState>) -> AppResult<()> {
+pub async fn mic_test(
+    on: bool,
+    app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
+    voice: State<'_, VoiceState>,
+) -> AppResult<()> {
+    if on {
+        need_license(&state, &voice).await;
+    }
     let old = {
         let mut slot = voice.0.lock().await;
         let old = slot.test.take();
@@ -345,6 +404,7 @@ pub async fn mic_test(on: bool, app: AppHandle, voice: State<'_, VoiceState>) ->
                 slot.input.clone(),
                 slot.output.clone(),
                 slot.gain.clone(),
+                slot.denoise.clone(),
                 slot.master.unwrap_or(100),
                 move |level| {
                     let _ = a.emit("mic-test://event", MicTestEvent::Level { level });

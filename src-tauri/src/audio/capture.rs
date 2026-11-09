@@ -12,6 +12,7 @@ use cpal::{Device, ErrorKind, SampleFormat, StreamConfig};
 use serde::Serialize;
 use tokio::sync::{Notify, mpsc, oneshot};
 
+use super::denoise::{Denoise, Stage};
 #[cfg(any(test, feature = "test-media"))]
 use super::dsp::FRAME_SAMPLES;
 use super::dsp::{
@@ -86,6 +87,9 @@ pub enum Source {
     /// 周期按系统时间对齐，接收端可据此测量端到端延迟。
     #[cfg(any(test, feature = "test-media"))]
     Marked(f32, f32),
+    /// 白噪声叠加正弦音，幅度分别为 0.1 与 0.05，经与设备相同的降噪链路。
+    #[cfg(any(test, feature = "test-media"))]
+    Noisy(f32),
 }
 
 /// 标记音的周期与时长，单位毫秒。
@@ -170,6 +174,7 @@ impl Capture {
     pub fn start(
         source: Source,
         gain: Gain,
+        denoise: Denoise,
         uplink: Uplink,
         epoch: u64,
         events: mpsc::UnboundedSender<CaptureEvent>,
@@ -193,8 +198,21 @@ impl Capture {
                         Source::Marked(freq, mark) => {
                             run_tone(freq, Some(mark), &gain, &frames, &stop, &wait, epoch, &tx);
                         }
+                        #[cfg(any(test, feature = "test-media"))]
+                        Source::Noisy(freq) => {
+                            run_noisy(freq, &gain, &denoise, &frames, &stop, &wait, epoch, &tx);
+                        }
                         Source::Device(id) => {
-                            run_device(id.as_deref(), &gain, &frames, &stop, &wait, epoch, &tx);
+                            run_device(
+                                id.as_deref(),
+                                &gain,
+                                &denoise,
+                                &frames,
+                                &stop,
+                                &wait,
+                                epoch,
+                                &tx,
+                            );
                         }
                     }
                     LIVE_THREADS.fetch_sub(1, Ordering::SeqCst);
@@ -373,23 +391,71 @@ fn run_tone(
     }
 }
 
-/// 采集处理链：混音、全零检测、增益、重采样与分帧。
+/// 按实时节奏生成噪声加正弦音，经完整采集链路。
+#[cfg(any(test, feature = "test-media"))]
+#[allow(clippy::too_many_arguments, clippy::cast_possible_truncation)]
+fn run_noisy(
+    freq: f32,
+    gain: &Gain,
+    denoise: &Denoise,
+    frames: &Frames,
+    stop: &AtomicBool,
+    wait: &std::sync::mpsc::Receiver<()>,
+    epoch: u64,
+    events: &mpsc::UnboundedSender<CaptureEvent>,
+) {
+    let _ = events.send(CaptureEvent::Started {
+        epoch,
+        device: format!("噪声加 {freq} Hz"),
+    });
+    let mut chain = Chain::new(RATE, 1, gain.clone(), denoise);
+    let start = std::time::Instant::now();
+    let (mut seed, mut phase, mut k) = (1u32, 0.0f64, 0u32);
+    while !stop.load(Ordering::SeqCst) {
+        denoise.maintain();
+        // 10 ms 一段，与设备回调粒度相近。
+        let chunk: Vec<f32> = (0..RATE as usize / 100)
+            .map(|_| {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let n = (f64::from(seed) / f64::from(u32::MAX) - 0.5) * 0.2;
+                phase += 2.0 * std::f64::consts::PI * f64::from(freq) / f64::from(RATE);
+                (n + 0.05 * phase.sin()) as f32
+            })
+            .collect();
+        chain.feed(&chunk, frames);
+        k += 1;
+        let due = start + Duration::from_millis(10 * u64::from(k));
+        let now = std::time::Instant::now();
+        if due > now
+            && !matches!(
+                wait.recv_timeout(due - now),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+            )
+        {
+            break;
+        }
+    }
+}
+
+/// 采集处理链：混音、全零检测、增益、重采样、降噪与分帧。
 /// 全零检测在增益之前，增益为 0% 时不误判为没有权限。
 struct Chain {
     channels: usize,
     gain: Gain,
     resampler: Resampler,
+    denoise: Stage,
     framer: Framer,
     probe: ZeroProbe,
     reported: bool,
 }
 
 impl Chain {
-    fn new(rate: u32, channels: usize, gain: Gain) -> Self {
+    fn new(rate: u32, channels: usize, gain: Gain, denoise: &Denoise) -> Self {
         Self {
             channels,
             gain,
             resampler: Resampler::new(rate, RATE),
+            denoise: denoise.stage(),
             framer: Framer::default(),
             probe: ZeroProbe::new(ZERO_WINDOW),
             reported: false,
@@ -404,7 +470,8 @@ impl Chain {
             self.reported = true;
         }
         self.gain.apply(&mut mono);
-        let out = self.resampler.process(&mono);
+        let mut out = self.resampler.process(&mono);
+        self.denoise.process(&mut out);
         frames.push(self.framer.push(&out));
         zero
     }
@@ -460,6 +527,7 @@ fn device_name(d: &Device) -> String {
 fn open(
     device: &Device,
     gain: &Gain,
+    denoise: &Denoise,
     frames: &Frames,
     signal: &std::sync::mpsc::Sender<Signal>,
 ) -> Result<cpal::Stream, (MicStatus, String)> {
@@ -483,6 +551,7 @@ fn open(
         config.sample_rate,
         usize::from(config.channels.max(1)),
         gain.clone(),
+        denoise,
     );
     let (frames, on_silent) = (frames.clone(), signal.clone());
     let mut scratch: Vec<f32> = Vec::new();
@@ -523,9 +592,11 @@ fn open(
 }
 
 /// 采集线程：打开设备并监视错误，设备丢失时改用系统默认设备。
+#[allow(clippy::too_many_arguments)]
 fn run_device(
     id: Option<&str>,
     gain: &Gain,
+    denoise: &Denoise,
     frames: &Frames,
     stop: &AtomicBool,
     wait: &std::sync::mpsc::Receiver<()>,
@@ -556,7 +627,7 @@ fn run_device(
             }
             Err((status, message)) => return failed(status, message),
         };
-        let stream = match open(&device, gain, frames, &sig_tx) {
+        let stream = match open(&device, gain, denoise, frames, &sig_tx) {
             Ok(s) => s,
             Err((status, message)) => return failed(status, message),
         };
@@ -569,6 +640,8 @@ fn run_device(
             if stop.load(Ordering::SeqCst) {
                 return;
             }
+            // 降噪实例在此创建，不占用采集回调的时间。
+            denoise.maintain();
             if !matches!(
                 wait.recv_timeout(Duration::from_millis(100)),
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout)
@@ -656,7 +729,7 @@ mod tests {
     #[test]
     fn chain_reports_silence_once_and_frames_resampled_input() {
         let frames = Frames::new();
-        let mut chain = Chain::new(44_100, 2, Gain::default());
+        let mut chain = Chain::new(44_100, 2, Gain::default(), &Denoise::default());
         let mut zero = 0;
         for _ in 0..200 {
             if chain.feed(&[0.0; 1024], &frames) {
@@ -675,7 +748,7 @@ mod tests {
         let frames = Frames::new();
         let gain = Gain::default();
         gain.set(0);
-        let mut chain = Chain::new(48_000, 1, gain.clone());
+        let mut chain = Chain::new(48_000, 1, gain.clone(), &Denoise::default());
         let mut hits = 0;
         for _ in 0..200 {
             if chain.feed(&[0.3; 1024], &frames) {

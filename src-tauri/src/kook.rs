@@ -2,6 +2,7 @@
 
 pub mod api;
 pub mod auth;
+pub mod denoise_asset;
 pub mod emoji;
 pub mod emoji_cache;
 pub mod gate;

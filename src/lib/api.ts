@@ -29,7 +29,9 @@ async function invoke<T>(cmd: string, args?: InvokeArgs, options?: InvokeOptions
 // 后端 audio::capture::InputDevice。
 export type InputDevice = { id: string; name: string; default: boolean };
 // 后端 audio::store::AudioPrefs。设备为 null 时跟随系统默认。
-export type AudioPrefs = { input: string | null; output: string | null; gain: number; master: number; effectVolume: number; effectsOff: number[]; muted: boolean; deafened: boolean };
+export type AudioPrefs = { input: string | null; output: string | null; gain: number; master: number; effectVolume: number; effectsOff: number[]; muted: boolean; deafened: boolean; denoise?: boolean; denoiseMode?: DenoiseMode };
+// 后端 audio::denoise::Mode。
+export type DenoiseMode = "kook" | "rnnoise";
 
 // 后端 kook::model::Channel。kind 为 category / text / voice / unknown。
 export type ChannelDto = {
@@ -102,6 +104,7 @@ export const api = {
   sayings: () => invoke<Saying[]>("sayings"),
   soundSync: (progress: Channel<{ done: number; total: number }>) =>
     invoke<{ total: number; downloaded: number; failed: number }>("sound_sync", { progress }),
+  denoiseSync: () => invoke<void>("denoise_sync"),
   loginQrCode: () => invoke<string>("login_qr_code"),
   loginQrPoll: (content: string) => invoke<QrStatus>("login_qr_poll", { content }),
   loginQrCancel: (content: string) => invoke<void>("login_qr_cancel", { content }),
@@ -165,6 +168,7 @@ export const api = {
   // 麦克风输入增益，上限 200，返回实际生效的值。
   voiceSetGain: (percent: number) => invoke<number>("voice_set_gain", { percent }),
   micTest: (on: boolean) => invoke<void>("mic_test", { on }),
+  voiceSetDenoise: (on: boolean, mode?: DenoiseMode) => invoke<void>("voice_set_denoise", { on, mode: mode ?? null }),
   audioPrefs: () => invoke<AudioPrefs>("audio_prefs"),
   setVoiceSwitches: (muted: boolean, deafened: boolean) => invoke<void>("set_voice_switches", { muted, deafened }),
   effectPlay: (id: number, preview = false) => invoke<void>("effect_play", { id, preview }),

@@ -1,13 +1,13 @@
 import { For, Show, createEffect, createSignal, on, onCleanup } from "solid-js";
-import { CircleHelp, Headphones, HeadphoneOff, Menu, Mic, MicOff, PhoneOff, Settings, UserPlus, X } from "lucide-solid";
+import { AudioLines, CircleHelp, Headphones, HeadphoneOff, Menu, Mic, MicOff, PhoneOff, Settings, UserPlus, X } from "lucide-solid";
 import type { Channel } from "../../stores/types";
 import { accessState, dropSelfFromVoice, enterVoice, loadDms, permsOf, retryAccess, selectChannel, selectDm, session, visible, voiceBlock } from "../../stores/session";
-import { canRejoin, dismissVoice, isSpeaking, disconnectVoice, mic, micFailed, output, setPeerVolume, toggleDeafen, toggleMic, voice, voiceActive, voiceStatusText, volumeOf, type VoicePeer } from "../../stores/voice";
+import { canRejoin, denoise, setDenoise, dismissVoice, isSpeaking, disconnectVoice, mic, micFailed, output, setPeerVolume, toggleDeafen, toggleMic, voice, voiceActive, voiceStatusText, volumeOf, type VoicePeer } from "../../stores/voice";
 import { DM_VIEW, currentChannelId, currentChatCode, ui, setUi } from "../../stores/ui";
 import RangeSlider from "../common/RangeSlider";
 import Avatar from "../common/Avatar";
 import { DeviceMenu, VolumePop, type AudioKind } from "./AudioPanel";
-import { Caret, KookHash, LockIcon, VoiceIcon } from "../common/icons";
+import { Caret, DenoiseOff, KookHash, LockIcon, VoiceIcon } from "../common/icons";
 import { channelIcon } from "../../lib/channelIcon";
 
 // 语音成员。说话时头像高亮，点击或右键其他成员可调节音量。
@@ -236,6 +236,15 @@ function VoiceBox() {
       <div class="voice-ctrls" ref={ctrls}>
         <button class="mode" disabled data-tip="持续开麦" aria-label="语音感应" aria-description="持续开麦">语音感应</button>
         <div class="ctrls">
+          <button
+            class="icon-btn"
+            aria-pressed={denoise()}
+            data-tip={denoise() ? "关闭降噪" : "开启降噪"}
+            aria-label={denoise() ? "关闭降噪" : "开启降噪"}
+            onClick={() => void setDenoise(!denoise())}
+          >
+            {denoise() ? <AudioLines size={20} /> : <DenoiseOff size={20} />}
+          </button>
           <div class="ctrl-wrap" {...hoverProps("input")} onContextMenu={(e) => openMenu(e, "input")}>
             <button
               ref={inBtn}
@@ -264,7 +273,6 @@ function VoiceBox() {
             </button>
             <Show when={hover() === "output" && !menu()}><VolumePop kind="output" onDrag={setDragging} /></Show>
           </div>
-          <button class="icon-btn" data-tip="语音设置" aria-label="语音设置" onClick={() => setUi("settings", "voice")}><Settings size={20} /></button>
         </div>
         <Show when={menu()} keyed>
           {(m) => <DeviceMenu kind={m.kind} x={m.x} onClose={(refocus) => { const b = m.kind === "input" ? inBtn : outBtn; setMenu(null); if (refocus) b?.focus(); }} />}

@@ -43,6 +43,11 @@ bytes = "1"
 cpal = "0.18"
 opus = "0.4"
 tauri-plugin-dialog = "2"
+# KOOK AI 降噪的 wasm 运行时与资源校验。wasmtime 为 Apache-2.0 许可，sha2 为 MIT 或 Apache-2.0 许可。
+wasmtime = { version = "50", default-features = false, features = ["cranelift", "runtime", "std"] }
+sha2 = "0.10"
+# RNNoise 降噪，BSD-3-Clause 许可。
+nnnoiseless = { version = "0.5", default-features = false }
 symphonia = { version = "0.5", default-features = false, features = ["mp3", "ogg", "wav", "pcm"] }
 tauri-plugin-prevent-default = { version = "6", features = ["platform-windows"] }
 
@@ -90,6 +95,10 @@ required-features = ["test-media"]
 
 [[test]]
 name = "live_soak"
+required-features = ["test-media"]
+
+[[test]]
+name = "live_denoise"
 required-features = ["test-media"]
 
 [[test]]

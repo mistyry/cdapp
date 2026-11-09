@@ -195,7 +195,9 @@ fn median(v: &mut [f64]) -> Option<f64> {
 /// 最近一次链路质量事件。
 fn last_link(log: &Log) -> Option<(Option<Quality>, Option<UpStats>, DownStats)> {
     log.lock().unwrap().iter().rev().find_map(|(_, e)| match e {
-        VoiceEvent::Link { quality, up, down } => Some((*quality, *up, *down)),
+        VoiceEvent::Link {
+            quality, up, down, ..
+        } => Some((*quality, *up, *down)),
         _ => None,
     })
 }

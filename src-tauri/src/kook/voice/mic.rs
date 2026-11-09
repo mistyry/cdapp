@@ -96,6 +96,7 @@ impl MicRun<'_> {
                     *capture = Some(Capture::start(
                         p.source,
                         p.gain,
+                        p.denoise,
                         self.uplink.clone(),
                         self.epoch,
                         self.events.clone(),

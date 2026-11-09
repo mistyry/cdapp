@@ -123,3 +123,9 @@ pub async fn sound_sync(
     })
     .await
 }
+
+/// 检查 AI 降噪模块，缺失时下载并缓存。不需要登录。
+#[tauri::command]
+pub async fn denoise_sync() -> AppResult<()> {
+    crate::kook::denoise_asset::sync(&Api::new(None)?).await
+}

@@ -2,11 +2,12 @@ import { For, Show, createSignal, onCleanup, onMount, type JSX } from "solid-js"
 import { HardDrive, LogOut, Mic, User, X } from "lucide-solid";
 import { logout, session } from "../../stores/session";
 import { setUi, ui } from "../../stores/ui";
-import { deviceOptions, loadInputs, inputs, selectInput, selectionMissing, loadOutputs, outputs, selectOutput, output, setMasterVolume, setMicGain, micTest, stopMicTest, toggleMicTest, voiceActive } from "../../stores/voice";
+import { DENOISE_MODES, applyDenoise, mic, denoise, denoiseMode, setDenoise, deviceOptions, loadInputs, inputs, selectInput, selectionMissing, loadOutputs, outputs, selectOutput, output, setMasterVolume, setMicGain, micTest, stopMicTest, toggleMicTest, voiceActive } from "../../stores/voice";
 import Avatar from "../common/Avatar";
 import { effects, setEffectVolume } from "../../stores/effects";
 import StorageSettings from "./StorageSettings";
 import { Note, Row, Section, Select, Slider } from "./parts";
+import type { DenoiseMode } from "../../lib/api";
 
 type Page = "account" | "voice" | "storage";
 const PAGES: { id: Page; name: string; group: string; icon: () => JSX.Element }[] = [
@@ -151,6 +152,7 @@ function VoiceSettings() {
             <Show when={outputs.error}>{(m) => <Note warn>{m()}</Note>}</Show>
             <Show when={!outputs.error && !outputs.loading && outputs.devices.length === 0}><Note warn>没有找到扬声器。</Note></Show>
             <Show when={micTest.error}>{(m) => <Note warn>{m()}</Note>}</Show>
+            <Show when={mic.message}>{(m) => <Note warn>{m()}</Note>}</Show>
           </>
         }
       >
@@ -193,6 +195,17 @@ function VoiceSettings() {
       </Section>
 
       <Section title="音频设置">
+        <Row label="降噪" for="st-denoise">
+          <Select
+            id="st-denoise"
+            label="降噪"
+            value={denoise() ? denoiseMode() : "off"}
+            onChange={(v) => void (v === "off" ? setDenoise(false) : applyDenoise(true, v as DenoiseMode))}
+          >
+            <option value="off">关闭</option>
+            <For each={DENOISE_MODES}>{(m) => <option value={m.id}>{m.name}</option>}</For>
+          </Select>
+        </Row>
         <Row label="音效音量">
           <Slider label="音效音量" max={100} value={effects.volume} onInput={(v) => void setEffectVolume(v)} />
         </Row>

@@ -57,6 +57,8 @@ pub struct VoiceSlot {
     pub output: Option<String>,
     /// 输入增益，与当前会话共享，修改立即生效。
     pub gain: crate::audio::dsp::Gain,
+    /// 降噪开关，与当前会话共享，修改立即生效。
+    pub denoise: crate::audio::denoise::Denoise,
     /// 成员音量百分比，按用户 ID 记录。跨会话保留，只保存在内存中。
     pub volumes: std::collections::HashMap<String, u16>,
     /// 总音量百分比，None 为 100。
@@ -87,6 +89,8 @@ impl VoiceSlot {
             ..Self::default()
         };
         slot.gain.set(p.gain);
+        slot.denoise.set(p.denoise);
+        slot.denoise.set_mode(p.denoise_mode);
         slot
     }
 
@@ -102,6 +106,8 @@ impl VoiceSlot {
             effects_off: self.effects_off.clone(),
             muted: self.muted,
             deafened: self.deafened,
+            denoise: self.denoise.on(),
+            denoise_mode: self.denoise.mode(),
         }
     }
 

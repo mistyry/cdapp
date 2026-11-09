@@ -1,4 +1,4 @@
-import { type JSX, Show } from "solid-js";
+import { type JSX, Show, children, createEffect } from "solid-js";
 import { ChevronDown } from "lucide-solid";
 import RangeSlider from "../common/RangeSlider";
 
@@ -30,11 +30,19 @@ export function Slider(p: { value: number; max: number; label: string; onInput: 
   return <RangeSlider class="st-slider" value={p.value} max={p.max} label={p.label} onInput={p.onInput} />;
 }
 
+// 选项异步渲染时，原生 select 会停在首项，与 value 不一致。选项变化后按 value 重新选中。
 export function Select(p: { id?: string; value: string; disabled?: boolean; label: string; onChange: (v: string) => void; children: JSX.Element }) {
+  let el!: HTMLSelectElement;
+  const opts = children(() => p.children);
+  createEffect(() => {
+    opts();
+    const v = p.value;
+    queueMicrotask(() => { if (el.value !== v) el.value = v; });
+  });
   return (
     <div class="st-select">
-      <select id={p.id} value={p.value} disabled={p.disabled} aria-label={p.label} onChange={(e) => p.onChange(e.currentTarget.value)}>
-        {p.children}
+      <select ref={el} id={p.id} value={p.value} disabled={p.disabled} aria-label={p.label} onChange={(e) => p.onChange(e.currentTarget.value)}>
+        {opts()}
       </select>
       <ChevronDown size={16} class="st-select-arrow" />
     </div>

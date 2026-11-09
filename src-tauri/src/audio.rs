@@ -2,6 +2,7 @@
 //! 设备回调运行在独立线程，与异步任务之间通过有界队列和通道交换数据。
 
 pub mod capture;
+pub mod denoise;
 pub mod dsp;
 pub mod effect;
 pub mod jitter;

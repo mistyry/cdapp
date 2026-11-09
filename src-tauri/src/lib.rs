@@ -124,6 +124,7 @@ pub fn run() {
             commands::restart,
             commands::sayings,
             commands::sound_sync,
+            commands::denoise_sync,
             commands::effect_play,
             commands::effect_play_item,
             commands::set_effect_volume,
@@ -178,6 +179,7 @@ pub fn run() {
             commands::voice_set_master,
             commands::mic_test,
             commands::voice_set_gain,
+            commands::voice_set_denoise,
             commands::audio_prefs,
             commands::set_voice_switches,
         ])

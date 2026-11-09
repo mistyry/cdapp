@@ -16,6 +16,8 @@ pub struct MicPrefs {
     pub source: Source,
     /// 输入增益，与命令层共享，修改立即作用于采集。
     pub gain: crate::audio::dsp::Gain,
+    /// 降噪开关，与命令层共享，修改立即作用于采集。
+    pub denoise: crate::audio::denoise::Denoise,
     pub deafen: Deafen,
     pub output: output::Sink,
     /// 成员音量百分比，按用户 ID 记录。
@@ -38,6 +40,7 @@ impl Default for MicPrefs {
             muted: false,
             source: Source::Device(None),
             gain: crate::audio::dsp::Gain::default(),
+            denoise: crate::audio::denoise::Denoise::default(),
             deafen: Deafen::default(),
             output: output::Sink::Device(None),
             volumes: HashMap::new(),

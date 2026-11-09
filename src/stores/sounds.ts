@@ -14,11 +14,8 @@ export async function syncSounds() {
   setSounds({ stage: "checking", done: 0, total: 0 });
   const progress = new Channel<{ done: number; total: number }>();
   progress.onmessage = (p) => setSounds({ stage: p.total > 0 && p.done < p.total ? "downloading" : "checking", done: p.done, total: p.total });
-  try {
-    await api.soundSync(progress);
-  } catch {
-    // 缺少的音效下次启动再下载。
-  }
+  // 降噪模块与音效同时缓存，失败时下次启动再下载。
+  await Promise.all([api.soundSync(progress).catch(() => {}), api.denoiseSync().catch(() => {})]);
   setSounds("stage", "done");
 }
 

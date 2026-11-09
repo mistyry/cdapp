@@ -1,7 +1,7 @@
 import { createEffect, createRoot, createSignal } from "solid-js";
 import { createStore, produce } from "solid-js/store";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { api, errorText, type InputDevice } from "../lib/api";
+import { api, errorText, type DenoiseMode, type InputDevice } from "../lib/api";
 import { Effect, applyEffectPrefs, playEffect, playJoin } from "./effects";
 
 // 语音会话状态。后端在后台完成连接与重建，经 voice://event 推送事件，事件按会话代次过滤。
@@ -79,6 +79,32 @@ type Mic = {
 
 const MIC_IDLE = { status: "off" as MicStatus, device: null, message: null, level: 0, busy: false };
 export const [mic, setMic] = createStore<Mic>({ muted: false, ...MIC_IDLE });
+
+// 降噪开关与方式。语音栏只切换开关，方式在设置页选择，关闭时也保留。
+// 使用 KOOK AI 降噪 2.0 时后端先获取许可，失败则回到之前的状态。
+export const DENOISE_MODES: { id: DenoiseMode; name: string }[] = [
+  { id: "kook", name: "KOOK AI 降噪 2.0" },
+  { id: "rnnoise", name: "RNNoise" },
+];
+export const [denoise, setDenoiseState] = createSignal(false);
+export const [denoiseMode, setDenoiseModeState] = createSignal<DenoiseMode>("kook");
+let denoiseSeq = 0;
+export async function applyDenoise(on: boolean, mode: DenoiseMode) {
+  const my = ++denoiseSeq;
+  const prev = [denoise(), denoiseMode()] as const;
+  setDenoiseState(on);
+  setDenoiseModeState(mode);
+  try {
+    await api.voiceSetDenoise(on, mode);
+  } catch (e) {
+    if (my !== denoiseSeq) return;
+    setDenoiseState(prev[0]);
+    setDenoiseModeState(prev[1]);
+    setMic("message", `降噪未开启：${errorText(e)}`);
+  }
+}
+export const setDenoise = (on: boolean) => applyDenoise(on, denoiseMode());
+export const setDenoiseMode = (mode: DenoiseMode) => applyDenoise(denoise(), mode);
 
 type Out = {
   // 用户选择的耳机关闭状态。
@@ -447,7 +473,7 @@ createRoot(() => createEffect(() => {
 }));
 
 export async function loadAudioPrefs() {
-  const my = [masterSeq, gainSeq, inSeq, outSeq];
+  const my = [masterSeq, gainSeq, inSeq, outSeq, denoiseSeq];
   try {
     const p = await api.audioPrefs();
     if (!p) return;
@@ -456,6 +482,10 @@ export async function loadAudioPrefs() {
     if (my[1] === gainSeq) { gainOk = clampVolume(p.gain); setOutput("gain", gainOk); }
     if (my[2] === inSeq) { inOk = p.input; setInputs("selected", p.input); }
     if (my[3] === outSeq) { outOk = p.output; setOutputs("selected", p.output); }
+    if (my[4] === denoiseSeq) {
+      setDenoiseState(Boolean(p.denoise));
+      setDenoiseModeState(p.denoiseMode === "rnnoise" ? "rnnoise" : "kook");
+    }
     if (typeof p.effectVolume === "number") applyEffectPrefs(p.effectVolume, p.effectsOff ?? []);
     // 开关只在启动后尚未操作、未进入语音时恢复。
     if (!switchesTouched && !voiceActive() && !joining) {

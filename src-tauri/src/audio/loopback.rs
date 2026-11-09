@@ -1,4 +1,5 @@
-//! 麦克风测试：把输入按当前增益与输出音量直接播放到扬声器，并上报输入电平。
+//! 麦克风测试：把将要推送的音频播放到扬声器，并上报电平。
+//! 处理与推流一致：混音、增益、重采样、降噪、分帧与 Opus 编码，再解码回放，听到的即对方收到的声音。
 //! 推流采集链路绑定发送任务，不能单独打开，因此另建一条只在本机回放的链路。
 
 use std::collections::VecDeque;
@@ -9,7 +10,10 @@ use std::time::Duration;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, ErrorKind, SampleFormat, StreamConfig};
 
-use super::dsp::{Gain, RATE, Resampler, audio_level, meter, mixdown, soft_limit};
+use super::denoise::Denoise;
+use super::dsp::{
+    FRAME_SAMPLES, Framer, Gain, RATE, Resampler, audio_level, meter, mixdown, soft_limit,
+};
 
 /// 回放缓冲上限，200 ms。超过时丢弃最旧的样本，避免延迟累积。
 const MAX_BUFFER: usize = RATE as usize / 5;
@@ -32,6 +36,7 @@ impl Loopback {
         input: Option<String>,
         output: Option<String>,
         gain: Gain,
+        denoise: Denoise,
         master: u16,
         on_level: impl Fn(u8) + Send + 'static,
         on_fail: impl Fn(String) + Send + 'static,
@@ -46,6 +51,7 @@ impl Loopback {
                     input.as_deref(),
                     output.as_deref(),
                     &gain,
+                    &denoise,
                     &ms,
                     &st,
                     &on_level,
@@ -121,6 +127,7 @@ fn run(
     input: Option<&str>,
     output: Option<&str>,
     gain: &Gain,
+    denoise: &Denoise,
     master: &Arc<AtomicU16>,
     stop: &AtomicBool,
     on_level: &dyn Fn(u8),
@@ -131,13 +138,15 @@ fn run(
 
     let mic = pick(input, true).ok_or("没有可用的麦克风")?;
     let spk = pick(output, false).ok_or("没有可用的扬声器")?;
-    let in_stream = open_input(&mic, gain, &buffer, &level, &err_tx)
+    let in_stream = open_input(&mic, gain, denoise, &buffer, &level, &err_tx)
         .map_err(|e| format!("无法打开麦克风：{e}"))?;
     let out_stream =
         open_output(&spk, master, &buffer, &err_tx).map_err(|e| format!("无法打开扬声器：{e}"))?;
 
     while !stop.load(Ordering::SeqCst) {
         std::thread::sleep(METER_INTERVAL);
+        // 降噪实例在此创建，不占用采集回调的时间。
+        denoise.maintain();
         on_level(meter(level.swap(127, Ordering::Relaxed)));
         if let Ok((what, e)) = err_rx.try_recv() {
             match e.kind() {
@@ -154,11 +163,12 @@ fn run(
     Ok(())
 }
 
-/// 输入：混为单声道、增益、重采样到 48 kHz 后放入缓冲。
+/// 输入：按推流链路处理后解码，放入缓冲。
 #[allow(clippy::cast_possible_truncation)]
 fn open_input(
     mic: &Device,
     gain: &Gain,
+    denoise: &Denoise,
     buffer: &Shared,
     level: &Arc<AtomicU8>,
     errors: &Errors,
@@ -170,22 +180,37 @@ fn open_input(
     let conf: StreamConfig = cfg.config();
     let ch = usize::from(conf.channels.max(1));
     let mut rs = Resampler::new(conf.sample_rate, RATE);
+    let mut stage = denoise.stage();
+    let mut framer = Framer::default();
+    let mut enc = super::capture::encoder().map_err(|e| e.to_string())?;
+    let mut dec = opus::Decoder::new(RATE, opus::Channels::Mono).map_err(|e| e.to_string())?;
+    let mut packet = vec![0u8; 4000];
+    let mut decoded = vec![0i16; FRAME_SAMPLES];
     let (buf, lv, gain) = (buffer.clone(), level.clone(), gain.clone());
     let mut scratch: Vec<f32> = Vec::new();
     let mut on_input = move |data: &[f32]| {
         let mut mono = mixdown(data, ch);
         gain.apply(&mut mono);
-        let pcm: Vec<i16> = mono
-            .iter()
-            .map(|&s| (s.clamp(-1.0, 1.0) * 32767.0) as i16)
-            .collect();
-        // 取上报周期内的最大电平，即最小的 -dBov 值。
-        lv.fetch_min(audio_level(&pcm), Ordering::Relaxed);
-        let out = rs.process(&mono);
-        if let Ok(mut b) = buf.lock() {
-            b.extend(out);
-            let over = b.len().saturating_sub(MAX_BUFFER);
-            b.drain(..over);
+        let mut out = rs.process(&mono);
+        stage.process(&mut out);
+        for pcm in framer.push(&out) {
+            // 取上报周期内的最大电平，即最小的 -dBov 值。
+            lv.fetch_min(audio_level(&pcm), Ordering::Relaxed);
+            let n = match enc
+                .encode(&pcm, &mut packet)
+                .and_then(|len| dec.decode(&packet[..len], &mut decoded, false))
+            {
+                Ok(n) => n,
+                Err(e) => {
+                    log::debug!("麦克风测试编解码失败：{e}");
+                    continue;
+                }
+            };
+            if let Ok(mut b) = buf.lock() {
+                b.extend(decoded[..n].iter().map(|&s| f32::from(s) / 32768.0));
+                let over = b.len().saturating_sub(MAX_BUFFER);
+                b.drain(..over);
+            }
         }
     };
     macro_rules! build {

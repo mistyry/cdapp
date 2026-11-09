@@ -55,3 +55,14 @@ export function LockIcon(p: { size?: number; restricted?: boolean }) {
     </Frame>
   );
 }
+
+// 降噪关闭：沿用 lucide audio-lines-off 的路径，斜杠用警示色。
+export function DenoiseOff(p: { size?: number }) {
+  const s = p.size ?? 20;
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M10 10v11M10 3v1.35M14 14v1M14 8v.35M18 5v7.35M2 10v3M22 10v3M6 6v11" />
+      <path d="m2 2 20 20" stroke="var(--c-danger)" />
+    </svg>
+  );
+}
