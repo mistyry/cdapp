@@ -56,25 +56,30 @@ pub fn parse(v: &Value) -> Vec<Saying> {
         .unwrap_or_default()
 }
 
-/// 读取一言列表。网络失败时返回本地缓存；无缓存时返回错误。
+/// 读取一言列表。有缓存时立即返回缓存，并在后台检查更新，新内容下次启动使用；
+/// 没有缓存时联网下载并缓存。
 ///
 /// # Errors
 ///
-/// 网络失败且没有缓存时返回错误。
-pub async fn list(api: &Api) -> AppResult<Vec<Saying>> {
+/// 没有缓存且下载失败时返回错误。
+pub async fn list(api: Api) -> AppResult<Vec<Saying>> {
     let cache = load();
-    match fetch(api, &cache).await {
-        Ok(Some(fresh)) => {
-            save(&fresh);
-            Ok(fresh.data)
-        }
-        Ok(None) => Ok(cache.data),
-        Err(e) if !cache.data.is_empty() => {
-            log::info!("一言更新失败，使用缓存：{e}");
-            Ok(cache.data)
-        }
-        Err(e) => Err(e),
+    if !cache.data.is_empty() {
+        let data = cache.data.clone();
+        tauri::async_runtime::spawn(async move {
+            match fetch(&api, &cache).await {
+                Ok(Some(fresh)) => save(&fresh),
+                Ok(None) => {}
+                Err(e) => log::info!("一言更新失败：{e}"),
+            }
+        });
+        return Ok(data);
     }
+    let fresh = fetch(&api, &cache)
+        .await?
+        .ok_or_else(|| AppError::Format("一言列表为空".into()))?;
+    save(&fresh);
+    Ok(fresh.data)
 }
 
 /// etag 未变时返回 None。

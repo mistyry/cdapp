@@ -38,7 +38,10 @@ export function safeUrl(raw: string): string | null {
   }
 }
 
-export const emojiUrl = (id: string) => `https://img.kookapp.cn/emojis/${id}.png`;
+// 表情图片经 emoji:// 协议读取，先读本地缓存，缺失时由后端下载并缓存。
+// WebView2 与 Android 的自定义协议形如 http://emoji.localhost/。
+const EMOJI_BASE = typeof navigator !== "undefined" && /Windows|Android/.test(navigator.userAgent) ? "http://emoji.localhost/" : "emoji://localhost/";
+export const emojiUrl = (id: string) => `${EMOJI_BASE}${id}.png`;
 
 export function parse(src: string): Block[] {
   let text = String(src ?? "").replace(/\r\n?/g, "\n");

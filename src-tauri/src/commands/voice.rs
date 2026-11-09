@@ -64,6 +64,10 @@ pub async fn voice_join(
     if let Some(old) = slot.session.take() {
         old.leave().await;
     }
+    // 加入前结束麦克风测试，释放设备。
+    if let Some(t) = slot.test.take() {
+        let _ = tauri::async_runtime::spawn_blocking(move || drop(t)).await;
+    }
     // 等锁与释放期间可能已退出登录。
     if lock(&state)?.token.as_deref() != Some(token.as_str()) {
         return Err(AppError::NotLoggedIn);
@@ -275,6 +279,9 @@ pub async fn voice_set_master(percent: u16, voice: State<'_, VoiceState>) -> App
     let mut slot = voice.0.lock().await;
     slot.master = Some(percent);
     slot.persist();
+    if let Some(t) = &slot.test {
+        t.set_master(percent);
+    }
     if let Some(s) = slot.session.as_ref().filter(|s| !s.is_finished()) {
         s.control().set_master(percent);
     }
@@ -311,6 +318,47 @@ pub async fn set_voice_switches(
         slot.muted = muted;
         slot.deafened = deafened;
         slot.persist();
+    }
+    Ok(())
+}
+
+#[derive(Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum MicTestEvent {
+    Level { level: u8 },
+    Failed { message: String },
+}
+
+/// 开始或停止麦克风测试。开始时把输入按当前增益与总音量播放到所选扬声器，电平经 `mic-test://event` 上报。
+/// 在语音频道中时不允许开始，避免两路采集同时占用麦克风。
+#[tauri::command]
+pub async fn mic_test(on: bool, app: AppHandle, voice: State<'_, VoiceState>) -> AppResult<()> {
+    let old = {
+        let mut slot = voice.0.lock().await;
+        let old = slot.test.take();
+        if on {
+            if slot.session.as_ref().is_some_and(|s| !s.is_finished()) {
+                return Err(AppError::Other("语音通话中无法测试麦克风".into()));
+            }
+            let (a, b) = (app.clone(), app);
+            slot.test = Some(crate::audio::loopback::Loopback::start(
+                slot.input.clone(),
+                slot.output.clone(),
+                slot.gain.clone(),
+                slot.master.unwrap_or(100),
+                move |level| {
+                    let _ = a.emit("mic-test://event", MicTestEvent::Level { level });
+                },
+                move |message| {
+                    let _ = b.emit("mic-test://event", MicTestEvent::Failed { message });
+                },
+            ));
+        }
+        old
+    };
+    // 停止时等待线程释放设备，不阻塞异步运行时。
+    if let Some(t) = old {
+        let _ = tauri::async_runtime::spawn_blocking(move || drop(t)).await;
     }
     Ok(())
 }

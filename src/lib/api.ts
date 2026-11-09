@@ -164,6 +164,7 @@ export const api = {
   voiceSetMaster: (percent: number) => invoke<void>("voice_set_master", { percent }),
   // 麦克风输入增益，上限 200，返回实际生效的值。
   voiceSetGain: (percent: number) => invoke<number>("voice_set_gain", { percent }),
+  micTest: (on: boolean) => invoke<void>("mic_test", { on }),
   audioPrefs: () => invoke<AudioPrefs>("audio_prefs"),
   setVoiceSwitches: (muted: boolean, deafened: boolean) => invoke<void>("set_voice_switches", { muted, deafened }),
   effectPlay: (id: number, preview = false) => invoke<void>("effect_play", { id, preview }),

@@ -4,6 +4,7 @@ import type { Channel } from "../../stores/types";
 import { accessState, dropSelfFromVoice, enterVoice, loadDms, permsOf, retryAccess, selectChannel, selectDm, session, visible, voiceBlock } from "../../stores/session";
 import { canRejoin, dismissVoice, isSpeaking, disconnectVoice, mic, micFailed, output, setPeerVolume, toggleDeafen, toggleMic, voice, voiceActive, voiceStatusText, volumeOf, type VoicePeer } from "../../stores/voice";
 import { DM_VIEW, currentChannelId, currentChatCode, ui, setUi } from "../../stores/ui";
+import RangeSlider from "../common/RangeSlider";
 import Avatar from "../common/Avatar";
 import { DeviceMenu, VolumePop, type AudioKind } from "./AudioPanel";
 import { Caret, KookHash, LockIcon, VoiceIcon } from "../common/icons";
@@ -33,9 +34,7 @@ function RoomMember(p: { peer: VoicePeer }) {
       </div>
       <Show when={open() && !self()}>
         <div class="voice-member-volume" onClick={(e) => e.stopPropagation()}>
-          <input type="range" min="0" max="200" step="5" value={volumeOf(p.peer.id)} aria-label={`${user().name} 的音量`}
-            onInput={(e) => void setPeerVolume(p.peer.id, Number(e.currentTarget.value))} />
-          <span>{volumeOf(p.peer.id)}%</span>
+          <RangeSlider value={volumeOf(p.peer.id)} max={200} label={`${user().name} 的音量`} onInput={(v) => void setPeerVolume(p.peer.id, v)} />
           <button class="link-btn" onClick={() => void setPeerVolume(p.peer.id, 100)}>恢复默认</button>
         </div>
       </Show>

@@ -86,7 +86,7 @@ fn prevent_default<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
 ///
 /// 应用初始化失败时触发。
 pub fn run() {
-    tauri::Builder::default()
+    kook::emoji_cache::protocol(tauri::Builder::default())
         .plugin(log_plugin())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -176,6 +176,7 @@ pub fn run() {
             commands::set_audio_output,
             commands::voice_set_volume,
             commands::voice_set_master,
+            commands::mic_test,
             commands::voice_set_gain,
             commands::audio_prefs,
             commands::set_voice_switches,

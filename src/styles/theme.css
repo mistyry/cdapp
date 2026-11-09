@@ -72,3 +72,5 @@ svg { display: block; flex: none; }
 }
 .icon-btn:hover { color: var(--c-text); background: var(--c-hover); }
 .icon-btn.on { color: var(--c-brand-text); }
+/* 指针操作后不绘制焦点框，键盘导航时保留。 */
+:root:not([data-keyboard]) :focus-visible { outline: none; }

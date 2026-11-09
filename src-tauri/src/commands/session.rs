@@ -54,7 +54,7 @@ pub async fn restore_session(state: State<'_, Mutex<AppState>>) -> AppResult<Res
 /// 启动页一言。不需要登录，不使用凭据。
 #[tauri::command]
 pub async fn sayings() -> AppResult<Vec<crate::kook::saying::Saying>> {
-    crate::kook::saying::list(&Api::new(None)?).await
+    crate::kook::saying::list(Api::new(None)?).await
 }
 
 #[tauri::command]

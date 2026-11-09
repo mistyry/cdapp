@@ -165,6 +165,7 @@ function ensureListener() {
 // 权限由调用方（session/access.ts 的 enterVoice）先行判断；password 只用于本次请求。
 export async function joinVoice(channelId: string, password: string | null = null) {
   if (voiceActive() && voice.channelId === channelId) return;
+  if (micTest.on) { ++testSeq; setMicTest({ on: false, level: 0 }); }
   const my = ++seq;
   joining = true;
   wanted = null;
@@ -615,6 +616,7 @@ export async function selectInput(id: string | null) {
   try {
     await api.setAudioInput(id);
     if (my > inOkSeq) { inOk = id; inOkSeq = my; }
+    if (my === inSeq && micTest.on) void startMicTest();
   } catch (e) {
     if (my === inSeq) setInputs({ selected: inOk ?? null, error: `麦克风切换失败：${errorText(e)}` });
   }
@@ -627,6 +629,7 @@ export async function selectOutput(id: string | null) {
   try {
     await api.setAudioOutput(id);
     if (my > outOkSeq) { outOk = id; outOkSeq = my; }
+    if (my === outSeq && micTest.on) void startMicTest();
   } catch (e) {
     if (my === outSeq) setOutputs({ selected: outOk ?? null, error: `扬声器切换失败：${errorText(e)}` });
   }
@@ -654,3 +657,32 @@ export const selectionMissing = (list: DeviceList) =>
 export function defaultName(list: DeviceList): string {
   return list.devices.find((x) => x.default)?.name ?? "系统默认";
 }
+
+// 麦克风测试：输入按当前增益与总音量直接播放到扬声器。切换设备时重新开始，离开设置页时停止。
+export const [micTest, setMicTest] = createStore({ on: false, level: 0, error: null as string | null });
+let testUnlisten: UnlistenFn | null = null;
+let testSeq = 0;
+
+export async function startMicTest() {
+  const my = ++testSeq;
+  setMicTest({ on: true, level: 0, error: null });
+  testUnlisten ??= await listen<{ kind: "level"; level: number } | { kind: "failed"; message: string }>("mic-test://event", (e) => {
+    if (!micTest.on) return;
+    if (e.payload.kind === "level") setMicTest("level", e.payload.level);
+    else setMicTest({ on: false, level: 0, error: e.payload.message });
+  });
+  try {
+    await api.micTest(true);
+  } catch (e) {
+    if (my === testSeq) setMicTest({ on: false, level: 0, error: errorText(e) });
+  }
+}
+
+export async function stopMicTest() {
+  ++testSeq;
+  if (!micTest.on) return;
+  setMicTest({ on: false, level: 0 });
+  await api.micTest(false).catch(() => {});
+}
+
+export const toggleMicTest = () => (micTest.on ? stopMicTest() : startMicTest());

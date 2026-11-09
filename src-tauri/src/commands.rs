@@ -68,6 +68,8 @@ pub struct VoiceSlot {
     /// 麦克风与耳机开关，下次启动沿用。
     pub muted: bool,
     pub deafened: bool,
+    /// 进行中的麦克风测试。
+    pub test: Option<crate::audio::loopback::Loopback>,
 }
 
 impl VoiceSlot {

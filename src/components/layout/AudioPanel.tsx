@@ -21,7 +21,7 @@ export function VolumePop(p: { kind: AudioKind; onDrag: (dragging: boolean) => v
   const pct = () => volumeOf(p.kind) / 2;
   const at = (y: number) => {
     const r = track.getBoundingClientRect();
-    return clampVolume(Math.round(((r.bottom - y) / r.height) * 40) * 5);
+    return clampVolume(((r.bottom - y) / r.height) * 200);
   };
   const down = (e: PointerEvent) => {
     e.preventDefault();
@@ -40,7 +40,7 @@ export function VolumePop(p: { kind: AudioKind; onDrag: (dragging: boolean) => v
     p.onDrag(false);
   };
   const key = (e: KeyboardEvent) => {
-    const step = { ArrowUp: 5, ArrowRight: 5, ArrowDown: -5, ArrowLeft: -5, PageUp: 25, PageDown: -25 }[e.key];
+    const step = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1, PageUp: 10, PageDown: -10 }[e.key];
     let v: number | undefined;
     if (step) v = volumeOf(p.kind) + step;
     else if (e.key === "Home") v = 0;

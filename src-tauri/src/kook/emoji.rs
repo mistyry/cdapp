@@ -52,7 +52,8 @@ pub fn parse_joined(data: &Value) -> Result<Vec<String>, String> {
 }
 
 /// 表情 ID 只允许字母、数字、下划线、连字符与斜杠分段，与 `KMarkdown` 解析一致。
-fn valid_id(id: &str) -> bool {
+#[must_use]
+pub fn valid_id(id: &str) -> bool {
     let parts: Vec<&str> = id.split('/').collect();
     (2..=3).contains(&parts.len())
         && parts.iter().all(|p| {

@@ -5,6 +5,7 @@ pub mod capture;
 pub mod dsp;
 pub mod effect;
 pub mod jitter;
+pub mod loopback;
 pub mod mic;
 pub mod mixer;
 pub mod output;

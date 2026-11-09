@@ -112,7 +112,7 @@ export interface DiscFrame {
   dy: number;
 }
 
-export const AMP = 1.5;
+export const AMP = 1.0;
 
 // 位姿随时间变化，t 为秒，amp 为姿态摆幅倍数。
 export function pose(t: number, amp = AMP) {
