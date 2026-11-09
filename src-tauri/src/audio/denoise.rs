@@ -3,7 +3,7 @@
 //! 模块是 Emscripten 编译的 wasm，由 wasmtime 加载，宿主导入在此实现。
 //! 没有可用的 Rust 实现或 C 接口可替代，只能按模块的导入表补齐宿主函数。
 //! 采集回调按 128 样本块处理 48 kHz 单声道音频。实例创建较慢，在采集线程中完成后交给回调。
-//! 出错或输出持续为零时丢弃实例并绕过降噪，稍后重建，不中断采集。
+//! KOOK AI 降噪实例出错或无法创建时，关闭降噪并通知界面，不中断采集。输出持续为零只记录日志。
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -12,7 +12,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use wasmtime::error::Context;
 use wasmtime::{
@@ -26,10 +26,9 @@ pub const BLOCK: usize = 128;
 const VERSION: &str = "2.0.0-beta4-license";
 /// `RNNoise` 的帧长。
 const RNN_FRAME: usize = nnnoiseless::FRAME_SIZE;
-/// 失败后重建实例的间隔。
-const RETRY: Duration = Duration::from_secs(5);
-/// 输入有声而输出持续为零的样本数，约 2 秒，视为许可失效。
-const MUTED_LIMIT: usize = 48_000 * 2;
+/// 输入有声而输出持续为零的样本数，约 2 秒，超过时记录日志。
+/// 已知的许可失效在创建时返回错误码或运行中陷入，通话中途到期的表现尚未实测。
+const MUTED_LOG: usize = 48_000 * 2;
 
 /// 已编译的模块。编译耗时较长，全进程只做一次。
 static MODULE: OnceLock<(Engine, Module)> = OnceLock::new();
@@ -451,9 +450,12 @@ struct Inner {
     armed: AtomicBool,
     /// 采集线程创建好、等待回调取走的实例。
     slot: Mutex<Option<Denoiser>>,
-    /// 上次失败时间，到期前不重建。
-    failed_at: Mutex<Option<Instant>>,
+    /// 降噪因故障关闭时的通知，参数为原因。
+    on_fail: Mutex<Option<FailHook>>,
 }
+
+/// 降噪因故障关闭时的回调。
+pub type FailHook = Box<dyn Fn(String) + Send + Sync>;
 
 /// 降噪开关，与命令层共享，修改立即作用于采集。
 #[derive(Clone)]
@@ -466,7 +468,7 @@ impl Default for Denoise {
             mode: AtomicU8::new(0),
             armed: AtomicBool::new(false),
             slot: Mutex::new(None),
-            failed_at: Mutex::new(None),
+            on_fail: Mutex::new(None),
         }))
     }
 }
@@ -479,11 +481,12 @@ impl Denoise {
 
     pub fn set(&self, on: bool) {
         self.0.on.store(on, Ordering::Relaxed);
-        if on {
-            // 重新开启时立即重试。
-            if let Ok(mut f) = self.0.failed_at.lock() {
-                *f = None;
-            }
+    }
+
+    /// 设置降噪因故障关闭时的通知。
+    pub fn on_fail(&self, hook: FailHook) {
+        if let Ok(mut h) = self.0.on_fail.lock() {
+            *h = Some(hook);
         }
     }
 
@@ -494,15 +497,18 @@ impl Denoise {
 
     pub fn set_mode(&self, mode: Mode) {
         self.0.mode.store(mode.as_u8(), Ordering::Relaxed);
-        if let Ok(mut f) = self.0.failed_at.lock() {
-            *f = None;
-        }
     }
 
+    /// 关闭降噪并通知界面。已关闭时不重复通知。
     fn fail(&self, e: &wasmtime::Error) {
-        log::warn!("降噪已绕过：{e:#}");
-        if let Ok(mut f) = self.0.failed_at.lock() {
-            *f = Some(Instant::now());
+        if !self.0.on.swap(false, Ordering::SeqCst) {
+            return;
+        }
+        log::warn!("KOOK AI 降噪故障，已关闭降噪：{e:#}");
+        if let Ok(h) = self.0.on_fail.lock()
+            && let Some(h) = h.as_ref()
+        {
+            h(format!("{e:#}"));
         }
     }
 
@@ -517,14 +523,6 @@ impl Denoise {
             return;
         }
         if self.0.slot.lock().is_ok_and(|s| s.is_some()) {
-            return;
-        }
-        let due = self
-            .0
-            .failed_at
-            .lock()
-            .is_ok_and(|f| f.is_none_or(|t| t.elapsed() >= RETRY));
-        if !due {
             return;
         }
         match Denoiser::new() {
@@ -548,6 +546,7 @@ impl Denoise {
             active: None,
             pending: Vec::with_capacity(RNN_FRAME * 2),
             muted: 0,
+            muted_logged: false,
         }
     }
 }
@@ -562,12 +561,15 @@ pub struct Stage {
     pending: Vec<f32>,
     /// 输入有声而输出为零的连续样本数。
     muted: usize,
+    /// 本段静音是否已记录。
+    muted_logged: bool,
 }
 
 impl Stage {
     fn drop_inst(&mut self) {
         self.inst = None;
         self.muted = 0;
+        self.muted_logged = false;
         self.shared.0.armed.store(false, Ordering::SeqCst);
     }
 
@@ -645,17 +647,20 @@ impl Stage {
             if loud && block.iter().all(|s| *s == 0.0) {
                 self.muted += BLOCK;
             } else if loud {
+                if self.muted_logged {
+                    log::info!("KOOK AI 降噪输出恢复，此前全零 {}ms", self.muted / 48);
+                }
                 self.muted = 0;
+                self.muted_logged = false;
             }
         }
         samples.extend(self.pending.drain(..full));
         if let Some(e) = error {
+            self.drop_inst();
             self.shared.fail(&e);
-            self.drop_inst();
-        } else if self.muted >= MUTED_LIMIT {
-            self.shared
-                .fail(&format_err!("输出持续为零，降噪许可可能已失效"));
-            self.drop_inst();
+        } else if self.muted >= MUTED_LOG && !self.muted_logged {
+            self.muted_logged = true;
+            log::warn!("KOOK AI 降噪输入有声而输出持续为零 {}ms", self.muted / 48);
         }
     }
 }
@@ -711,6 +716,25 @@ mod tests {
         let mut x = vec![0.0f32; 10];
         s.process(&mut x);
         assert_eq!(total + x.len(), 3010);
+    }
+
+    #[test]
+    fn failure_turns_denoise_off_and_notifies_once() {
+        let d = Denoise::default();
+        let hits = Arc::new(Mutex::new(Vec::new()));
+        let h = hits.clone();
+        d.on_fail(Box::new(move |r| h.lock().unwrap().push(r)));
+        d.set(true);
+        d.fail(&format_err!("陷入"));
+        assert!(!d.on());
+        // 已关闭时不重复通知。
+        d.fail(&format_err!("再次"));
+        assert_eq!(*hits.lock().unwrap(), vec!["陷入".to_owned()]);
+        // 用户重新开启后，再次故障仍会关闭并通知。
+        d.set(true);
+        d.fail(&format_err!("第三次"));
+        assert!(!d.on());
+        assert_eq!(hits.lock().unwrap().len(), 2);
     }
 
     #[test]

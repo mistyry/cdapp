@@ -23,6 +23,7 @@ pub(super) async fn supervise<F, Fut>(
         ctl = back;
         let l = match outcome {
             Outcome::End(reason, message) => {
+                log::info!("语音会话结束 {reason:?} {message:?}");
                 sink(VoiceEvent::state(
                     Phase::Disconnected,
                     Some(reason),
@@ -36,6 +37,7 @@ pub(super) async fn supervise<F, Fut>(
             rebuilds = 0;
         }
         if rebuilds >= MAX_REBUILDS {
+            log::warn!("语音重建次数用尽：{}", l.message);
             sink(VoiceEvent::state(
                 Phase::Disconnected,
                 Some(EndReason::Lost),
@@ -44,6 +46,12 @@ pub(super) async fn supervise<F, Fut>(
             return;
         }
         rebuilds += 1;
+        log::warn!(
+            "语音重建 {rebuilds}/{MAX_REBUILDS}：{}；稳定 {}，紧急 {}",
+            l.message,
+            l.stable,
+            l.urgent
+        );
         let wait = if l.urgent {
             Duration::ZERO
         } else {

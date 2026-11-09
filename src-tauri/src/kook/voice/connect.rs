@@ -161,6 +161,8 @@ pub(super) async fn attempt(
         return lost("已注入加入失败");
     }
     let mut slots = Slots::default();
+    let started = std::time::Instant::now();
+    log::info!("语音加入开始");
     // 加入期间仍处理控制命令，收到退出时中止加入。
     let joined = {
         let p = prefs_get(prefs);
@@ -191,6 +193,10 @@ pub(super) async fn attempt(
             return Outcome::End(EndReason::Left, None);
         }
         Some(Err(e)) => {
+            log::warn!(
+                "语音加入失败：{e}，耗时 {}ms",
+                started.elapsed().as_millis()
+            );
             let (code, closed) = slots
                 .signal
                 .as_ref()
@@ -199,7 +205,10 @@ pub(super) async fn attempt(
             slots.release(exit).await;
             return outcome;
         }
-        Some(Ok(l)) => l,
+        Some(Ok(l)) => {
+            log::info!("语音加入完成，耗时 {}ms", started.elapsed().as_millis());
+            l
+        }
     };
     let (outcome, server_ended) = run(live, &mut slots, ctl, sink, prefs).await;
     // 服务端已关闭连接时不再发送 exit。

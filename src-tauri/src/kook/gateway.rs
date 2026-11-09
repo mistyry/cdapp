@@ -444,7 +444,7 @@ async fn pump<F: FnMut(GatewayEvent)>(
             () = until(resume_deadline) => {
                 // 续传迟迟未完成：保留连接，但按重建通知上层补偿可能缺失的事件。
                 resume_deadline = None;
-                log::warn!("续传未在时限内完成，按重建补偿");
+                log::warn!("续传 {}ms 内未收到 s:6，按重建补偿", cfg.resume_timeout.as_millis());
                 let id = session.as_ref().map(|s| s.id.clone()).unwrap_or_default();
                 emit(GatewayEvent::Ready { session_id: id, kind: ReadyKind::Rebuilt });
             }

@@ -1,24 +1,21 @@
 //! 语音连接健康检查与链路质量。
 //!
-//! 按固定间隔检查以下情况：
-//! - 系统时间与单调时间的差值突增，或两次检查间隔过长，判定为系统睡眠后唤醒。
+//! 按固定间隔检查以下情况，交由会话重建连接：
+//! - 系统时间比单调时间多走超过阈值，判定为系统睡眠后唤醒。
 //! - 媒体连接断开超过宽限期。
-//! - 有成员推流，但长时间收不到媒体包。
 //!
-//! 判定结果交由会话重建连接。
+//! 两次检查间隔过长只记录，不重建：后台计时器节流同样会造成长间隔，连接未必已断。
 
 use std::time::{Duration, Instant, SystemTime};
 
 use serde::Serialize;
 use serde_json::Value;
 
-/// 有成员推流时允许的最长无包时长。
-pub const SILENCE_LIMIT: Duration = Duration::from_secs(10);
 /// 媒体连接断开后的宽限期。
 pub const DISCONNECT_GRACE: Duration = Duration::from_secs(5);
 /// 系统时间超出单调时间的阈值，超过即判定为睡眠。
 pub const SLEEP_SKEW: Duration = Duration::from_secs(5);
-/// 两次检查的最大间隔，超过即判定为进程被挂起。
+/// 两次检查的间隔，超过时记录。
 pub const STALL_GAP: Duration = Duration::from_secs(10);
 /// 连接持续超过该时长视为稳定，重建次数重新计数。
 pub const STABLE_AFTER: Duration = Duration::from_secs(30);
@@ -39,8 +36,6 @@ pub enum Problem {
     Slept,
     /// 媒体连接断开。
     Disconnected,
-    /// 有成员推流，但收不到媒体包。
-    Silent,
 }
 
 impl Problem {
@@ -49,7 +44,6 @@ impl Problem {
         match self {
             Self::Slept => "系统唤醒后重新连接",
             Self::Disconnected => "媒体连接已断开",
-            Self::Silent => "长时间未收到语音数据",
         }
     }
 
@@ -60,13 +54,18 @@ impl Problem {
     }
 }
 
-/// 连接健康状态。
-#[derive(Debug)]
+/// 一次检查的结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Checked {
+    /// 需要重建的异常。
+    pub problem: Option<Problem>,
+    /// 检查间隔异常时的单调时长与系统时长，供记录。
+    pub gap: Option<(Duration, Duration)>,
+}
+
+/// 连接诊断状态。
+#[derive(Debug, Default)]
 pub struct Health {
-    last_rx: Instant,
-    /// 是否收到过媒体包。
-    seen: bool,
-    pushing: bool,
     /// 推流与拉流连接开始断开的时间。
     down: [Option<Instant>; 2],
     /// 上次检查的单调时间与系统时间。
@@ -74,23 +73,6 @@ pub struct Health {
 }
 
 impl Health {
-    #[must_use]
-    pub fn new(now: Instant) -> Self {
-        Self {
-            last_rx: now,
-            seen: false,
-            pushing: false,
-            down: [None; 2],
-            tick: None,
-        }
-    }
-
-    /// 收到媒体包。
-    pub fn on_packet(&mut self, now: Instant) {
-        self.last_rx = now;
-        self.seen = true;
-    }
-
     /// 把上次检查的系统时间提前 10 分钟，下一次检查判定为睡眠。
     #[cfg(any(test, feature = "test-media"))]
     pub fn fake_sleep(&mut self) {
@@ -99,23 +81,25 @@ impl Health {
         }
     }
 
-    /// 设置是否有成员推流。开始推流时重新计时。
-    pub fn set_pushing(&mut self, pushing: bool, now: Instant) {
-        if pushing && !self.pushing {
-            self.last_rx = now;
+    /// 媒体连接状态变化。`leg` 为 0 表示推流，1 表示拉流。恢复时返回断开时长。
+    pub fn on_media(&mut self, leg: usize, connected: bool, now: Instant) -> Option<Duration> {
+        let d = self.down.get_mut(leg)?;
+        if connected {
+            d.take().map(|t| now.saturating_duration_since(t))
+        } else {
+            d.get_or_insert(now);
+            None
         }
-        self.pushing = pushing;
     }
 
-    /// 媒体连接状态变化。`leg` 为 0 表示推流，1 表示拉流。
-    pub fn on_media(&mut self, leg: usize, connected: bool, now: Instant) {
-        if let Some(d) = self.down.get_mut(leg) {
-            if connected {
-                *d = None;
-            } else if d.is_none() {
-                *d = Some(now);
-            }
-        }
+    /// 处于断开状态的媒体连接及其已断开时长。
+    #[must_use]
+    pub fn down_for(&self, now: Instant) -> Vec<(usize, Duration)> {
+        self.down
+            .iter()
+            .enumerate()
+            .filter_map(|(i, t)| t.map(|t| (i, now.saturating_duration_since(t))))
+            .collect()
     }
 
     /// 是否有媒体连接处于断开状态。
@@ -124,13 +108,19 @@ impl Health {
         self.down.iter().any(Option::is_some)
     }
 
-    /// 检查一次，返回发现的异常。
-    pub fn check(&mut self, now: Instant, wall: SystemTime) -> Option<Problem> {
+    /// 检查一次。
+    pub fn check(&mut self, now: Instant, wall: SystemTime) -> Checked {
+        let mut out = Checked::default();
         if let Some((m, w)) = self.tick.replace((now, wall)) {
             let mono = now.saturating_duration_since(m);
             let walled = wall.duration_since(w).unwrap_or_default();
-            if walled.saturating_sub(mono) > SLEEP_SKEW || mono > STALL_GAP {
-                return Some(Problem::Slept);
+            let skew = walled.saturating_sub(mono) > SLEEP_SKEW;
+            if skew || mono > STALL_GAP {
+                out.gap = Some((mono, walled));
+            }
+            if skew {
+                out.problem = Some(Problem::Slept);
+                return out;
             }
         }
         if self
@@ -139,13 +129,9 @@ impl Health {
             .flatten()
             .any(|t| now.saturating_duration_since(*t) >= DISCONNECT_GRACE)
         {
-            return Some(Problem::Disconnected);
+            out.problem = Some(Problem::Disconnected);
         }
-        if self.pushing && self.seen && now.saturating_duration_since(self.last_rx) >= SILENCE_LIMIT
-        {
-            return Some(Problem::Silent);
-        }
-        None
+        out
     }
 }
 
@@ -259,79 +245,74 @@ mod tests {
     #[test]
     fn wall_clock_jump_means_sleep() {
         let (t0, w0) = (Instant::now(), SystemTime::now());
-        let mut h = Health::new(t0);
-        assert_eq!(h.check(t0, w0), None);
-        // 正常间隔。
-        assert_eq!(h.check(t0 + 2 * S, w0 + 2 * S), None);
+        let mut h = Health::default();
+        assert_eq!(h.check(t0, w0), Checked::default());
+        assert_eq!(h.check(t0 + 2 * S, w0 + 2 * S), Checked::default());
         // 系统时间跳过 10 分钟。
-        assert_eq!(h.check(t0 + 4 * S, w0 + 602 * S), Some(Problem::Slept));
+        let c = h.check(t0 + 4 * S, w0 + 602 * S);
+        assert_eq!(c.problem, Some(Problem::Slept));
+        assert_eq!(c.gap, Some((2 * S, 600 * S)));
         assert!(Problem::Slept.urgent());
+        // 系统时间回拨不判定为睡眠。
+        let mut h = Health::default();
+        h.check(t0, w0 + 100 * S);
+        assert_eq!(h.check(t0 + 2 * S, w0), Checked::default());
     }
 
     #[test]
-    fn long_gap_between_checks_means_suspended() {
+    fn long_gap_is_only_reported() {
         let (t0, w0) = (Instant::now(), SystemTime::now());
-        let mut h = Health::new(t0);
+        let mut h = Health::default();
         h.check(t0, w0);
-        assert_eq!(h.check(t0 + 30 * S, w0 + 30 * S), Some(Problem::Slept));
-        // 系统时间回拨不判定为睡眠。
-        let mut h = Health::new(t0);
-        h.check(t0, w0 + 100 * S);
-        assert_eq!(h.check(t0 + 2 * S, w0), None);
+        let c = h.check(t0 + 30 * S, w0 + 30 * S);
+        assert_eq!(c.problem, None, "计时器节流不重建");
+        assert_eq!(c.gap, Some((30 * S, 30 * S)));
     }
 
     #[test]
     fn disconnected_media_gets_grace_period() {
         let (t0, w0) = (Instant::now(), SystemTime::now());
-        let mut h = Health::new(t0);
+        let mut h = Health::default();
         h.on_media(1, false, t0);
         assert!(h.disconnected());
-        assert_eq!(h.check(t0 + 2 * S, w0 + 2 * S), None);
+        assert_eq!(h.check(t0 + 2 * S, w0 + 2 * S).problem, None);
         // 宽限期内恢复不算异常。
         h.on_media(1, true, t0 + 3 * S);
-        assert_eq!(h.check(t0 + 6 * S, w0 + 6 * S), None);
+        assert_eq!(h.check(t0 + 6 * S, w0 + 6 * S).problem, None);
         h.on_media(0, false, t0 + 6 * S);
         h.on_media(0, false, t0 + 8 * S);
-        assert_eq!(h.check(t0 + 8 * S, w0 + 8 * S), None);
+        assert_eq!(h.check(t0 + 8 * S, w0 + 8 * S).problem, None);
         assert_eq!(
-            h.check(t0 + 11 * S, w0 + 11 * S),
+            h.check(t0 + 11 * S, w0 + 11 * S).problem,
             Some(Problem::Disconnected)
         );
         assert!(!Problem::Disconnected.urgent());
     }
 
     #[test]
-    fn silence_only_counts_while_someone_pushes() {
+    fn fake_sleep_triggers_on_next_check() {
         let (t0, w0) = (Instant::now(), SystemTime::now());
-        let mut h = Health::new(t0);
-        // 无人推流时不检查。
-        for k in 1..=10 {
-            assert_eq!(h.check(t0 + 2 * k * S, w0 + 2 * k * S), None);
-        }
-        // 开始推流后，超过时限未收到包即判定异常。
-        let t1 = t0 + 20 * S;
-        h.set_pushing(true, t1);
-        assert_eq!(h.check(t1 + 8 * S, w0 + 28 * S), None);
-        h.on_packet(t1 + 9 * S);
-        assert_eq!(h.check(t1 + 10 * S, w0 + 30 * S), None);
-        assert_eq!(h.check(t1 + 19 * S, w0 + 39 * S), Some(Problem::Silent));
-        // 停止推流后不再检查。
-        h.set_pushing(false, t1 + 19 * S);
-        assert_eq!(h.check(t1 + 21 * S, w0 + 41 * S), None);
-        // 重新推流时重新计时。
-        h.set_pushing(true, t1 + 22 * S);
-        assert_eq!(h.check(t1 + 30 * S, w0 + 50 * S), None);
-        assert_eq!(h.check(t1 + 32 * S, w0 + 52 * S), Some(Problem::Silent));
+        let mut h = Health::default();
+        h.check(t0, w0);
+        h.fake_sleep();
+        assert_eq!(
+            h.check(t0 + 2 * S, w0 + 2 * S).problem,
+            Some(Problem::Slept)
+        );
+        assert_eq!(h.check(t0 + 4 * S, w0 + 4 * S).problem, None);
     }
 
     #[test]
-    fn fake_sleep_triggers_on_next_check() {
-        let (t0, w0) = (Instant::now(), SystemTime::now());
-        let mut h = Health::new(t0);
-        h.check(t0, w0);
-        h.fake_sleep();
-        assert_eq!(h.check(t0 + 2 * S, w0 + 2 * S), Some(Problem::Slept));
-        assert_eq!(h.check(t0 + 4 * S, w0 + 4 * S), None);
+    fn media_down_duration_is_tracked() {
+        let t0 = Instant::now();
+        let mut h = Health::default();
+        assert_eq!(h.on_media(1, false, t0), None);
+        // 重复的断开不重置起点。
+        assert_eq!(h.on_media(1, false, t0 + 2 * S), None);
+        assert_eq!(h.down_for(t0 + 3 * S), vec![(1, 3 * S)]);
+        assert_eq!(h.on_media(1, true, t0 + 4 * S), Some(4 * S));
+        assert_eq!(h.down_for(t0 + 5 * S), Vec::new());
+        assert_eq!(h.on_media(0, true, t0 + 5 * S), None);
     }
 
     #[test]

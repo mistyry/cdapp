@@ -57,6 +57,10 @@ fn log_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
         .level(log::LevelFilter::Warn)
         .level_for("cdapp_lib", level)
         .level_for("app", level)
+        // 多网卡环境下向不可达网卡发包、mDNS 地址不一致与 DTLS server_name 提示均不影响连接。
+        .level_for("webrtc::peer_connection::driver", log::LevelFilter::Off)
+        .level_for("rtc_mdns", log::LevelFilter::Off)
+        .level_for("rtc_dtls::config", log::LevelFilter::Error)
         .max_file_size(2_000_000)
         .rotation_strategy(RotationStrategy::KeepSome(5))
         .timezone_strategy(TimezoneStrategy::UseLocal)
@@ -102,6 +106,7 @@ pub fn run() {
                 storage::init(&app.path().app_config_dir()?, &data, &data);
             }
             let slot = commands::VoiceSlot::from_prefs(&audio::store::load());
+            commands::watch_denoise(app.handle(), &slot.denoise);
             app.manage(VoiceState(tokio::sync::Mutex::new(slot)));
             #[cfg(all(target_os = "macos", debug_assertions))]
             devshot::init(app.handle());

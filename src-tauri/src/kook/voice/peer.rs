@@ -100,6 +100,7 @@ impl PeerConnectionEventHandler for Handler {
 
     async fn on_track(&self, track: Arc<dyn TrackRemote>) {
         let sink = self.remote.clone();
+        log::info!("语音收到远端音轨 {:?}", self.leg);
         tauri::async_runtime::spawn(async move {
             // 音轨结束前持续读取 RTP 包。
             while let Some(ev) = track.poll().await {
@@ -117,7 +118,10 @@ impl PeerConnectionEventHandler for Handler {
                             });
                         }
                     }
-                    TrackRemoteEvent::OnEnded => break,
+                    TrackRemoteEvent::OnEnded => {
+                        log::info!("语音远端音轨结束");
+                        break;
+                    }
                     _ => {}
                 }
             }

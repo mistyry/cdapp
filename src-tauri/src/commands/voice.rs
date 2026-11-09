@@ -326,6 +326,21 @@ async fn need_license(state: &State<'_, Mutex<AppState>>, voice: &State<'_, Voic
     }
 }
 
+/// 降噪因故障关闭时保存关闭状态，并以 `denoise://off` 通知界面，内容为原因。
+pub fn watch_denoise(app: &AppHandle, denoise: &crate::audio::denoise::Denoise) {
+    let app = app.clone();
+    denoise.on_fail(Box::new(move |reason| {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            use tauri::Manager;
+            app.state::<VoiceState>().0.lock().await.persist();
+            if let Err(e) = app.emit("denoise://off", reason) {
+                log::warn!("事件广播失败：{e}");
+            }
+        });
+    }));
+}
+
 /// 开启或关闭降噪。`mode` 为空时沿用当前方式。
 /// 使用 KOOK AI 降噪 2.0 时先获取许可，正在采集时立即生效。
 #[tauri::command]

@@ -11,6 +11,9 @@ use super::{
     prefs_get, producer_queue, settle_lost,
 };
 
+/// 未关麦的音轨超过该时长无包时记录日志。
+const QUIET_LOG_AFTER: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// 运行一次已加入的连接，返回结果与服务端是否已关闭信令。
 pub(super) async fn run(
     live: Live,
@@ -116,7 +119,7 @@ pub(super) async fn run_loop(
     let mut connected = false;
     let deadline = tokio::time::sleep(CONNECT_TIMEOUT);
     tokio::pin!(deadline);
-    let mut health = Health::new(Instant::now());
+    let mut health = Health::default();
     let mut check = tokio::time::interval(HEALTH_TICK);
     check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut stats =
@@ -124,16 +127,40 @@ pub(super) async fn run_loop(
     stats.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let (stats_tx, mut stats_rx) = mpsc::unbounded_channel::<(Option<UpStats>, Option<u32>)>();
     let mut link = LinkMeter::default();
-    // 丢弃收到的媒体包，由故障注入设置。
-    #[cfg_attr(not(any(test, feature = "test-media")), allow(unused_mut))]
-    let mut drop_media = false;
+    // 每条音轨最后收到包的时刻与累计包数，用于诊断无数据重建。
+    let mut tracks: std::collections::HashMap<u32, (Instant, u64)> =
+        std::collections::HashMap::new();
+    // 已记录为长时间无包的音轨，恢复收包时再记录一次。
+    let mut quiet: std::collections::HashSet<u32> = std::collections::HashSet::new();
     loop {
         tokio::select! {
             _ = check.tick() => {
                 let now = Instant::now();
-                health.set_pushing(connected && room.pushing() && !play.deafened(), now);
-                if let Some(p) = health.check(now, SystemTime::now()) {
-                    log::warn!("语音连接异常：{p:?}");
+                // 只记录，不处理：对端未关麦时是否持续发包尚未实测。
+                if let Some(since) = play.since {
+                    for ssrc in room.quiet_tracks(&tracks, since, now, QUIET_LOG_AFTER) {
+                        if quiet.insert(ssrc) {
+                            log::info!("语音音轨长时间无包；{}", room.describe(&tracks, now));
+                        }
+                    }
+                }
+                let checked = health.check(now, SystemTime::now());
+                if let Some((mono, wall)) = checked.gap {
+                    log::warn!(
+                        "语音检查间隔异常：单调 {}ms，系统 {}ms；媒体断开 {:?}；{}",
+                        mono.as_millis(),
+                        wall.as_millis(),
+                        health.down_for(now),
+                        room.describe(&tracks, now),
+                    );
+                }
+                if let Some(p) = checked.problem {
+                    log::warn!(
+                        "语音连接异常 {p:?}，重建；已连接 {}，媒体断开 {:?}；{}",
+                        play.since.map_or_else(|| "-".into(), |t| format!("{}s", t.elapsed().as_secs())),
+                        health.down_for(now),
+                        room.describe(&tracks, now),
+                    );
                     return (Outcome::Lost(Lost { message: p.message().into(), urgent: p.urgent(), stable: false }), false);
                 }
                 if connected {
@@ -158,6 +185,7 @@ pub(super) async fn run_loop(
                 sink(link.event(up, rtt, DownStats::from_jitter(&s, depth)));
             }
             () = &mut deadline, if !connected => {
+                log::warn!("语音媒体连接超时");
                 return (lost("语音连接超时"), false);
             }
             c = ctl.recv() => match c {
@@ -227,15 +255,16 @@ pub(super) async fn run_loop(
                 }
                 Some(Ctl::Leave) | None => return (Outcome::End(EndReason::Left, None), false),
                 Some(Ctl::Wake) => {
+                    let down = health.down_for(Instant::now());
+                    log::info!("主网关或系统网络已恢复；语音媒体断开 {down:?}");
                     // 媒体连接已断开时立即重建。
                     if health.disconnected() {
-                        return (Outcome::Lost(Lost { message: "系统唤醒后重新连接".into(), urgent: true, stable: false }), false);
+                        return (Outcome::Lost(Lost { message: "网络恢复后重新连接".into(), urgent: true, stable: false }), false);
                     }
                 }
                 #[cfg(any(test, feature = "test-media"))]
                 Some(Ctl::Fault(f)) => match f {
                     Fault::CloseSignal => play.signal.close(),
-                    Fault::DropMedia => drop_media = true,
                     Fault::Sleep => health.fake_sleep(),
                     Fault::FailJoin => {
                         if let Ok(mut p) = mic.prefs.lock() {
@@ -246,10 +275,14 @@ pub(super) async fn run_loop(
                 },
             },
             Some(pkt) = live.remote.recv() => {
-                if drop_media {
-                    continue;
+                let now = Instant::now();
+                if quiet.remove(&pkt.ssrc)
+                    && let Some((last, _)) = tracks.get(&pkt.ssrc)
+                {
+                    log::info!("语音音轨恢复收包，间隔 {}ms", now.saturating_duration_since(*last).as_millis());
                 }
-                health.on_packet(Instant::now());
+                let t = tracks.entry(pkt.ssrc).or_insert((now, 0));
+                *t = (now, t.1 + 1);
                 if let Ok(mut m) = play.mixer.lock() {
                     m.push(pkt.ssrc, pkt.sequence, pkt.timestamp, pkt.payload);
                 }
@@ -267,9 +300,10 @@ pub(super) async fn run_loop(
             }
             ev = live.media_rx.recv() => match ev {
                 Some(MediaEvent::State(Leg::Send, PcState::Connected)) if !connected => {
+                    log::info!("语音媒体连接已建立");
                     connected = true;
                     play.since = Some(Instant::now());
-                    health.on_media(0, true, Instant::now());
+                    let _ = health.on_media(0, true, Instant::now());
                     sink(VoiceEvent::state(Phase::Connected, None, None));
                     // 按发言权限与加入时的状态开始采集或暂停推流。
                     let actions = mic.mic.on_connected(live.say, live.paused);
@@ -281,16 +315,23 @@ pub(super) async fn run_loop(
                     play.sync(playback, false).await;
                 }
                 Some(MediaEvent::State(leg, PcState::Failed)) => {
+                    log::warn!("语音媒体连接失败 {leg:?}");
                     return (lost(format!("{}连接失败", if leg == Leg::Send { "推流" } else { "拉流" })), false);
                 }
                 Some(MediaEvent::State(leg, st @ (PcState::Connected | PcState::Disconnected))) => {
+                    log::info!("语音媒体连接 {leg:?} {st:?}");
                     // 短暂断开等待宽限期，超时后由健康检查重建。
-                    health.on_media(usize::from(leg == Leg::Recv), st == PcState::Connected, Instant::now());
+                    if let Some(d) = health.on_media(usize::from(leg == Leg::Recv), st == PcState::Connected, Instant::now()) {
+                        log::info!("语音媒体连接 {leg:?} 恢复，断开 {}ms", d.as_millis());
+                    }
                 }
                 _ => {}
             },
             msg = live.inbound.recv() => match msg {
-                None | Some(Inbound::Closed) => return (closed_outcome(disconnect), true),
+                None | Some(Inbound::Closed) => {
+                    log::warn!("语音信令关闭，断开码 {disconnect:?}");
+                    return (closed_outcome(disconnect), true);
+                }
                 Some(Inbound::Request { method, data }) => {
                     if let Some(offer) = room.on_request(&method, &data, &live.params) {
                         match offer {
@@ -306,6 +347,7 @@ pub(super) async fn run_loop(
                 Some(Inbound::Notification { method, data }) => {
                     if method == "disconnect" {
                         let code = data.get("errorCode").and_then(Value::as_i64).unwrap_or(0);
+                        log::warn!("语音服务端通知断开 {code}");
                         disconnect = Some(code);
                         // 替换、正常退出与加入失败不重建。
                         if !DisconnectKind::from_code(code).may_retry() {

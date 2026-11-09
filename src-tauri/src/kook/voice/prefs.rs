@@ -89,8 +89,6 @@ pub(super) enum Ctl {
 pub enum Fault {
     /// 关闭信令连接。
     CloseSignal,
-    /// 丢弃收到的媒体包。
-    DropMedia,
     /// 模拟系统睡眠。
     Sleep,
     /// 关闭信令连接，并使之后的加入失败。

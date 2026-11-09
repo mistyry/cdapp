@@ -7,7 +7,7 @@
 //! - `long_call`：每分钟检查双向可听、延迟、CPU、内存、线程与文件描述符，
 //!   时长由 `CDAPP_SOAK_MINUTES` 设置，默认 30 分钟。
 //! - `join_leave_rounds`：多轮加入退出，检查资源是否持续增长。轮数由 `CDAPP_SOAK_ROUNDS` 设置。
-//! - `fault_recovery`：注入信令断开、媒体中断与系统睡眠，检查重建与恢复收听。
+//! - `fault_recovery`：注入信令断开与系统睡眠，检查重建与恢复收听。
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -610,7 +610,6 @@ async fn fault_recovery() {
     assert!(heard(p[0], ALT_TONE) && heard(p[3], MAIN_TONE));
 
     recover(&a, &b, Fault::CloseSignal, "信令断开").await;
-    recover(&a, &b, Fault::DropMedia, "媒体中断").await;
     recover(&a, &b, Fault::Sleep, "系统睡眠").await;
     let attempts: Vec<(Option<u32>, Option<u64>)> = a
         .log

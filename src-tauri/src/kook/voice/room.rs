@@ -59,17 +59,59 @@ impl Room {
     }
 
     /// 是否有成员正在推流。
-    pub(super) fn pushing(&self) -> bool {
-        self.consumers
-            .iter()
-            .any(|c| !c.closed && !self.paused.contains(&c.id))
-    }
-
     pub(super) fn ssrc_of(&self, consumer: &str) -> Option<u32> {
         self.consumers
             .iter()
             .find(|c| c.id == consumer && !c.closed)
             .map(|c| c.ssrc)
+    }
+
+    /// 未暂停且超过 `after` 未收到包的音轨。从未收到包的音轨自 `since`，即媒体连接建立时起算。
+    pub(super) fn quiet_tracks(
+        &self,
+        tracks: &HashMap<u32, (std::time::Instant, u64)>,
+        since: std::time::Instant,
+        now: std::time::Instant,
+        after: std::time::Duration,
+    ) -> Vec<u32> {
+        self.consumers
+            .iter()
+            .filter(|c| !c.closed && !self.paused.contains(&c.id))
+            .filter(|c| {
+                let last = tracks.get(&c.ssrc).map_or(since, |(t, _)| *t);
+                now.saturating_duration_since(last) >= after
+            })
+            .map(|c| c.ssrc)
+            .collect()
+    }
+
+    /// 诊断摘要：每条未关闭音轨的成员、暂停状态、累计包数与距最后一包时长。
+    pub(super) fn describe(
+        &self,
+        tracks: &HashMap<u32, (std::time::Instant, u64)>,
+        now: std::time::Instant,
+    ) -> String {
+        let items: Vec<String> = self
+            .consumers
+            .iter()
+            .filter(|c| !c.closed)
+            .map(|c| {
+                let state = if self.paused.contains(&c.id) {
+                    "暂停"
+                } else {
+                    "开启"
+                };
+                match tracks.get(&c.ssrc) {
+                    Some((t, n)) => format!(
+                        "{} {state} {n} 包 {}ms 前",
+                        c.peer_id,
+                        now.saturating_duration_since(*t).as_millis()
+                    ),
+                    None => format!("{} {state} 无包", c.peer_id),
+                }
+            })
+            .collect();
+        format!("音轨 [{}]", items.join("；"))
     }
 
     pub(super) fn offer(&mut self, params: &JoinParams) -> AppResult<String> {
@@ -97,9 +139,11 @@ impl Room {
         self.owners.insert(c.id.clone(), c.peer_id.clone());
         // 加入时对方麦克风可能已暂停。
         let b = |k: &str| data.get(k).and_then(Value::as_bool).unwrap_or(false);
-        if b("paused") || b("producerPaused") {
+        let paused = b("paused") || b("producerPaused");
+        if paused {
             self.paused.insert(c.id.clone());
         }
+        log::info!("语音新音轨 成员 {} 暂停 {paused}", c.peer_id);
         self.mix(|m| m.add_track(c.ssrc, &c.peer_id));
         self.consumers.push(c);
         Some(self.offer(params))
@@ -148,6 +192,8 @@ impl Room {
                 }
             }
             "consumerPaused" | "consumerResumed" => {
+                let owner = consumer().and_then(|c| self.owners.get(c));
+                log::debug!("语音 {method} 成员 {owner:?}");
                 if let Some(c) = consumer() {
                     if method == "consumerPaused" {
                         self.paused.insert(c.to_owned());
@@ -177,6 +223,7 @@ impl Room {
                     .iter_mut()
                     .find(|c| c.id == id && !c.closed)?;
                 c.closed = true;
+                log::info!("语音音轨关闭 成员 {}", c.peer_id);
                 let ssrc = c.ssrc;
                 self.owners.remove(id);
                 self.paused.remove(id);
@@ -196,23 +243,51 @@ mod tests {
     use crate::kook::voice::*;
 
     #[test]
-    fn room_tracks_whether_someone_is_pushing() {
+    fn quiet_tracks_skip_paused_and_closed() {
+        use std::time::{Duration, Instant};
         let (sink, _) = recorder();
         let mut room = Room::default();
         let p = params();
-        assert!(!room.pushing());
+        let t0 = Instant::now();
+        let after = Duration::from_secs(10);
+        let (early, late) = (t0 + Duration::from_secs(9), t0 + Duration::from_secs(11));
+        let mut tracks = HashMap::new();
         room.on_request("newConsumer", &new_consumer("c1", "u1", 11), &p);
-        assert!(room.pushing());
+        // 从未收到包的音轨自连接建立起算。
+        assert_eq!(
+            room.quiet_tracks(&tracks, t0, early, after),
+            Vec::<u32>::new()
+        );
+        assert_eq!(room.quiet_tracks(&tracks, t0, late, after), vec![11]);
+        tracks.insert(11, (t0 + Duration::from_secs(5), 3));
+        assert_eq!(
+            room.quiet_tracks(&tracks, t0, late, after),
+            Vec::<u32>::new()
+        );
+        tracks.insert(11, (t0, 3));
+        assert_eq!(room.quiet_tracks(&tracks, t0, late, after), vec![11]);
         room.on_notification("consumerPaused", &json!({"consumerId": "c1"}), &p, &sink);
-        assert!(!room.pushing());
+        assert_eq!(
+            room.quiet_tracks(&tracks, t0, late, after),
+            Vec::<u32>::new(),
+            "暂停的音轨不记录"
+        );
         room.on_notification("consumerResumed", &json!({"consumerId": "c1"}), &p, &sink);
-        assert!(room.pushing());
+        assert_eq!(room.quiet_tracks(&tracks, t0, late, after), vec![11]);
         room.on_notification("consumerClosed", &json!({"consumerId": "c1"}), &p, &sink);
-        assert!(!room.pushing());
+        assert_eq!(
+            room.quiet_tracks(&tracks, t0, late, after),
+            Vec::<u32>::new(),
+            "关闭的音轨不记录"
+        );
         let mut paused = new_consumer("c2", "u2", 12);
         paused["producerPaused"] = json!(true);
         room.on_request("newConsumer", &paused, &p);
-        assert!(!room.pushing(), "以暂停状态加入的音轨不算推流");
+        assert_eq!(
+            room.quiet_tracks(&tracks, t0, late, after),
+            Vec::<u32>::new(),
+            "以暂停状态加入的音轨不记录"
+        );
     }
 
     #[test]

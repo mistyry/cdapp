@@ -103,6 +103,19 @@ export async function applyDenoise(on: boolean, mode: DenoiseMode) {
     setMic("message", `降噪未开启：${errorText(e)}`);
   }
 }
+// 降噪因故障被后端关闭。
+let denoiseOffListening: Promise<UnlistenFn> | null = null;
+export function watchDenoiseOff() {
+  denoiseOffListening ??= listen<string>("denoise://off", () => {
+    ++denoiseSeq;
+    setDenoiseState(false);
+    setMic("message", "降噪出现故障，已关闭");
+  }).catch((e) => {
+    denoiseOffListening = null;
+    throw e;
+  });
+  return denoiseOffListening;
+}
 export const setDenoise = (on: boolean) => applyDenoise(on, denoiseMode());
 export const setDenoiseMode = (mode: DenoiseMode) => applyDenoise(denoise(), mode);
 
@@ -473,6 +486,7 @@ createRoot(() => createEffect(() => {
 }));
 
 export async function loadAudioPrefs() {
+  void watchDenoiseOff().catch(() => {});
   const my = [masterSeq, gainSeq, inSeq, outSeq, denoiseSeq];
   try {
     const p = await api.audioPrefs();
