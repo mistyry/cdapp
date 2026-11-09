@@ -105,7 +105,9 @@
 /* 右侧与频道人数右对齐。 */
 .voice-member > span[role="img"] { display: flex; color: var(--c-text-2); }
 .voice-member { cursor: default; }
-.voice-member.speaking .avatar { box-shadow: 0 0 0 2px var(--c-good); border-radius: 50%; }
+/* 说话时整行淡绿底，右侧绿色麦克风。圆角底色向左右各延伸 6px，不移动内容。 */
+.voice-member.speaking { background: color-mix(in srgb, var(--c-good) 12%, transparent); border-radius: 8px; margin-left: 32px; margin-right: 2px; padding: 0 6px; }
+.voice-member > span.voice-speaking { color: var(--c-good); }
 .voice-member .voice-vol { font-size: 12px; color: var(--c-text-3, var(--c-text-2)); }
 .voice-member-volume { display: flex; align-items: center; gap: 8px; margin: 0 8px 4px 66px; font-size: 12px; color: var(--c-text-2); }
 .voice-member-volume .range { flex: 1; min-width: 0; }
@@ -347,7 +349,7 @@ button.quote:hover { background: var(--c-fill); }
 .voice-box .ctrl-wrap { position: relative; display: flex; }
 .vol-pop { position: absolute; left: 50%; bottom: calc(100% + 6px); z-index: 5; display: flex; flex-direction: column; align-items: center; gap: 6px; width: 36px; padding: 12px 0; transform: translateX(-50%); background: var(--c-float); border-radius: 18px; box-shadow: 0 4px 16px rgba(15, 23, 42, 0.14); }
 .vol-pop::after { content: ""; position: absolute; left: 0; right: 0; top: 100%; height: 8px; }
-.vol-tip { position: absolute; left: 50%; transform: translate(-50%, -14px); margin-bottom: 0; padding: 3px 8px; font-size: 12px; line-height: 16px; white-space: nowrap; color: #fff; background: rgba(31, 35, 41, 0.9); border-radius: 6px; pointer-events: none; font-variant-numeric: tabular-nums; }
+.vol-tip { position: absolute; left: 50%; transform: translate(-50%, -14px); margin-bottom: 0; padding: 3px 8px; font-size: 12px; line-height: 16px; white-space: nowrap; color: #fff; background: rgba(46, 48, 58, 0.9); border-radius: 6px; pointer-events: none; font-variant-numeric: tabular-nums; }
 .vol-track { position: relative; width: 20px; height: 112px; cursor: pointer; touch-action: none; }
 .vol-track::before { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 4px; margin-left: -2px; border-radius: 2px; background: var(--c-fill); }
 .vol-fill { position: absolute; left: 50%; bottom: 0; width: 4px; margin-left: -2px; border-radius: 2px; background: var(--c-brand); }
@@ -403,13 +405,13 @@ button.quote:hover { background: var(--c-fill); }
   background: var(--c-float); color: var(--c-text-2); box-shadow: 0 0 0 1px var(--c-line); }
 .emoji-name { color: var(--c-text-2); }
 .tip { position: fixed; z-index: 50; transform: translate(-50%, -100%); width: max-content; max-width: 280px; padding: 4px 8px; border-radius: 6px;
-  background: rgba(31, 35, 41, 0.92); color: #fff; font-size: 12px; line-height: 16px; pointer-events: none; overflow-wrap: anywhere; }
+  background: rgba(46, 48, 58, 0.92); color: #fff; font-size: 12px; line-height: 16px; pointer-events: none; overflow-wrap: anywhere; }
 .tip.below { transform: translate(-50%, 0); }
 .tip.right { transform: translate(0, -50%); }
 .tip::after { content: ""; position: absolute; left: var(--arrow, 50%); top: 100%; margin-left: -5px;
-  border: 5px solid transparent; border-top-color: rgba(31, 35, 41, 0.92); }
-.tip.below::after { top: auto; bottom: 100%; border-top-color: transparent; border-bottom-color: rgba(31, 35, 41, 0.92); }
-.tip.right::after { left: auto; right: 100%; top: 50%; margin: -5px 0 0; border-top-color: transparent; border-right-color: rgba(31, 35, 41, 0.92); }
+  border: 5px solid transparent; border-top-color: rgba(46, 48, 58, 0.92); }
+.tip.below::after { top: auto; bottom: 100%; border-top-color: transparent; border-bottom-color: rgba(46, 48, 58, 0.92); }
+.tip.right::after { left: auto; right: 100%; top: 50%; margin: -5px 0 0; border-top-color: transparent; border-right-color: rgba(46, 48, 58, 0.92); }
 
 /* 设置页 */
 .st-nav { position: absolute; top: 0; bottom: 0; z-index: 2; left: calc(var(--st-left) - var(--st-gap) - var(--st-nav)); width: var(--st-nav); padding: 48px 0 40px; overflow-y: auto; }
@@ -475,5 +477,5 @@ button.quote:hover { background: var(--c-fill); }
 .range-fill { background: var(--c-brand); }
 .range-knob { position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; border: 3px solid var(--c-brand); border-radius: 50%; background: var(--c-float); box-sizing: border-box; transition: transform 0.1s; }
 .range.dragging .range-knob { transform: scale(1.15); }
-.range-tip { position: absolute; bottom: calc(50% + 12px); transform: translateX(-50%); padding: 3px 8px; font-size: 12px; line-height: 16px; white-space: nowrap; color: #fff; background: rgba(31, 35, 41, 0.9); border-radius: 6px; pointer-events: none; font-variant-numeric: tabular-nums; }
+.range-tip { position: absolute; bottom: calc(50% + 12px); transform: translateX(-50%); padding: 3px 8px; font-size: 12px; line-height: 16px; white-space: nowrap; color: #fff; background: rgba(46, 48, 58, 0.9); border-radius: 6px; pointer-events: none; font-variant-numeric: tabular-nums; }
 .range:focus-visible { outline: 2px solid var(--c-brand); outline-offset: 4px; border-radius: 6px; }

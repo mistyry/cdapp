@@ -29,6 +29,7 @@ function RoomMember(p: { peer: VoicePeer }) {
         <Avatar user={user()} size={20} />
         <span class="voice-name">{user().name}</span>
         <Show when={!self() && volumeOf(p.peer.id) !== 100}><span class="voice-vol">{volumeOf(p.peer.id)}%</span></Show>
+        <Show when={isSpeaking(p.peer.id) && !micOff() && !p.peer.serverMute}><span class="voice-speaking" aria-label="正在说话" role="img"><Mic size={14} /></span></Show>
         <Show when={micOff() || p.peer.serverMute}><span data-tip={p.peer.serverMute ? "已被服务器禁麦" : "已关闭麦克风"} aria-label={p.peer.serverMute ? "已被服务器禁麦" : "已关闭麦克风"} role="img"><MicOff size={14} /></span></Show>
         <Show when={headsetOff()}><span data-tip="已关闭耳机" aria-label="已关闭耳机" role="img"><HeadphoneOff size={14} /></span></Show>
       </div>

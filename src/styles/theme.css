@@ -1,18 +1,18 @@
 /* 默认亮色主题；深色主题沿用 KOOK 网页端实测值，见 docs/前端设计.md。品牌色取自应用图标主色。 */
 :root {
   color-scheme: light;
-  --c-app: #ebedf0;
-  --c-app-solid: #ebedf0;
-  /* 主面板略带暖灰，避免纯白刺眼。 */
-  --c-panel: #f8f8f6;
-  --c-fill: rgba(15, 23, 42, 0.06);
-  --c-hover: rgba(15, 23, 42, 0.04);
-  --c-line: rgba(15, 23, 42, 0.08);
-  --c-avatar: rgba(15, 23, 42, 0.08);
-  --c-text: #1f2329;
-  --c-text-2: rgba(31, 35, 41, 0.66);
-  --c-text-3: rgba(31, 35, 41, 0.45);
-  --c-placeholder: rgba(31, 35, 41, 0.36);
+  /* 冷灰色调，参考 KOOK 亮色界面；正文色取自官方加载页实测 #2e303a。 */
+  --c-app: #e8ebf0;
+  --c-app-solid: #e8ebf0;
+  --c-panel: #f7f8fa;
+  --c-fill: rgba(46, 56, 77, 0.07);
+  --c-hover: rgba(46, 56, 77, 0.045);
+  --c-line: rgba(46, 56, 77, 0.09);
+  --c-avatar: rgba(46, 56, 77, 0.09);
+  --c-text: #2e303a;
+  --c-text-2: rgba(46, 48, 58, 0.66);
+  --c-text-3: rgba(46, 48, 58, 0.45);
+  --c-placeholder: rgba(46, 48, 58, 0.36);
   --c-brand: #45a6f7;
   --c-brand-text: #1677d2;
   --c-mention: #ff8f19;
@@ -21,10 +21,10 @@
   --c-good: #6cc28a;
   --c-fair: #e3b35c;
   --c-poor: #e58a8a;
-  --c-float: #fbfbf9;
-  --c-surface: #f8f8f6;
-  --c-strong: rgba(31, 35, 41, 0.87);
-  --shadow: 0 2px 12px rgba(15, 23, 42, 0.12), 0 0 0 1px rgba(15, 23, 42, 0.06);
+  --c-float: #fbfcfd;
+  --c-surface: #f7f8fa;
+  --c-strong: rgba(46, 48, 58, 0.87);
+  --shadow: 0 2px 12px rgba(30, 41, 59, 0.12), 0 0 0 1px rgba(30, 41, 59, 0.06);
   --squircle: path("M 0 24 C 0 2.55 2.55 0 24 0 C 45.45 0 48 2.55 48 24 C 48 45.45 45.45 48 24 48 C 2.55 48 0 45.45 0 24");
   --font: "PingFang SC", "Microsoft YaHei New", "Microsoft Yahei", "Microsoft JhengHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
 }
@@ -48,7 +48,7 @@
   --shadow: 0 2px 8px rgba(0, 0, 0, 0.24);
 }
 /* 窗口透明且底层有系统材质时：macOS 为侧栏材质，Windows 11 为 Mica。应用底色保留 50% 不透明度，透出少量桌面颜色。主面板与浮层保持不透明。 */
-:root[data-backdrop] { --c-app: rgba(235, 237, 240, 0.5); }
+:root[data-backdrop] { --c-app: rgba(232, 235, 240, 0.5); }
 :root[data-backdrop][data-theme="dark"] { --c-app: rgba(23, 24, 26, 0.5); }
 
 * { box-sizing: border-box; }
