@@ -1,7 +1,7 @@
 import { For, type JSX, Show, createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
 import { anyMod, banFromGuild, kickFromGuild, kickFromVoice, modPerms, moveTargets, moveToVoice, setServerMute } from "../../stores/moderation";
 import { Portal } from "solid-js/web";
-import { AudioLines, Check, ChevronRight, Volume2, CircleHelp, Headphones, HeadphoneOff, Menu, Mic, MicOff, PhoneOff, Settings, UserPlus, X } from "lucide-solid";
+import { AudioLines, Check, ChevronRight, Volume2, CircleHelp, Headphones, HeadphoneOff, Menu, Mic, MicOff, Monitor, PhoneOff, Settings, UserPlus, X } from "lucide-solid";
 import type { Channel } from "../../stores/types";
 import { accessState, dropSelfFromVoice, enterVoice, loadDms, permsOf, retryAccess, selectChannel, selectDm, session, visible, voiceBlock } from "../../stores/session";
 import { canRejoin, denoise, setDenoise, dismissVoice, isSpeaking, disconnectVoice, mic, micFailed, output, peerDenoised, setPeerDenoise, setPeerVolume, toggleDeafen, togglePeerMute, toggleMic, voice, voiceActive, voiceStatusText, volumeOf, type VoicePeer } from "../../stores/voice";
@@ -9,6 +9,7 @@ import { DM_VIEW, currentChannelId, currentChatCode, ui, setUi } from "../../sto
 import RangeSlider from "../common/RangeSlider";
 import Avatar from "../common/Avatar";
 import { DenoiseMenu, DeviceMenu, VolumePop, type AudioKind } from "./AudioPanel";
+import { openSharePicker } from "./ScreenSharePicker";
 import { Caret, DenoiseOff, SpeakerOffMark, KookHash, LockIcon, VoiceIcon } from "../common/icons";
 import { channelIcon } from "../../lib/channelIcon";
 
@@ -397,6 +398,11 @@ function VoiceBox() {
           <Show when={voiceActive()} fallback={<button class="icon-btn" data-tip="关闭" aria-label="关闭" onClick={dismissVoice}><X size={18} /></button>}>
             <button class="icon-btn danger" data-tip="断开语音" aria-label="断开语音" onClick={() => { const c = voice.channelId; void disconnectVoice(); dropSelfFromVoice(c); }}><PhoneOff size={18} /></button>
           </Show>
+        </div>
+      </Show>
+      <Show when={voiceActive()}>
+        <div class="voice-share">
+          <button class="share-btn" onClick={openSharePicker}><Monitor size={18} />屏幕共享</button>
         </div>
       </Show>
       <div class="voice-ctrls" ref={ctrls}>

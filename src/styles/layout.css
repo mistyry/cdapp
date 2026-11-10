@@ -139,6 +139,10 @@
 .voice-box button:disabled { opacity: .4; cursor: not-allowed; }
 .voice-box .icon-btn.danger { color: var(--c-danger); }
 .voice-status { display: flex; align-items: center; gap: 8px; padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid var(--c-line); }
+.voice-status:has(+ .voice-share) { border-bottom: 0; margin-bottom: 0; }
+.voice-share { padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid var(--c-line); }
+.share-btn { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 32px; font-size: 14px; color: #fff; background: var(--c-brand); border-radius: 8px; }
+.share-btn:hover:not(:disabled) { box-shadow: inset 0 0 0 999px rgba(0, 0, 0, .08); }
 .voice-channel { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; color: var(--c-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .voice-channel.pending { color: var(--c-fair); }
 .voice-channel.done { color: var(--c-good); }
@@ -360,6 +364,34 @@ button.quote:hover { background: var(--c-fill); }
 .dialog-input { width: 100%; height: 40px; padding: 0 12px; border: 1px solid var(--c-line); border-radius: 10px; background: var(--c-fill); color: var(--c-text); font-size: 14px; }
 .dialog-error { margin-top: 8px !important; color: var(--c-danger); }
 .dialog-primary { background: var(--c-brand); color: #fff; }
+.share-dialog { width: 560px; }
+.share-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.share-head h3 { margin: 0; }
+.share-head .icon-btn { color: var(--c-text-3); }
+.share-tabs { display: flex; gap: 24px; margin-bottom: 12px; }
+.share-tab { position: relative; padding: 4px 0; font-size: 14px; color: var(--c-text-2); }
+.share-tab:hover { color: var(--c-text); }
+.share-tab[aria-selected=true] { color: var(--c-brand-text); font-weight: 600; }
+.share-tab[aria-selected=true]::after { content: ""; position: absolute; left: 0; right: 0; bottom: -2px; height: 2px; border-radius: 1px; background: var(--c-brand); }
+.share-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; max-height: 300px; margin: 0 -8px; padding: 4px 8px; overflow-y: auto; }
+.share-item { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; padding: 0; background: none; }
+.share-thumb { width: 100%; aspect-ratio: 16 / 9; border-radius: 10px; border: 2px solid transparent; background: linear-gradient(135deg, var(--c-fill), rgba(69, 166, 247, .18)); }
+.share-item:hover .share-thumb { border-color: var(--c-line); }
+.share-item[aria-selected=true] .share-thumb { border-color: var(--c-brand); }
+.share-name { max-width: 100%; font-size: 14px; color: var(--c-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 20px; }
+.share-foot .dialog-actions { margin-top: 0; }
+.share-check { display: flex; align-items: center; gap: 8px; padding: 0; font-size: 14px; color: var(--c-text-2); background: none; }
+.share-check:hover { color: var(--c-text); }
+.check-box { display: flex; align-items: center; justify-content: center; width: 16px; height: 16px; border: 1.5px solid var(--c-text-3); border-radius: 4px; color: #fff; }
+.check-box.on { border-color: var(--c-brand); background: var(--c-brand); }
+.share-quality { display: flex; flex-direction: column; gap: 20px; padding: 4px 0; }
+.share-label { margin-bottom: 8px; font-size: 13px; font-weight: 600; color: var(--c-text-3); }
+.share-opts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+.share-opt { display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 14px; font-size: 14px; color: var(--c-text); border: 1.5px solid var(--c-line); border-radius: 10px; background: none; }
+.share-opt:hover { background: var(--c-hover); }
+.share-opt[aria-checked="true"] { border-color: var(--c-brand); }
+.share-opt[aria-checked="true"] .audio-radio { border: 4px solid var(--c-brand); }
 .access-note { padding: 12px 16px; color: var(--c-text-2); font-size: 13px; }
 
 /* 麦克风与耳机：悬停音量条与右键设备菜单 */

@@ -8,6 +8,7 @@ import MemberPane from "./components/layout/MemberPane";
 import Login from "./components/auth/Login";
 import Settings from "./components/settings/Settings";
 import PasswordPrompt from "./components/layout/PasswordPrompt";
+import ScreenSharePicker from "./components/layout/ScreenSharePicker";
 import ConnectionBar from "./components/common/ConnectionBar";
 import { TipLayer } from "./components/common/Tip";
 import { loadAudioPrefs } from "./stores/voice";
@@ -81,6 +82,7 @@ export default function App() {
           </div>
           <Show when={ui.settings}><Settings /></Show>
           <PasswordPrompt />
+          <ScreenSharePicker />
         </Match>
       </Switch>
       <Show when={session.error}>
