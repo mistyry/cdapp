@@ -4,7 +4,7 @@ import { Portal } from "solid-js/web";
 import { AudioLines, Check, ChevronRight, Volume2, CircleHelp, Headphones, HeadphoneOff, Menu, Mic, MicOff, Monitor, PhoneOff, Settings, UserPlus, X } from "lucide-solid";
 import type { Channel } from "../../stores/types";
 import { accessState, dropSelfFromVoice, enterVoice, loadDms, permsOf, retryAccess, selectChannel, selectDm, session, visible, voiceBlock } from "../../stores/session";
-import { canRejoin, denoise, setDenoise, dismissVoice, isSpeaking, disconnectVoice, mic, micFailed, output, peerDenoised, setPeerDenoise, setPeerVolume, toggleDeafen, togglePeerMute, toggleMic, voice, voiceActive, voiceStatusText, volumeOf, type VoicePeer } from "../../stores/voice";
+import { canGoLive, canRejoin, denoise, setDenoise, dismissVoice, isSpeaking, disconnectVoice, mic, micFailed, output, peerDenoised, setPeerDenoise, setPeerVolume, toggleDeafen, togglePeerMute, toggleMic, voice, voiceActive, voiceStatusText, volumeOf, type VoicePeer } from "../../stores/voice";
 import { DM_VIEW, currentChannelId, currentChatCode, ui, setUi } from "../../stores/ui";
 import RangeSlider from "../common/RangeSlider";
 import Avatar from "../common/Avatar";
@@ -402,7 +402,7 @@ function VoiceBox() {
       </Show>
       <Show when={voiceActive()}>
         <div class="voice-share">
-          <button class="share-btn" onClick={openSharePicker}><Monitor size={18} />屏幕共享</button>
+          <button class="share-btn" disabled={!canGoLive()} onClick={openSharePicker}><Monitor size={18} />屏幕共享</button>
         </div>
       </Show>
       <div class="voice-ctrls" ref={ctrls}>

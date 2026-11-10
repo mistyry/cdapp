@@ -187,6 +187,7 @@ pub fn run() {
             commands::voice_join,
             commands::voice_leave,
             commands::voice_wake,
+            commands::golive_allowed,
             commands::voice_set_mic,
             commands::audio_inputs,
             commands::set_audio_input,

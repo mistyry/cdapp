@@ -978,6 +978,37 @@ impl Api {
             .await?;
         str_field(&data, "gateway_url")
     }
+
+    /// 本人是否拥有有效的屏幕分享会员。
+    ///
+    /// # Errors
+    ///
+    /// 请求失败时返回错误。
+    pub async fn golive_owned(&self) -> AppResult<bool> {
+        let data = self.get("/api/v3/product/golive-info", &()).await?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        Ok(golive_active(&data, now))
+    }
+}
+
+/// 屏幕分享标准版与专业版的商品 ID。
+const GOLIVE_ITEMS: [i64; 2] = [10015, 10016];
+
+/// 任一版本的到期时间晚于 `now` 即可开播。`expire` 为 Unix 秒，未购买为 0。
+fn golive_active(data: &Value, now: u64) -> bool {
+    data.get("items")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|i| {
+            i.get("id")
+                .and_then(Value::as_i64)
+                .is_some_and(|id| GOLIVE_ITEMS.contains(&id))
+        })
+        .filter_map(|i| i.get("expire").and_then(Value::as_u64))
+        .any(|e| e > now)
 }
 
 pub(crate) fn str_field(v: &Value, key: &str) -> AppResult<String> {
@@ -990,6 +1021,20 @@ pub(crate) fn str_field(v: &Value, key: &str) -> AppResult<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn golive_owned_by_expire() {
+        let info = |std: u64, pro: u64| json!({ "items": [{ "id": 10015, "expire": std }, { "id": 10016, "expire": pro }] });
+        assert!(!golive_active(&info(0, 0), 100));
+        assert!(golive_active(&info(200, 0), 100));
+        assert!(golive_active(&info(0, 200), 100));
+        assert!(!golive_active(&info(50, 0), 100));
+        assert!(!golive_active(
+            &json!({ "items": [{ "id": 1, "expire": 200 }] }),
+            100
+        ));
+        assert!(!golive_active(&json!({}), 100));
+    }
 
     #[test]
     fn upload_size_checked_locally() {

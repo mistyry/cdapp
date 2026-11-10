@@ -205,12 +205,17 @@ function ensureListener() {
   return listening;
 }
 
+// 能否开启屏幕分享。加入语音时在后台查询，结果返回前与查询失败时视为不能。
+export const [canGoLive, setCanGoLive] = createSignal(false);
+
 // 加入语音频道。已在该频道时不重复加入，在其他频道时由后端先退出旧频道。
 // 权限由调用方（session/access.ts 的 enterVoice）先行判断；password 只用于本次请求。
 export async function joinVoice(channelId: string, password: string | null = null) {
   if (voiceActive() && voice.channelId === channelId) return;
   if (micTest.on) { ++testSeq; setMicTest({ on: false, level: 0 }); }
   const my = ++seq;
+  setCanGoLive(false);
+  api.goliveAllowed().then((ok) => { if (my === seq) setCanGoLive(ok); }, () => {});
   setKookFallback(false);
   joining = true;
   wanted = null;
@@ -249,6 +254,7 @@ export async function joinVoice(channelId: string, password: string | null = nul
 // 退出语音。界面立即复位，不等待后端释放完成。
 export async function leaveVoice() {
   const my = ++seq;
+  setCanGoLive(false);
   joining = false;
   wanted = null;
   wantedDeaf = null;
@@ -330,6 +336,7 @@ export function dismissVoice() {
 // 退出登录时重置全部语音状态与偏好。
 export function resetVoice() {
   seq++;
+  setCanGoLive(false);
   joining = false;
   wanted = null;
   wantedDeaf = null;

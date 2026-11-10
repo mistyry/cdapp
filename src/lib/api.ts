@@ -154,6 +154,7 @@ export const api = {
   voiceLeave: (request?: number) => invoke<void>("voice_leave", { request: request ?? null }),
   // 通知语音会话系统已唤醒或网络已恢复。
   voiceWake: () => invoke<void>("voice_wake"),
+  goliveAllowed: () => invoke<boolean>("golive_allowed"),
   voiceSetMic: (generation: number, paused: boolean) => invoke<void>("voice_set_mic", { generation, paused }),
   // 列出输入设备，不打开设备，不触发系统权限请求。
   audioInputs: () => invoke<{ devices: InputDevice[]; selected: string | null }>("audio_inputs"),

@@ -10,6 +10,12 @@ use crate::error::{AppError, AppResult};
 use crate::kook::gate::Need;
 use crate::kook::voice::{EndReason, MicPrefs, Sink, VoiceEvent, VoiceSession};
 
+/// 本人能否开启屏幕分享。服务端只在开播时校验会员，这里按会员到期时间预判。
+#[tauri::command]
+pub async fn golive_allowed(state: State<'_, Mutex<AppState>>) -> AppResult<bool> {
+    api(&state)?.golive_owned().await
+}
+
 /// 通知当前语音会话系统已唤醒或网络已恢复。
 #[tauri::command]
 pub async fn voice_wake(voice: State<'_, VoiceState>) -> AppResult<()> {
