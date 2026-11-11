@@ -92,6 +92,9 @@ export type StorageInfo = {
   cacheBytes: number;
 };
 
+// 后端 commands::share::ShareSdk。
+export type ShareSdk = { status: "ready"; version: string } | { status: "unavailable"; message: string };
+
 export const api = {
   storageInfo: () => invoke<StorageInfo>("storage_info"),
   storageRelocate: (path: string) => invoke<void>("storage_relocate", { path }),
@@ -105,6 +108,7 @@ export const api = {
   soundSync: (progress: Channel<{ done: number; total: number }>) =>
     invoke<{ total: number; downloaded: number; failed: number }>("sound_sync", { progress }),
   denoiseSync: () => invoke<void>("denoise_sync"),
+  shareSdkSync: () => invoke<ShareSdk>("share_sdk_sync"),
   loginQrCode: () => invoke<string>("login_qr_code"),
   loginQrPoll: (content: string) => invoke<QrStatus>("login_qr_poll", { content }),
   loginQrCancel: (content: string) => invoke<void>("login_qr_cancel", { content }),

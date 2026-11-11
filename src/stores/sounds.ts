@@ -1,6 +1,10 @@
+import { createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
 import { Channel } from "@tauri-apps/api/core";
 import { api } from "../lib/api";
+
+// 屏幕分享组件是否已加载。下载或校验失败时为 false，开播不可用。
+export const [shareSdkReady, setShareSdkReady] = createSignal(false);
 
 // 启动时的音效缓存。checking 检查索引；downloading 下载缺少的文件；done 结束，失败不阻塞启动。
 export const [sounds, setSounds] = createStore({
@@ -14,7 +18,8 @@ export async function syncSounds() {
   setSounds({ stage: "checking", done: 0, total: 0 });
   const progress = new Channel<{ done: number; total: number }>();
   progress.onmessage = (p) => setSounds({ stage: p.total > 0 && p.done < p.total ? "downloading" : "checking", done: p.done, total: p.total });
-  // 降噪模块与音效同时缓存，失败时下次启动再下载。
+  // 降噪模块与音效同时缓存，失败时下次启动再下载。屏幕分享组件在后台下载，不阻塞启动。
+  void api.shareSdkSync().then((s) => setShareSdkReady(s.status === "ready"), () => {});
   await Promise.all([api.soundSync(progress).catch(() => {}), api.denoiseSync().catch(() => {})]);
   setSounds("stage", "done");
 }
