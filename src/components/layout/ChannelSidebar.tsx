@@ -418,7 +418,6 @@ function VoiceBox() {
               <button class="share-stop" data-tip="停止共享" aria-label="停止共享" onClick={() => void stopShare()}><X size={18} /></button>
             </div>
           </Show>
-          <Show when={share.error}>{(m) => <div class="share-error" role="alert">{m()}</div>}</Show>
         </div>
       </Show>
       <div class="voice-ctrls" ref={ctrls}>

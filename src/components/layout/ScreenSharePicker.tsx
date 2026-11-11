@@ -2,15 +2,12 @@ import { For, Show, createResource, createSignal, onCleanup } from "solid-js";
 import { Check, Monitor, X } from "lucide-solid";
 import type { ShareSource } from "../../lib/api";
 import { api } from "../../lib/api";
-import { FRAME_RATES, RESOLUTIONS, clearShareError, loadSources, share, sharing, startShare, updateShare } from "../../stores/share";
+import { FRAME_RATES, RESOLUTIONS, loadSources, share, sharing, startShare, updateShare } from "../../stores/share";
 
 type Tab = "screen" | "window";
 
 const [open, setOpen] = createSignal(false);
-export const openSharePicker = () => {
-  clearShareError();
-  setOpen(true);
-};
+export const openSharePicker = () => setOpen(true);
 
 // 缩略图按需取，同一次打开内缓存。源句柄只在本次运行中有效，关闭对话框即丢弃。
 function Thumb(props: { source: ShareSource }) {

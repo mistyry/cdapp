@@ -373,6 +373,8 @@ pub enum Event {
         state: i32,
         error: i32,
     },
+    /// 共享的窗口已销毁。
+    SourceGone,
 }
 
 fn event(kind: i32, a: i32, b: i32, c: i32, d: i32) -> Option<Event> {
@@ -396,6 +398,7 @@ fn event(kind: i32, a: i32, b: i32, c: i32, d: i32) -> Option<Event> {
         },
         6 => Event::Error(a),
         7 => Event::VideoState { state: a, error: b },
+        8 => Event::SourceGone,
         _ => return None,
     })
 }
@@ -570,6 +573,7 @@ mod tests {
             })
         );
         assert_eq!(event(4, 0, 0, 0, 0), Some(Event::TokenWillExpire));
+        assert_eq!(event(8, 0, 0, 0, 0), Some(Event::SourceGone));
         assert_eq!(event(99, 0, 0, 0, 0), None);
     }
 

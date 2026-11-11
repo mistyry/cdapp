@@ -33,7 +33,7 @@ mod win {
     use crate::error::{AppError, AppResult};
     use crate::kook::golive::Tier;
     use crate::share::bridge::{self, Source, SourceKind};
-    use crate::share::session::{Request, Session, ShareEvent, Sink, VoiceAlive};
+    use crate::share::session::{Request, Session, ShareEvent, Sink};
 
     /// 当前推流会话与代次。停止需跨 await 等待引擎销毁，因此使用 tokio 锁。
     #[derive(Default)]
@@ -139,16 +139,17 @@ mod win {
                 .to_owned();
             (me, guild)
         };
-        let in_voice = voice
-            .0
-            .lock()
-            .await
-            .session
-            .as_ref()
-            .is_some_and(|s| s.channel_id == params.channel_id && !s.is_finished());
-        if !in_voice {
-            return Err(AppError::Other("请先加入该语音频道".into()));
-        }
+        let voice_ended = {
+            let slot = voice.0.lock().await;
+            match slot
+                .session
+                .as_ref()
+                .filter(|s| s.channel_id == params.channel_id && !s.is_finished())
+            {
+                Some(s) => s.ended(),
+                None => return Err(AppError::Other("请先加入该语音频道".into())),
+            }
+        };
         let vendor = api.golive_vendor(&guild, &params.channel_id, &me).await?;
         if vendor != "volc" {
             return Err(AppError::Other("当前账号分配的分享服务暂不支持".into()));
@@ -159,27 +160,10 @@ mod win {
         }
         slot.generation += 1;
         let generation = slot.generation;
-        let app_handle = app.clone();
         let sink: Sink = Arc::new(move |event| {
             if let Err(e) = app.emit("share://event", SharePayload { generation, event }) {
                 log::warn!("事件广播失败：{e}");
             }
-        });
-        // 分享依附语音：语音会话结束、切到其他频道或断开时，推流随之结束。
-        let (handle, channel) = (app_handle.clone(), params.channel_id.clone());
-        let voice_alive: VoiceAlive = Arc::new(move || {
-            let (handle, channel) = (handle.clone(), channel.clone());
-            Box::pin(async move {
-                use tauri::Manager;
-                handle
-                    .state::<VoiceState>()
-                    .0
-                    .lock()
-                    .await
-                    .session
-                    .as_ref()
-                    .is_some_and(|s| s.channel_id == channel && !s.is_finished())
-            })
         });
         slot.session = Some(Session::start(
             api,
@@ -198,7 +182,8 @@ mod win {
             },
             generation,
             sink,
-            voice_alive,
+            // 分享依附语音：语音会话结束即结束推流。切换频道与退出前另有 stop_share。
+            Box::pin(voice_ended.wait()),
         ));
         Ok(generation)
     }

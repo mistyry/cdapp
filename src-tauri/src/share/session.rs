@@ -15,8 +15,6 @@ use crate::kook::golive::Tier;
 
 /// 进房与首帧的等待上限。
 const READY_TIMEOUT: Duration = Duration::from_secs(15);
-/// 检查语音会话的间隔。KOOK 语音断开后服务端约 3 至 6 秒结束分享，本地先停。
-const VOICE_CHECK: Duration = Duration::from_secs(1);
 /// 令牌续期兜底间隔。令牌 24 小时有效，SDK 在到期前提示。
 const REFRESH_EVERY: Duration = Duration::from_secs(12 * 3600);
 /// 本地视频流状态：采集失败。
@@ -79,7 +77,11 @@ impl Request {
 
 /// 上报给前端的事件。
 #[derive(Debug, Clone, Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum ShareEvent {
     /// 已发布，附实际编码尺寸。
     Live { width: u32, height: u32 },
@@ -103,10 +105,8 @@ pub enum ShareEvent {
 
 pub type Sink = std::sync::Arc<dyn Fn(ShareEvent) + Send + Sync>;
 
-/// 语音会话是否仍在该频道。分享依附语音，返回 false 时结束推流。
-pub type VoiceAlive = std::sync::Arc<
-    dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send>> + Send + Sync,
->;
+/// 语音会话结束时完成。分享依附语音，完成即结束推流。
+pub type VoiceEnded = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
 
 /// 会话句柄。
 pub struct Session {
@@ -119,13 +119,13 @@ pub struct Session {
 
 impl Session {
     #[must_use]
-    pub fn start(api: Api, req: Request, generation: u64, sink: Sink, voice: VoiceAlive) -> Self {
+    pub fn start(api: Api, req: Request, generation: u64, sink: Sink, voice: VoiceEnded) -> Self {
         let (stop, stop_rx) = oneshot::channel();
         let (control, control_rx) = mpsc::unbounded_channel();
         let channel_id = req.channel_id.clone();
         let done = tauri::async_runtime::spawn(async move {
             let mut push = Push::default();
-            let r = run(&api, req, stop_rx, control_rx, &sink, &voice, &mut push).await;
+            let r = run(&api, req, stop_rx, control_rx, &sink, voice, &mut push).await;
             // 无论从哪条路径结束，先停声音推送，再在阻塞线程中销毁引擎。
             let (sound, live) = (push.sound.take(), push.live.take());
             let _ = tauri::async_runtime::spawn_blocking(move || {
@@ -247,7 +247,7 @@ async fn run(
     mut stop: oneshot::Receiver<()>,
     mut control: mpsc::UnboundedReceiver<Control>,
     sink: &Sink,
-    voice: &VoiceAlive,
+    mut voice: VoiceEnded,
     push: &mut Push,
 ) -> AppResult<()> {
     let Some(mut events) = begin(api, &req, &mut stop, push).await? else {
@@ -263,16 +263,10 @@ async fn run(
 
     let mut refresh = tokio::time::interval(REFRESH_EVERY);
     refresh.tick().await;
-    let mut voice_check = tokio::time::interval(VOICE_CHECK);
     loop {
         let renew = tokio::select! {
             _ = &mut stop => return Ok(()),
-            _ = voice_check.tick() => {
-                if !voice().await {
-                    return Err(AppError::Other("已退出语音频道".into()));
-                }
-                false
-            }
+            () = &mut voice => return Err(AppError::Other("已退出语音频道".into())),
             _ = refresh.tick() => true,
             c = control.recv() => match c {
                 Some(Control::Update(tier, reply)) => {
@@ -368,6 +362,7 @@ async fn on_event(
             state: VIDEO_FAILED,
             error,
         }) => return Err(AppError::Other(format!("屏幕采集已停止：{error}"))),
+        Some(Event::SourceGone) => return Err(AppError::Other("共享的窗口已关闭".into())),
         Some(Event::RoomState(code)) => match room_action(code) {
             RoomAction::Ignore => {}
             RoomAction::Renew => {
@@ -463,6 +458,19 @@ async fn begin(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn events_use_camel_case_fields() {
+        let v = serde_json::to_value(ShareEvent::Tier {
+            resolution: 1080,
+            frame_rate: 60,
+            width: 1920,
+            height: 1080,
+        })
+        .unwrap();
+        assert_eq!(v["kind"], "tier");
+        assert_eq!(v["frameRate"], 60);
+    }
 
     #[test]
     fn classifies_room_codes() {

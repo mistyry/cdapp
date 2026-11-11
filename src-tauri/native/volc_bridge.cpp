@@ -79,6 +79,62 @@ struct RoomHandler : IRTCRoomEventHandler {
     }
 } g_room_handler;
 
+// 推流期间的系统窗口事件钩子，在 SDK 线程注册，回调经该线程的消息循环触发。
+HWINEVENTHOOK g_hook_destroy = nullptr;
+HWINEVENTHOOK g_hook_show = nullptr;
+// 窗口共享时的目标窗口，显示器共享为空。只在 SDK 线程读写。
+HWND g_source_window = nullptr;
+
+// SDK 的采集边框是本进程的分层窗口，固定透明度 128，HighlightConfig 没有对应设置。
+// 只改透明度为不透明，透明色与标志沿用 SDK 的设置，边框内部仍然透明。
+void make_opaque(HWND hwnd) {
+    wchar_t cls[64];
+    if (!GetClassNameW(hwnd, cls, ARRAYSIZE(cls)) || lstrcmpW(cls, L"ByteRTCTransparentWindow") != 0) return;
+    COLORREF key = 0;
+    BYTE alpha = 0;
+    DWORD flags = 0;
+    if (GetLayeredWindowAttributes(hwnd, &key, &alpha, &flags) && alpha != 255)
+        SetLayeredWindowAttributes(hwnd, key, 255, flags | LWA_ALPHA);
+}
+
+BOOL CALLBACK opaque_existing(HWND hwnd, LPARAM) {
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (pid == GetCurrentProcessId()) make_opaque(hwnd);
+    return TRUE;
+}
+
+void CALLBACK on_win_event(HWINEVENTHOOK hook, DWORD event, HWND hwnd, LONG obj, LONG, DWORD, DWORD) {
+    if (obj != OBJID_WINDOW || !hwnd) return;
+    if (hook == g_hook_destroy && event == EVENT_OBJECT_DESTROY && hwnd == g_source_window) {
+        g_source_window = nullptr;
+        emit(VOLC_EV_SOURCE_GONE);
+    } else if (hook == g_hook_show && event == EVENT_OBJECT_SHOW) {
+        make_opaque(hwnd);
+    }
+}
+
+// 开始采集后在 SDK 线程调用。边框窗口可能已在采集调用中创建，先处理一遍已有窗口。
+void hook_windows(HWND source) {
+    g_source_window = source;
+    if (source) {
+        DWORD pid = 0;
+        GetWindowThreadProcessId(source, &pid);
+        g_hook_destroy = SetWinEventHook(EVENT_OBJECT_DESTROY, EVENT_OBJECT_DESTROY, nullptr, on_win_event, pid, 0,
+                                         WINEVENT_OUTOFCONTEXT);
+    }
+    g_hook_show = SetWinEventHook(EVENT_OBJECT_SHOW, EVENT_OBJECT_SHOW, nullptr, on_win_event, GetCurrentProcessId(),
+                                  0, WINEVENT_OUTOFCONTEXT);
+    EnumWindows(opaque_existing, 0);
+}
+
+void unhook_windows() {
+    if (g_hook_destroy) UnhookWinEvent(g_hook_destroy);
+    if (g_hook_show) UnhookWinEvent(g_hook_show);
+    g_hook_destroy = g_hook_show = nullptr;
+    g_source_window = nullptr;
+}
+
 // 投递到 SDK 线程的调用。
 struct Call {
     void (*fn)(void*);
@@ -151,6 +207,7 @@ void apply_log() {
 
 // 停止推流的全部步骤，只在 SDK 线程调用。
 void teardown() {
+    unhook_windows();
     if (g_room) {
         if (g_published) g_room->unpublishScreen(g_media);
         g_room->leaveRoom();
@@ -506,6 +563,7 @@ extern "C" int32_t volc_live_start(const volc_live* live, volc_event_fn cb, void
             rc = VOLC_ERR_CAPTURE;
             return;
         }
+        hook_windows(src.type == kScreenCaptureSourceTypeWindow ? reinterpret_cast<HWND>(src.source_id) : nullptr);
         rc = VOLC_OK;
     };
     on_sdk(f);

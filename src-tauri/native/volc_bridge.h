@@ -41,6 +41,8 @@ enum {
     VOLC_EV_ERROR = 6,
     // a 为本地视频流状态，b 为错误码。窗口关闭等采集失败由此上报。
     VOLC_EV_VIDEO_STATE = 7,
+    // 共享的窗口已销毁。由系统窗口事件触发，SDK 不一定上报采集失败。
+    VOLC_EV_SOURCE_GONE = 8,
 };
 
 typedef void (*volc_event_fn)(void* user, int32_t kind, int32_t a, int32_t b, int32_t c, int32_t d);

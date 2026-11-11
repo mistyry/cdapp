@@ -10,10 +10,10 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use windows::Win32::Foundation::WAIT_OBJECT_0;
+use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
 use windows::Win32::Media::Audio::{
-    AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK,
-    AUDIOCLIENT_ACTIVATION_PARAMS, AUDIOCLIENT_ACTIVATION_PARAMS_0,
+    AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+    AUDCLNT_STREAMFLAGS_LOOPBACK, AUDIOCLIENT_ACTIVATION_PARAMS, AUDIOCLIENT_ACTIVATION_PARAMS_0,
     AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK, AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS,
     ActivateAudioInterfaceAsync, IActivateAudioInterfaceCompletionHandler, IAudioCaptureClient,
     IAudioClient, PROCESS_LOOPBACK_MODE, PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE,
@@ -24,7 +24,9 @@ use windows::Win32::System::Com::StructuredStorage::{
     PROPVARIANT, PROPVARIANT_0, PROPVARIANT_0_0, PROPVARIANT_0_0_0,
 };
 use windows::Win32::System::Com::{BLOB, COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize};
-use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
+use windows::Win32::System::Threading::{
+    CreateEventW, INFINITE, SetEvent, WaitForMultipleObjects, WaitForSingleObject,
+};
 use windows::Win32::System::Variant::VT_BLOB;
 use windows::core::Interface;
 
@@ -77,7 +79,31 @@ impl Ring {
 /// 采集与推送两个线程。释放时停止并等待退出。
 pub struct Loopback {
     running: Arc<AtomicBool>,
+    /// 唤醒采集线程退出，采集线程平时等待系统的数据就绪事件。
+    wake: Arc<Wake>,
     threads: Vec<JoinHandle<()>>,
+}
+
+/// 手动重置事件，释放时关闭。
+struct Wake(HANDLE);
+
+// SAFETY: 事件句柄可在线程间共享。
+unsafe impl Send for Wake {}
+// SAFETY: 同上，SetEvent 与等待均为线程安全操作。
+unsafe impl Sync for Wake {}
+
+impl Wake {
+    fn new() -> windows::core::Result<Self> {
+        // SAFETY: 无名手动重置事件。
+        Ok(Self(unsafe { CreateEventW(None, true, false, None)? }))
+    }
+}
+
+impl Drop for Wake {
+    fn drop(&mut self) {
+        // SAFETY: 句柄由 CreateEventW 创建，此处唯一一次关闭。
+        let _ = unsafe { CloseHandle(self.0) };
+    }
 }
 
 /// 推送前的声音观察者。
@@ -94,32 +120,52 @@ impl Loopback {
     pub fn start(scope: Scope, push: impl Fn(&[i16]) + Send + 'static) -> Self {
         let running = Arc::new(AtomicBool::new(true));
         let ring = Arc::new(Mutex::new(Ring::default()));
-        let (r, q) = (running.clone(), ring.clone());
-        let capture = std::thread::Builder::new()
-            .name("share-loopback".into())
-            .spawn(move || {
-                if let Err(e) = capture(scope, &r, &q) {
-                    log::warn!("屏幕声音采集失败：{e}");
-                }
-            });
+        let mut threads = Vec::new();
+        let wake = match Wake::new() {
+            Ok(w) => Some(Arc::new(w)),
+            Err(e) => {
+                log::warn!("屏幕声音采集失败：{e}");
+                None
+            }
+        };
+        if let Some(w) = &wake {
+            let (r, q, w) = (running.clone(), ring.clone(), w.clone());
+            let capture = std::thread::Builder::new()
+                .name("share-loopback".into())
+                .spawn(move || {
+                    if let Err(e) = capture(scope, &r, &q, &w) {
+                        log::warn!("屏幕声音采集失败：{e}");
+                    }
+                });
+            threads.push(capture);
+        }
         let (r, q) = (running.clone(), ring);
         let pusher = std::thread::Builder::new()
             .name("share-audio-push".into())
             .spawn(move || pump(&r, &q, &push));
-        let threads = [capture, pusher]
+        threads.push(pusher);
+        let threads = threads
             .into_iter()
             .filter_map(|t| {
                 t.inspect_err(|e| log::warn!("屏幕声音线程启动失败：{e}"))
                     .ok()
             })
             .collect();
-        Self { running, threads }
+        Self {
+            running,
+            wake: wake.unwrap_or_else(|| Arc::new(Wake(HANDLE::default()))),
+            threads,
+        }
     }
 }
 
 impl Drop for Loopback {
     fn drop(&mut self) {
         self.running.store(false, Ordering::SeqCst);
+        if !self.wake.0.is_invalid() {
+            // SAFETY: 事件有效，唤醒采集线程退出。
+            let _ = unsafe { SetEvent(self.wake.0) };
+        }
         for t in self.threads.drain(..) {
             let _ = t.join();
         }
@@ -235,7 +281,7 @@ fn activate(scope: Scope) -> windows::core::Result<IAudioClient> {
     // SAFETY: done 有效。
     let waited = unsafe { WaitForSingleObject(done, ACTIVATE_TIMEOUT_MS) };
     // SAFETY: done 不再使用。
-    let _ = unsafe { windows::Win32::Foundation::CloseHandle(done) };
+    let _ = unsafe { CloseHandle(done) };
     if waited != WAIT_OBJECT_0 {
         return Err(windows::core::Error::from_hresult(
             windows::Win32::Foundation::E_FAIL,
@@ -251,19 +297,26 @@ fn activate(scope: Scope) -> windows::core::Result<IAudioClient> {
 }
 
 /// 采集线程。COM 须在 MTA 中初始化，激活回调在 MTA 线程触发。
-fn capture(scope: Scope, running: &AtomicBool, ring: &Mutex<Ring>) -> windows::core::Result<()> {
+fn capture(
+    scope: Scope,
+    running: &AtomicBool,
+    ring: &Mutex<Ring>,
+    wake: &Wake,
+) -> windows::core::Result<()> {
     // SAFETY: 本线程首次初始化 COM，退出前对应调用 CoUninitialize。
     unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).ok()? };
-    let r = capture_loop(scope, running, ring);
+    let r = capture_loop(scope, running, ring, wake);
     // SAFETY: 与上面的 CoInitializeEx 配对。COM 对象已在 capture_loop 中释放。
     unsafe { CoUninitialize() };
     r
 }
 
+/// 事件模式：系统在有新数据时置位 `ready`，停止时由 `wake` 唤醒，不轮询。
 fn capture_loop(
     scope: Scope,
     running: &AtomicBool,
     ring: &Mutex<Ring>,
+    wake: &Wake,
 ) -> windows::core::Result<()> {
     let client = activate(scope)?;
     let wf = format();
@@ -272,20 +325,29 @@ fn capture_loop(
     unsafe {
         client.Initialize(
             AUDCLNT_SHAREMODE_SHARED,
-            AUDCLNT_STREAMFLAGS_LOOPBACK,
+            AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
             2_000_000,
             0,
             &raw const wf,
             None,
         )?;
     }
+    let ready = Wake::new()?;
+    // SAFETY: 已初始化，事件在客户端释放前有效。
+    unsafe { client.SetEventHandle(ready.0)? };
     // SAFETY: 已初始化。
     let cap: IAudioCaptureClient = unsafe { client.GetService()? };
     // SAFETY: 已初始化。
     unsafe { client.Start()? };
     log::info!("屏幕声音采集已开始：{scope:?}");
     let silent = u32::try_from(AUDCLNT_BUFFERFLAGS_SILENT.0).unwrap_or(2);
+    let handles = [ready.0, wake.0];
     while running.load(Ordering::SeqCst) {
+        // SAFETY: 两个事件均有效。
+        let got = unsafe { WaitForMultipleObjects(&handles, false, INFINITE) };
+        if got != WAIT_OBJECT_0 {
+            break;
+        }
         // SAFETY: 采集客户端有效，GetBuffer 与 ReleaseBuffer 成对调用。
         unsafe {
             while cap.GetNextPacketSize()? > 0 {
@@ -310,7 +372,6 @@ fn capture_loop(
                 cap.ReleaseBuffer(frames)?;
             }
         }
-        std::thread::sleep(Duration::from_millis(5));
     }
     // SAFETY: 已开始。
     let _ = unsafe { client.Stop() };

@@ -11,8 +11,21 @@ use super::{
 pub struct VoiceSession {
     pub(super) ctl: mpsc::UnboundedSender<Ctl>,
     pub(super) done: tauri::async_runtime::JoinHandle<()>,
+    /// 会话任务结束时置 true；任务被中止时发送端随之释放。
+    pub(super) ended: tokio::sync::watch::Receiver<bool>,
     pub channel_id: String,
     pub generation: u64,
+}
+
+/// 语音会话结束信号。
+#[derive(Clone)]
+pub struct VoiceEnded(tokio::sync::watch::Receiver<bool>);
+
+impl VoiceEnded {
+    /// 等待会话结束：任务正常结束、被中止或句柄已释放都返回。
+    pub async fn wait(mut self) {
+        let _ = self.0.wait_for(|e| *e).await;
+    }
 }
 
 impl VoiceSession {
@@ -33,13 +46,25 @@ impl VoiceSession {
     ) -> Self {
         let (ctl, rx) = mpsc::unbounded_channel();
         let prefs = Arc::new(Mutex::new(mic));
-        let done = tauri::async_runtime::spawn(drive(api, channel_id.clone(), rx, sink, prefs));
+        let (ended_tx, ended) = tokio::sync::watch::channel(false);
+        let task = drive(api, channel_id.clone(), rx, sink, prefs);
+        let done = tauri::async_runtime::spawn(async move {
+            task.await;
+            let _ = ended_tx.send(true);
+        });
         Self {
             ctl,
             done,
+            ended,
             channel_id,
             generation,
         }
+    }
+
+    /// 会话结束时完成，供依附语音的屏幕分享等待。中止或结束都会触发。
+    #[must_use]
+    pub fn ended(&self) -> VoiceEnded {
+        VoiceEnded(self.ended.clone())
     }
 
     /// 退出并等待释放，最多 3 秒。超时后中止会话任务，不让旧会话继续运行。

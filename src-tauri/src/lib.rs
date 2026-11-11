@@ -228,6 +228,12 @@ pub fn run() {
             commands::audio_prefs,
             commands::set_voice_switches,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|app, event| {
+            // 进程退出前停止屏幕分享并离开分享房间，观看端立即结束，不等服务端超时。
+            if let tauri::RunEvent::Exit = event {
+                tauri::async_runtime::block_on(commands::stop_share(app));
+            }
+        });
 }

@@ -1,10 +1,11 @@
 import { createStore } from "solid-js/store";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { api, errorText, type ShareEvent, type ShareSource } from "../lib/api";
+import { api } from "../lib/api";
+import type { ShareEvent, ShareSource } from "../lib/api";
 import { voice } from "./voice";
 
 // 屏幕分享状态。idle 未分享；starting 已发出开播，等待发布；live 推流中。
-// ended 后回到 idle，结束原因保留在 error，下次打开选源时清除。
+// 结束、开播失败与改档失败只回到对应状态，不显示文字，原因由后端写入日志。
 type Phase = "idle" | "starting" | "live";
 type State = {
   phase: Phase;
@@ -18,7 +19,6 @@ type State = {
   height: number;
   kbps: number;
   fps: number;
-  error: string | null;
   // 改档请求进行中。
   updating: boolean;
 };
@@ -26,7 +26,7 @@ type State = {
 const IDLE: State = {
   phase: "idle", generation: 0, channelId: "", source: null,
   resolution: 720, frameRate: 30, audio: false,
-  width: 0, height: 0, kbps: 0, fps: 0, error: null, updating: false,
+  width: 0, height: 0, kbps: 0, fps: 0, updating: false,
 };
 
 export const [share, setShare] = createStore<State>({ ...IDLE });
@@ -67,7 +67,7 @@ function onShareEvent(p: Payload) {
       setShare({ kbps: e.kbps, fps: e.fps });
       break;
     case "ended":
-      setShare({ ...IDLE, resolution: share.resolution, frameRate: share.frameRate, error: e.message });
+      setShare({ ...IDLE, resolution: share.resolution, frameRate: share.frameRate });
       break;
   }
 }
@@ -97,7 +97,8 @@ export async function startShare(source: ShareSource, resolution: number, frameR
     for (const p of buffered) onShareEvent(p);
   } catch (e) {
     early = [];
-    setShare({ ...IDLE, resolution, frameRate, error: errorText(e) });
+    console.warn("屏幕分享开启失败", e);
+    setShare({ ...IDLE, resolution, frameRate });
   }
 }
 
@@ -114,14 +115,12 @@ export async function stopShare() {
 export async function updateShare(resolution: number, frameRate: number) {
   if (share.phase !== "live" || share.updating) return;
   if (resolution === share.resolution && frameRate === share.frameRate) return;
-  setShare({ updating: true, error: null });
+  setShare("updating", true);
   try {
     await api.shareUpdate(share.generation, resolution, frameRate);
   } catch (e) {
-    setShare("error", errorText(e));
+    console.warn("屏幕分享改档失败", e);
   } finally {
     setShare("updating", false);
   }
 }
-
-export const clearShareError = () => setShare("error", null);

@@ -9,9 +9,10 @@
 //!   `CDAPP_LIVE_OTHER_TONE` 频率的能量，检验是否排除本进程。
 //! - `CDAPP_LIVE_LIFECYCLE=1`：生命周期，需 `test-media`。推流中续期令牌，改为 720p30 再改回 1080p30，
 //!   最后模拟语音结束，确认推流随之结束。各步之间间隔 `CDAPP_LIVE_SECS` 的四分之一。
+//! - `CDAPP_LIVE_WINDOW`：按标题选窗口共享，优先于 `CDAPP_LIVE_SCREEN`。
+//! - `CDAPP_LIVE_EXPECT_GONE=1`：共享的窗口会在推流中途关闭，确认推流随之结束。
 #![cfg(windows)]
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -21,7 +22,7 @@ use cdapp_lib::share::bridge::{self, SourceKind};
 #[cfg(feature = "test-media")]
 use cdapp_lib::share::fit::fit;
 use cdapp_lib::share::sdk::{self, Status};
-use cdapp_lib::share::session::{Request, Session, ShareEvent, Sink, VoiceAlive};
+use cdapp_lib::share::session::{Request, Session, ShareEvent, Sink};
 
 fn env(key: &str) -> String {
     std::env::var(key)
@@ -94,7 +95,7 @@ async fn lifecycle(
     session: &Session,
     secs: u64,
     source: (u32, u32),
-    in_voice: &AtomicBool,
+    end_voice: tokio::sync::oneshot::Sender<()>,
     log: &Arc<Mutex<Vec<ShareEvent>>>,
 ) {
     let gap = Duration::from_secs((secs / 4).max(10));
@@ -120,7 +121,7 @@ async fn lifecycle(
     session.update(high).await.expect("改回 1080p 失败");
     println!("步骤 {}s 已改回 1080p30", at());
     tokio::time::sleep(gap).await;
-    in_voice.store(false, Ordering::SeqCst);
+    let _ = end_voice.send(());
     println!("步骤 {}s 模拟语音结束", at());
     for _ in 0..50 {
         if session.is_finished() {
@@ -209,12 +210,10 @@ fn pushes_primary_screen() {
             }
             l.lock().unwrap().push(e);
         });
-        // 测试进程没有 cdapp 的语音会话。语音实际由 voice.py 维持，这里用开关模拟其状态。
-        let in_voice = Arc::new(AtomicBool::new(true));
-        let v = in_voice.clone();
-        let voice: VoiceAlive = Arc::new(move || {
-            let alive = v.load(Ordering::SeqCst);
-            Box::pin(async move { alive })
+        // 测试进程没有 cdapp 的语音会话。语音实际由 voice.py 维持，这里用信号模拟其结束。
+        let (end_voice, voice_end) = tokio::sync::oneshot::channel::<()>();
+        let voice = Box::pin(async move {
+            let _ = voice_end.await;
         });
         let session = Session::start(
             Api::new(Some(env("CDAPP_LIVE_TOKEN"))).unwrap(),
@@ -241,10 +240,27 @@ fn pushes_primary_screen() {
                 &session,
                 secs,
                 (screen.width, screen.height),
-                &in_voice,
+                end_voice,
                 &log,
             )
             .await;
+            return;
+        }
+        // CDAPP_LIVE_EXPECT_GONE=1：共享目标窗口会在推流中途关闭，推流应随之结束。
+        if std::env::var("CDAPP_LIVE_EXPECT_GONE").is_ok_and(|v| v == "1") {
+            for _ in 0..secs * 10 {
+                if session.is_finished() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            let events = log.lock().unwrap();
+            assert!(
+                matches!(events.last(), Some(ShareEvent::Ended { message: Some(m) }) if m.contains("窗口")),
+                "{events:?}"
+            );
+            println!("推流已随窗口关闭结束");
+            drop(end_voice);
             return;
         }
         for _ in 0..secs / 5 {
@@ -269,6 +285,7 @@ fn pushes_primary_screen() {
             log.lock().unwrap()
         );
         session.stop().await;
+        drop(end_voice);
         let events = log.lock().unwrap();
         assert!(
             events.iter().any(|e| matches!(e, ShareEvent::Live { .. })),

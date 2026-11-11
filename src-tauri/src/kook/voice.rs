@@ -69,7 +69,7 @@ pub use self::event::{EndReason, Peer, PeerPatch, Phase, VoiceEvent};
 #[cfg(any(test, feature = "test-media"))]
 pub use self::prefs::{Fault, Tap};
 pub use self::prefs::{MicPrefs, Sink};
-pub use self::session::{VoiceControl, VoiceSession};
+pub use self::session::{VoiceControl, VoiceEnded, VoiceSession};
 
 use self::connect::{Live, Slots, attempt};
 use self::event::id_of;
