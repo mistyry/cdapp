@@ -4,6 +4,8 @@ mod commands;
 mod devshot;
 pub mod error;
 pub mod kook;
+#[cfg(windows)]
+pub mod share;
 pub mod storage;
 mod window_state;
 #[cfg(windows)]

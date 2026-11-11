@@ -682,6 +682,7 @@ dependencies = [
  "async-trait",
  "block2",
  "bytes",
+ "cc",
  "cpal",
  "flate2",
  "futures-util",
