@@ -7,18 +7,24 @@ import {
 
 export type AudioKind = "input" | "output";
 
-const volumeOf = (k: AudioKind) => (k === "input" ? output.gain : output.master);
-const setVolumeOf = (k: AudioKind, v: number) => void (k === "input" ? setMicGain(v) : setMasterVolume(v));
+export const volumeOf = (k: AudioKind) => (k === "input" ? output.gain : output.master);
+export const setVolumeOf = (k: AudioKind, v: number) => void (k === "input" ? setMicGain(v) : setMasterVolume(v));
 
-// 悬停在麦克风或耳机按钮上时显示的竖向音量条。拖动、点击轨道或方向键调节，双击恢复 100%。
+// 悬停在麦克风、耳机或成员音量按钮上时显示的竖向音量条。拖动、点击轨道或方向键调节，双击恢复 100%。
 // 百分比只在悬停手柄或拖动时以提示显示。
 // 只改变音量，不改变静音与耳机状态。
 export function VolumePop(p: { kind: AudioKind; onDrag: (dragging: boolean) => void }) {
+  return <VolumeTrack label={p.kind === "input" ? "麦克风音量" : "扬声器音量"} value={() => volumeOf(p.kind)} set={(v) => setVolumeOf(p.kind, v)} onDrag={p.onDrag} />;
+}
+
+export function VolumeTrack(p: { label: string; value: () => number; set: (v: number) => void; onDrag: (dragging: boolean) => void; class?: string; style?: Record<string, string> }) {
   const [drag, setDrag] = createSignal(false);
   const [onKnob, setOnKnob] = createSignal(false);
   let track!: HTMLDivElement;
-  const label = p.kind === "input" ? "麦克风音量" : "扬声器音量";
-  const pct = () => volumeOf(p.kind) / 2;
+  const label = p.label;
+  const value = p.value;
+  const set = (v: number) => p.set(v);
+  const pct = () => value() / 2;
   const at = (y: number) => {
     const r = track.getBoundingClientRect();
     return clampVolume(((r.bottom - y) / r.height) * 200);
@@ -28,12 +34,12 @@ export function VolumePop(p: { kind: AudioKind; onDrag: (dragging: boolean) => v
     track.setPointerCapture(e.pointerId);
     setDrag(true);
     p.onDrag(true);
-    setVolumeOf(p.kind, at(e.clientY));
+    set(at(e.clientY));
   };
   const move = (e: PointerEvent) => {
     if (!drag()) return;
     const v = at(e.clientY);
-    if (v !== volumeOf(p.kind)) setVolumeOf(p.kind, v);
+    if (v !== value()) set(v);
   };
   const up = () => {
     setDrag(false);
@@ -42,15 +48,15 @@ export function VolumePop(p: { kind: AudioKind; onDrag: (dragging: boolean) => v
   const key = (e: KeyboardEvent) => {
     const step = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1, PageUp: 10, PageDown: -10 }[e.key];
     let v: number | undefined;
-    if (step) v = volumeOf(p.kind) + step;
+    if (step) v = value() + step;
     else if (e.key === "Home") v = 0;
     else if (e.key === "End") v = 200;
     if (v === undefined) return;
     e.preventDefault();
-    setVolumeOf(p.kind, clampVolume(v));
+    set(clampVolume(v));
   };
   return (
-    <div class="vol-pop">
+    <div class={`vol-pop ${p.class ?? ""}`} style={p.style}>
       <div
         ref={track}
         class="vol-track"
@@ -60,20 +66,20 @@ export function VolumePop(p: { kind: AudioKind; onDrag: (dragging: boolean) => v
         aria-orientation="vertical"
         aria-valuemin={0}
         aria-valuemax={200}
-        aria-valuenow={volumeOf(p.kind)}
-        aria-valuetext={`${volumeOf(p.kind)}%`}
+        aria-valuenow={value()}
+        aria-valuetext={`${value()}%`}
         onPointerDown={down}
         onPointerMove={move}
         onPointerUp={up}
         onPointerCancel={up}
-        onDblClick={() => setVolumeOf(p.kind, 100)}
+        onDblClick={() => set(100)}
         onKeyDown={key}
       >
         <div class="vol-fill" style={{ height: `${pct()}%` }} />
         <div class="vol-mid" />
         <div class="vol-knob" style={{ bottom: `${pct()}%` }} onPointerEnter={() => setOnKnob(true)} onPointerLeave={() => setOnKnob(false)} />
         <Show when={onKnob() || drag()}>
-          <div class="vol-tip" style={{ bottom: `${pct()}%` }}>{volumeOf(p.kind)}%</div>
+          <div class="vol-tip" style={{ bottom: `${pct()}%` }}>{value()}%</div>
         </Show>
       </div>
     </div>

@@ -439,11 +439,11 @@ function VoiceBox() {
             <button
               ref={inBtn}
               class="icon-btn"
-              disabled={mic.busy}
+              aria-busy={mic.busy}
               aria-pressed={mic.muted}
               aria-haspopup="menu"
               aria-label={mic.muted ? "取消静音" : "静音"}
-              onClick={() => void toggleMic()}
+              onClick={() => !mic.busy && void toggleMic()}
             >
               {mic.muted || micFailed() ? <MicOffIcon size={20} /> : <Mic size={20} />}
             </button>
@@ -453,11 +453,11 @@ function VoiceBox() {
             <button
               ref={outBtn}
               class="icon-btn"
-              disabled={output.busy}
+              aria-busy={output.busy}
               aria-pressed={output.deafened}
               aria-haspopup="menu"
               aria-label={output.deafened ? "打开耳机" : "关闭耳机"}
-              onClick={() => void toggleDeafen()}
+              onClick={() => !output.busy && void toggleDeafen()}
             >
               {output.deafened ? <HeadphoneOffIcon size={20} /> : <Headphones size={20} />}
             </button>

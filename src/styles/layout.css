@@ -72,9 +72,10 @@
 /* ── 主面板 ── */
 /* 主面板与窗口圆角同心：macOS 26 起窗口圆角 16px，四周留 4px，面板圆角 16 − 4 = 12px */
 .shell {
-  position: relative; flex: 1; min-width: 0; display: flex; margin: 0 4px 4px 0;
-  background: var(--c-panel); border-radius: 12px; overflow: clip; color: var(--c-text);
+  position: relative; flex: 1; min-width: 0; display: flex; gap: 4px; margin: 0 4px 4px 0; color: var(--c-text);
 }
+/* 主体由频道栏、文字频道、成员栏与语音舞台组成，各自为独立圆角板块，板块间距等于主体与窗口边缘的间距。 */
+.sidebar, .chat, .members, .voice-stage { background: var(--c-panel); border-radius: 12px; overflow: clip; }
 
 /* ── 频道栏 290px ── */
 .sidebar { width: 290px; flex: none; display: flex; flex-direction: column; min-height: 0; }
@@ -170,12 +171,46 @@
 .rejoin-btn { padding: 2px 8px; font-size: 12px; color: #fff; background: var(--c-good); border-radius: 6px; }
 
 /* ── 消息区 ── */
-.chat { flex: 1; min-width: 0; display: flex; flex-direction: column; border-left: 1px solid var(--c-line); }
+.chat { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .room-header { flex: none; display: flex; align-items: center; height: 70px; margin: 0 24px; line-height: 22px; }
 .room-header .hash { margin-right: 8px; }
 .room-header .title { font-weight: 700; white-space: nowrap; }
 .room-header .topic { flex: 1; min-width: 0; margin-left: 12px; font-size: 12px; color: var(--c-text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .room-header .tools { display: flex; gap: 8px; margin-left: 12px; }
+
+/* ── 语音舞台：连接语音后显示在同服务器文字频道顶部，横跨聊天区与成员栏，参照 Oopz ── */
+.stage-col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.stage-row { flex: 1; min-height: 0; display: flex; gap: 4px; }
+.voice-stage { flex: none; padding: 10px 10px 0; }
+.stage-head { display: flex; align-items: center; gap: 8px; height: 24px; margin: 0 4px 8px; }
+.stage-icon { display: flex; color: var(--c-text-2); }
+.stage-title { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stage-count { font-size: 12px; color: var(--c-text-3); font-variant-numeric: tabular-nums; }
+/* 卡片固定宽度，单行排列，超出时水平滚动。 */
+.stage-grid { display: flex; gap: 10px; padding-bottom: 10px; overflow-x: auto; }
+.stage-grid > .stage-card { flex: none; width: 240px; }
+/* 卡片：圆角矩形头像在上，控制台在下。卡片 3px 内边距在不说话时作为留白，说话时整张卡片以品牌色描边 3px。 */
+.stage-card { padding: 3px; border-radius: 14px; background: var(--c-fill); box-shadow: inset 0 0 0 3px transparent; transition: box-shadow .12s; }
+.stage-card.speaking { box-shadow: inset 0 0 0 3px var(--c-brand); }
+.stage-art {
+  aspect-ratio: 16 / 9; border-radius: 11px; overflow: hidden; background: var(--c-avatar);
+  display: flex; align-items: center; justify-content: center;
+}
+.stage-art img { width: 100%; height: 100%; object-fit: cover; }
+.stage-initial { font-size: 48px; font-weight: 700; color: var(--c-text-2); }
+.stage-ctrl { padding: 4px 5px 1px 7px; }
+.stage-name { font-size: 13px; font-weight: 600; line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stage-bar { display: flex; align-items: center; gap: 2px; height: 26px; }
+.stage-gap { flex: 1; }
+.stage-ctrl-wrap { display: flex; }
+.stage-btn {
+  width: 26px; height: 26px; border-radius: 6px; border: 0; background: none; color: var(--c-text-2);
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.stage-btn:hover:not(:disabled) { background: var(--c-hover); color: var(--c-text); }
+.stage-btn.leave { color: var(--c-danger); }
+/* 舞台中的音量条与设备菜单渲染到 body，以零尺寸锚点固定定位，沿用语音栏的弹层样式。 */
+.stage-vol-anchor, .stage-menu-anchor { position: fixed; width: 0; height: 0; z-index: 60; }
 
 .message-box { flex: 1; overflow-y: auto; position: relative; padding-bottom: 8px; }
 /* 消息只放开正文，按钮、回应、状态标记与时间不可选。 */
@@ -247,7 +282,7 @@ button.quote:hover { background: var(--c-fill); }
 .send-wrap .right { display: flex; gap: 8px; margin-left: 8px; }
 
 /* ── 成员栏 241px ── */
-.members { width: 241px; flex: none; overflow-y: auto; border-left: 1px solid var(--c-line); padding-bottom: 12px; }
+.members { width: 241px; flex: none; overflow-y: auto; padding-bottom: 12px; }
 .member-title { padding: 16px 0 0 24px; margin-bottom: 2px; font-size: 14px; line-height: 18px; }
 .member { display: flex; align-items: center; margin: 0 4px 2px 12px; padding: 8px 12px; border-radius: 6px; cursor: pointer; }
 .member:hover { background: var(--c-hover); }

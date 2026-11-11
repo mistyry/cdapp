@@ -1,10 +1,11 @@
 import { Match, Show, Switch, createEffect, on, onCleanup, onMount } from "solid-js";
-import { ui } from "./stores/ui";
+import { DM_VIEW, ui } from "./stores/ui";
 import { boot, diag, readCurrent, refreshAccess, session, setSession, skipRestore } from "./stores/session";
 import GuildBar from "./components/layout/GuildBar";
 import ChannelSidebar from "./components/layout/ChannelSidebar";
 import ChatPane from "./components/layout/ChatPane";
 import MemberPane from "./components/layout/MemberPane";
+import VoiceStage, { stageShown } from "./components/layout/VoiceStage";
 import Login from "./components/auth/Login";
 import Settings from "./components/settings/Settings";
 import PasswordPrompt from "./components/layout/PasswordPrompt";
@@ -77,8 +78,14 @@ export default function App() {
           <div class="shell">
             <ConnectionBar />
             <ChannelSidebar />
-            <ChatPane />
-            <Show when={ui.showMembers}><MemberPane /></Show>
+            {/* 语音舞台横跨聊天区与成员栏。只要在语音中，服务器与私信页面都显示。私信没有成员栏。 */}
+            <div class="stage-col">
+              <Show when={stageShown()}><VoiceStage /></Show>
+              <div class="stage-row">
+                <ChatPane />
+                <Show when={ui.showMembers && ui.view !== DM_VIEW}><MemberPane /></Show>
+              </div>
+            </div>
           </div>
           <Show when={ui.settings}><Settings /></Show>
           <PasswordPrompt />
