@@ -80,6 +80,12 @@ impl Gate {
         self.channels.contains_key(channel_id)
     }
 
+    /// 频道所属服务器。
+    #[must_use]
+    pub fn guild_of(&self, channel_id: &str) -> Option<&str> {
+        self.channels.get(channel_id).map(|(g, _)| g.as_str())
+    }
+
     /// 判断当前账号能否执行操作。依据缺失时拒绝，不把未知当作允许。
     ///
     /// # Errors

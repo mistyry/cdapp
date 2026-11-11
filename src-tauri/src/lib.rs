@@ -112,6 +112,8 @@ pub fn run() {
             let slot = commands::VoiceSlot::from_prefs(&audio::store::load());
             commands::watch_denoise(app.handle(), &slot.denoise);
             app.manage(VoiceState(tokio::sync::Mutex::new(slot)));
+            #[cfg(windows)]
+            app.manage(commands::ShareState::default());
             // 设备增减或默认设备变化时通知界面刷新列表。
             let handle = app.handle().clone();
             audio::watch::start(move |input, output| {
@@ -146,6 +148,12 @@ pub fn run() {
             commands::sound_sync,
             commands::denoise_sync,
             commands::share_sdk_sync,
+            #[cfg(windows)]
+            commands::share_sources,
+            #[cfg(windows)]
+            commands::share_start,
+            #[cfg(windows)]
+            commands::share_stop,
             commands::effect_play,
             commands::effect_play_item,
             commands::set_effect_volume,

@@ -49,6 +49,7 @@ fn volc_bridge() {
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
     println!("cargo:rustc-link-lib=dylib=VolcEngineRTC");
     println!("cargo:rustc-link-lib=dylib=delayimp");
+    println!("cargo:rustc-link-lib=dylib=winmm");
     println!("cargo:rustc-link-arg=/DELAYLOAD:VolcEngineRTC.dll");
 }
 

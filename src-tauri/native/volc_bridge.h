@@ -13,7 +13,64 @@ enum {
     VOLC_ERR_NOT_STARTED = -1,
     VOLC_ERR_THREAD = -2,
     VOLC_ERR_LOAD = -3,
+    VOLC_ERR_ENGINE = -4,
+    VOLC_ERR_SOURCE = -5,
+    VOLC_ERR_STATE = -6,
+    // 以下为 SDK 接口返回非 0，原始返回值写入 *sdk_rc。
+    VOLC_ERR_JOIN = -10,
+    VOLC_ERR_ENCODER = -11,
+    VOLC_ERR_CAPTURE = -12,
+    VOLC_ERR_PUBLISH = -13,
+    VOLC_ERR_TOKEN = -14,
 };
+
+// 事件编号。回调在 SDK 内部线程触发，接收方只能转发，不得阻塞或回调 SDK。
+enum {
+    // a 为房间状态，0 为已进房，非 0 为错误或警告码。
+    VOLC_EV_ROOM_STATE = 1,
+    // a、b 为首帧宽高。
+    VOLC_EV_FIRST_FRAME = 2,
+    // a、b 为采集尺寸变化后的宽高。
+    VOLC_EV_SIZE_CHANGED = 3,
+    // 令牌将在 30 秒内过期。
+    VOLC_EV_TOKEN_WILL_EXPIRE = 4,
+    // a 为发送码率 kbps，b 为编码输出帧率，c 为编码宽，d 为编码高。
+    VOLC_EV_STATS = 5,
+    // a 为引擎错误码。
+    VOLC_EV_ERROR = 6,
+    // a 为本地视频流状态，b 为错误码。窗口关闭等采集失败由此上报。
+    VOLC_EV_VIDEO_STATE = 7,
+};
+
+typedef void (*volc_event_fn)(void* user, int32_t kind, int32_t a, int32_t b, int32_t c, int32_t d);
+
+// 源名称与应用路径的缓冲长度，UTF-8，超出截断。
+#define VOLC_NAME_LEN 256
+
+typedef struct {
+    // 1 为窗口，2 为显示器，与 SDK 的 ScreenCaptureSourceType 一致。
+    int32_t kind;
+    // 源 ID，窗口为 HWND，显示器为 HMONITOR。
+    uint64_t id;
+    int32_t pid;
+    int32_t primary;
+    int32_t x, y, width, height;
+    char name[VOLC_NAME_LEN];
+    char application[VOLC_NAME_LEN];
+} volc_source;
+
+// 开播参数。字符串在调用期间有效。
+typedef struct {
+    const char* app_id;
+    const char* room;
+    const char* uid;
+    const char* token;
+    int32_t source_kind;
+    uint64_t source_id;
+    int32_t width, height, frame_rate, max_kbps;
+    // 0 只推画面，1 带声音。声音由调用方经外部源推送。
+    int32_t audio;
+} volc_live;
 
 // 启动 SDK 线程。重复调用直接返回 VOLC_OK。
 int32_t volc_start(void);
@@ -27,6 +84,29 @@ int32_t volc_load(const uint16_t* dir, uint32_t* win32_error);
 
 // SDK 版本，须在加载成功后调用。返回值由 SDK 持有。
 const char* volc_version(void);
+
+// 设置 SDK 日志目录，UTF-8。须在加载后、首次创建引擎前调用。
+int32_t volc_log(const char* dir);
+
+// 列出可共享的显示器与窗口，最多写入 cap 项，返回总数。须在加载成功后调用。
+// 没有引擎时用临时引擎，列完销毁。
+int32_t volc_sources(volc_source* out, int32_t cap);
+
+// 创建引擎、进房、开始采集。成功后等进房与首帧事件再调用 volc_publish。
+// 已在推流时返回 VOLC_ERR_STATE。cb 在 volc_live_stop 返回前保持有效。
+int32_t volc_live_start(const volc_live* live, volc_event_fn cb, void* user, int32_t* sdk_rc);
+
+// 发布屏幕流。
+int32_t volc_publish(int32_t* sdk_rc);
+
+// 重新提交编码配置。
+int32_t volc_encoder(int32_t width, int32_t height, int32_t frame_rate, int32_t max_kbps, int32_t* sdk_rc);
+
+// 更换令牌。
+int32_t volc_token(const char* token, int32_t* sdk_rc);
+
+// 停止发布与采集，离房并销毁引擎。返回后不再触发回调。未在推流时无操作。
+void volc_live_stop(void);
 
 #ifdef __cplusplus
 }

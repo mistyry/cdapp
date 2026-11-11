@@ -7,6 +7,7 @@ pub mod emoji;
 pub mod emoji_cache;
 pub mod gate;
 pub mod gateway;
+pub mod golive;
 pub mod model;
 pub mod perms;
 pub mod saying;
