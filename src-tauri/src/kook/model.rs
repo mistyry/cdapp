@@ -50,6 +50,47 @@ pub struct VoiceUser {
     pub nickname: String,
     pub identify_num: String,
     pub avatar: String,
+    /// 屏幕分享状态。未分享或字段缺失时为 `None`。
+    pub live: Option<LiveInfo>,
+}
+
+/// 屏幕分享状态，来自成员的 `live_info`。只在 `in_live` 为真时构造。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveInfo {
+    pub resolution: u32,
+    pub frame_rate: u32,
+    /// 开播时间，毫秒。
+    pub start_time: i64,
+    pub audience_count: u32,
+    pub audience_limit: u32,
+}
+
+impl LiveInfo {
+    /// 未分享、缺失或格式不符时返回 `None`。
+    #[must_use]
+    pub fn from_raw(v: Option<&Value>) -> Option<Self> {
+        let v = v?;
+        if !v.get("in_live").and_then(Value::as_bool).unwrap_or(false) {
+            return None;
+        }
+        let n = |k: &str| {
+            v.get(k)
+                .and_then(Value::as_u64)
+                .and_then(|x| u32::try_from(x).ok())
+                .unwrap_or(0)
+        };
+        Some(Self {
+            resolution: n("resolution"),
+            frame_rate: n("frame_rate"),
+            start_time: v
+                .get("live_start_time")
+                .and_then(Value::as_i64)
+                .unwrap_or(0),
+            audience_count: n("audience_count"),
+            audience_limit: n("audience_limit"),
+        })
+    }
 }
 
 impl VoiceUser {
@@ -68,6 +109,7 @@ impl VoiceUser {
             nickname: s("nickname"),
             identify_num: s("identify_num"),
             avatar: s("avatar"),
+            live: LiveInfo::from_raw(v.get("live_info")),
         })
     }
 }
@@ -731,6 +773,37 @@ mod tests {
         assert!(DmSent::from_raw(&json!([])).is_err());
     }
     use serde_json::json;
+
+    #[test]
+    fn live_info_only_when_in_live() {
+        let on = json!({"id": "1", "live_info": {"in_live": true, "resolution": 1080, "frame_rate": 30,
+            "live_start_time": 1_794_400_589_437_i64, "audience_count": 2, "audience_limit": 20}});
+        let live = VoiceUser::from_raw(&on).unwrap().live.unwrap();
+        assert_eq!(
+            (
+                live.resolution,
+                live.frame_rate,
+                live.audience_count,
+                live.audience_limit
+            ),
+            (1080, 30, 2, 20)
+        );
+        assert_eq!(live.start_time, 1_794_400_589_437);
+        let off = json!({"id": "1", "live_info": {"in_live": false, "resolution": 0}});
+        assert!(VoiceUser::from_raw(&off).unwrap().live.is_none());
+        assert!(
+            VoiceUser::from_raw(&json!({"id": "1", "live_info": null}))
+                .unwrap()
+                .live
+                .is_none()
+        );
+        assert!(
+            VoiceUser::from_raw(&json!({"id": "1"}))
+                .unwrap()
+                .live
+                .is_none()
+        );
+    }
 
     #[test]
     fn unread_snapshot() {

@@ -1,12 +1,14 @@
 import type { GuildAccess, Overwrite, UserOverwrite } from "../lib/perms";
-import type { MemberDto } from "../lib/api";
+import type { LiveInfo, MemberDto } from "../lib/api";
 import type { Attachment } from "../lib/content";
 export type User = { id: string; name: string; tag?: string; avatar?: string; color?: string; online: boolean; activity?: string };
+// 语音频道内的用户，带屏幕分享状态。
+export type VoiceUser = User & { live?: LiveInfo };
 export type Channel = {
   id: string; name: string; type: "text" | "voice" | "unknown";
   preview?: string; limit?: number;
   // 语音频道内在线用户。名称取服务器昵称，与全局已知用户分开存放。
-  users?: User[];
+  users?: VoiceUser[];
   // 频道权限覆盖，用于计算本人有效权限。
   overwrites?: Overwrite[]; userOverwrites?: UserOverwrite[];
   // 设有密码；与分组同步覆盖（服务端已复制分组覆盖，不再叠加）。

@@ -38,10 +38,20 @@ struct RawLive {
     audio: i32,
 }
 
+#[repr(C)]
+struct RawWatch {
+    app_id: *const c_char,
+    room: *const c_char,
+    uid: *const c_char,
+    token: *const c_char,
+    liver: *const c_char,
+}
+
 type EventFn = unsafe extern "C" fn(*mut c_void, i32, i32, i32, i32, i32);
+type FrameFn = unsafe extern "C" fn(*mut c_void, *const u8, i32, i32, i32, i32, i32, i64);
 
 mod ffi {
-    use super::{EventFn, RawLive, RawSource, c_char, c_void};
+    use super::{EventFn, FrameFn, RawLive, RawSource, RawWatch, c_char, c_void};
     unsafe extern "C" {
         pub fn volc_start() -> i32;
         pub fn volc_stop();
@@ -77,6 +87,30 @@ mod ffi {
         pub fn volc_token(token: *const c_char, sdk_rc: *mut i32) -> i32;
         pub fn volc_live_stop();
         pub fn volc_push_audio(pcm: *const i16, frames: i32, sdk_rc: *mut i32) -> i32;
+        pub fn volc_watch_start(
+            watch: *const RawWatch,
+            cb: EventFn,
+            frame: FrameFn,
+            user: *mut c_void,
+            sdk_rc: *mut i32,
+        ) -> i32;
+        pub fn volc_watch_subscribe(sdk_rc: *mut i32) -> i32;
+        pub fn volc_watch_key_frame(sdk_rc: *mut i32) -> i32;
+        pub fn volc_watch_token(token: *const c_char, sdk_rc: *mut i32) -> i32;
+        pub fn volc_watch_stop();
+        pub fn agora_load(dir: *const u16, win32_error: *mut u32) -> i32;
+        pub fn agora_version() -> *const c_char;
+        pub fn agora_log(file: *const c_char);
+        pub fn agora_watch_start(
+            watch: *const RawWatch,
+            cb: EventFn,
+            frame: FrameFn,
+            user: *mut c_void,
+            sdk_rc: *mut i32,
+        ) -> i32;
+        pub fn agora_watch_rejoin(sdk_rc: *mut i32) -> i32;
+        pub fn agora_watch_token(token: *const c_char, sdk_rc: *mut i32) -> i32;
+        pub fn agora_watch_stop();
     }
 }
 
@@ -93,6 +127,7 @@ const ERR_CAPTURE: i32 = -12;
 const ERR_PUBLISH: i32 = -13;
 const ERR_TOKEN: i32 = -14;
 const ERR_AUDIO: i32 = -15;
+const ERR_SUBSCRIBE: i32 = -16;
 
 /// 桥接错误。SDK 接口失败时附带其原始返回值。
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -121,6 +156,8 @@ pub enum BridgeError {
     Token(i32),
     #[error("推送屏幕声音失败：{0}")]
     Audio(i32),
+    #[error("订阅屏幕流失败：{0}")]
+    Subscribe(i32),
     #[error("参数包含空字符")]
     Nul,
     #[error("屏幕分享组件返回未知错误 {0}")]
@@ -142,6 +179,7 @@ fn check(rc: i32, extra: i32) -> Result<(), BridgeError> {
         ERR_PUBLISH => Err(BridgeError::Publish(extra)),
         ERR_TOKEN => Err(BridgeError::Token(extra)),
         ERR_AUDIO => Err(BridgeError::Audio(extra)),
+        ERR_SUBSCRIBE => Err(BridgeError::Subscribe(extra)),
         other => Err(BridgeError::Unknown(other)),
     }
 }
@@ -549,6 +587,280 @@ impl Drop for Live {
     }
 }
 
+/// 观看事件。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WatchEvent {
+    /// 0 为已进房，非 0 为错误或警告码。
+    RoomState(i32),
+    /// 分享者发布屏幕流。
+    Published,
+    /// 分享者取消发布，附原因码。
+    Unpublished(i32),
+    TokenWillExpire,
+    Stats {
+        kbps: i32,
+        width: i32,
+        height: i32,
+        stalls: i32,
+    },
+}
+
+fn watch_event(kind: i32, a: i32, b: i32, c: i32, d: i32) -> Option<WatchEvent> {
+    Some(match kind {
+        1 => WatchEvent::RoomState(a),
+        2 if a != 0 => WatchEvent::Published,
+        2 => WatchEvent::Unpublished(b),
+        3 => WatchEvent::TokenWillExpire,
+        4 => WatchEvent::Stats {
+            kbps: a,
+            width: b,
+            height: c,
+            stalls: d,
+        },
+        _ => return None,
+    })
+}
+
+/// 一帧编码后的画面。`data` 只在回调期间有效。
+pub struct Frame<'a> {
+    pub data: &'a [u8],
+    /// 1 为 H.264，2 为 `ByteVC1`。
+    pub codec: i32,
+    pub key: bool,
+    pub width: u32,
+    pub height: u32,
+    pub ts_us: i64,
+}
+
+/// 观看回调的接收方。在 SDK 内部线程调用，不得阻塞或回调 SDK。
+pub struct WatchSink {
+    pub events: UnboundedSender<WatchEvent>,
+    pub frame: Box<dyn Fn(&Frame<'_>) + Send + Sync>,
+}
+
+unsafe extern "C" fn on_watch_event(user: *mut c_void, kind: i32, a: i32, b: i32, c: i32, d: i32) {
+    // SAFETY: user 为 Watch 持有的 Box<WatchSink>，在 volc_watch_stop 返回前有效。
+    let sink = unsafe { &*user.cast::<WatchSink>() };
+    if let Some(e) = watch_event(kind, a, b, c, d) {
+        let _ = sink.events.send(e);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe extern "C" fn on_watch_frame(
+    user: *mut c_void,
+    data: *const u8,
+    size: i32,
+    codec: i32,
+    key: i32,
+    width: i32,
+    height: i32,
+    ts_us: i64,
+) {
+    if data.is_null() || size <= 0 {
+        return;
+    }
+    // SAFETY: user 同上；data 在回调期间有效，长度为 size。
+    let (sink, data) = unsafe {
+        (
+            &*user.cast::<WatchSink>(),
+            std::slice::from_raw_parts(data, size.cast_unsigned() as usize),
+        )
+    };
+    (sink.frame)(&Frame {
+        data,
+        codec,
+        key: key != 0,
+        width: width.max(0).cast_unsigned(),
+        height: height.max(0).cast_unsigned(),
+        ts_us,
+    });
+}
+
+/// 观看参数。
+pub struct WatchParams<'a> {
+    pub app_id: &'a str,
+    pub room: &'a str,
+    pub uid: &'a str,
+    pub token: &'a str,
+    /// 分享者用户 ID。
+    pub liver: &'a str,
+}
+
+/// 分享者分到的 RTC 厂商。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Vendor {
+    Volc,
+    Agora,
+}
+
+/// 观看句柄。释放时离房。同一时间只能有一个，与推流互不影响。两家厂商的事件与帧格式相同。
+pub struct Watch {
+    sink: *mut WatchSink,
+    vendor: Vendor,
+}
+
+// SAFETY: sink 只在桥接回调中只读访问，释放发生在桥接停止观看之后。
+unsafe impl Send for Watch {}
+
+impl Watch {
+    /// 进房。火山不订阅，收到 [`WatchEvent::Published`] 后调用 [`Watch::subscribe`]；Agora 自动订阅。
+    ///
+    /// # Errors
+    ///
+    /// 已在观看、引擎正以其他 appId 使用、参数含空字符或 SDK 接口失败。Agora 的用户 ID 须为数字。
+    pub fn start(
+        vendor: Vendor,
+        p: &WatchParams<'_>,
+        sink: WatchSink,
+    ) -> Result<Self, BridgeError> {
+        let (app_id, room, uid, token, liver) = (
+            cstr(p.app_id)?,
+            cstr(p.room)?,
+            cstr(p.uid)?,
+            cstr(p.token)?,
+            cstr(p.liver)?,
+        );
+        let raw = RawWatch {
+            app_id: app_id.as_ptr(),
+            room: room.as_ptr(),
+            uid: uid.as_ptr(),
+            token: token.as_ptr(),
+            liver: liver.as_ptr(),
+        };
+        let sink = Box::into_raw(Box::new(sink));
+        let mut sdk = 0i32;
+        // SAFETY: raw 中的字符串在调用期间有效；sink 在 Watch 释放前有效。
+        let rc = unsafe {
+            match vendor {
+                Vendor::Volc => ffi::volc_watch_start(
+                    &raw const raw,
+                    on_watch_event,
+                    on_watch_frame,
+                    sink.cast(),
+                    &raw mut sdk,
+                ),
+                Vendor::Agora => ffi::agora_watch_start(
+                    &raw const raw,
+                    on_watch_event,
+                    on_watch_frame,
+                    sink.cast(),
+                    &raw mut sdk,
+                ),
+            }
+        };
+        if let Err(e) = check(rc, sdk) {
+            // 失败时桥接已清除回调，不再访问 sink。
+            // SAFETY: sink 由上面的 Box::into_raw 得到，只释放一次。
+            drop(unsafe { Box::from_raw(sink) });
+            return Err(e);
+        }
+        Ok(Self { sink, vendor })
+    }
+
+    #[must_use]
+    pub fn vendor(&self) -> Vendor {
+        self.vendor
+    }
+
+    /// 订阅分享者的屏幕画面与声音。Agora 进房即自动订阅，无操作。
+    ///
+    /// # Errors
+    ///
+    /// SDK 返回非 0。
+    pub fn subscribe(&self) -> Result<(), BridgeError> {
+        if self.vendor == Vendor::Agora {
+            return Ok(());
+        }
+        let mut sdk = 0i32;
+        // SAFETY: sdk 指向本地变量。
+        check(unsafe { ffi::volc_watch_subscribe(&raw mut sdk) }, sdk)
+    }
+
+    /// 请求关键帧。Agora 没有对应接口，改为离房后重新进房，服务端在新订阅时下发关键帧，画面中断约 4 秒。
+    ///
+    /// # Errors
+    ///
+    /// SDK 返回非 0。
+    pub fn key_frame(&self) -> Result<(), BridgeError> {
+        let mut sdk = 0i32;
+        // SAFETY: sdk 指向本地变量。
+        let rc = unsafe {
+            match self.vendor {
+                Vendor::Volc => ffi::volc_watch_key_frame(&raw mut sdk),
+                Vendor::Agora => ffi::agora_watch_rejoin(&raw mut sdk),
+            }
+        };
+        check(rc, sdk)
+    }
+
+    /// 更换令牌。
+    ///
+    /// # Errors
+    ///
+    /// 令牌含空字符或 SDK 返回非 0。
+    pub fn token(&self, token: &str) -> Result<(), BridgeError> {
+        let t = cstr(token)?;
+        let mut sdk = 0i32;
+        // SAFETY: t 在调用期间有效，sdk 指向本地变量。
+        let rc = unsafe {
+            match self.vendor {
+                Vendor::Volc => ffi::volc_watch_token(t.as_ptr(), &raw mut sdk),
+                Vendor::Agora => ffi::agora_watch_token(t.as_ptr(), &raw mut sdk),
+            }
+        };
+        check(rc, sdk)
+    }
+}
+
+impl Drop for Watch {
+    fn drop(&mut self) {
+        // SAFETY: 无参数。返回后桥接不再调用观看回调。
+        unsafe {
+            match self.vendor {
+                Vendor::Volc => ffi::volc_watch_stop(),
+                Vendor::Agora => ffi::agora_watch_stop(),
+            }
+        };
+        // SAFETY: sink 由 Box::into_raw 得到，此处唯一一次释放。
+        drop(unsafe { Box::from_raw(self.sink) });
+    }
+}
+
+/// 从目录加载 Agora SDK，附属 DLL 须在同一目录。须在火山 SDK 加载之后调用。
+///
+/// # Errors
+///
+/// DLL 加载失败。
+pub fn agora_load(dir: &Path) -> Result<(), BridgeError> {
+    let wide: Vec<u16> = dir.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut win32 = 0u32;
+    // SAFETY: wide 以 0 结尾且在调用期间有效，win32 指向本地变量。
+    let rc = unsafe { ffi::agora_load(wide.as_ptr(), &raw mut win32) };
+    check(rc, win32.cast_signed())
+}
+
+/// Agora SDK 版本，须在 [`agora_load`] 成功后调用。
+#[must_use]
+pub fn agora_version() -> String {
+    // SAFETY: SDK 已加载，返回 SDK 持有的以 0 结尾的静态字符串。
+    unsafe { CStr::from_ptr(ffi::agora_version()) }
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// 设置 Agora SDK 日志文件，下次开始观看时生效。
+///
+/// # Errors
+///
+/// 路径包含空字符。
+pub fn agora_log(file: &Path) -> Result<(), BridgeError> {
+    let s = cstr(&file.to_string_lossy())?;
+    // SAFETY: s 以 0 结尾且在调用期间有效，桥接复制内容。
+    unsafe { ffi::agora_log(s.as_ptr()) };
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -575,6 +887,28 @@ mod tests {
         assert_eq!(event(4, 0, 0, 0, 0), Some(Event::TokenWillExpire));
         assert_eq!(event(8, 0, 0, 0, 0), Some(Event::SourceGone));
         assert_eq!(event(99, 0, 0, 0, 0), None);
+    }
+
+    #[test]
+    fn maps_watch_events() {
+        assert_eq!(watch_event(1, 0, 0, 0, 0), Some(WatchEvent::RoomState(0)));
+        assert_eq!(watch_event(2, 1, 0, 0, 0), Some(WatchEvent::Published));
+        assert_eq!(watch_event(2, 0, 3, 0, 0), Some(WatchEvent::Unpublished(3)));
+        assert_eq!(
+            watch_event(3, 0, 0, 0, 0),
+            Some(WatchEvent::TokenWillExpire)
+        );
+        assert_eq!(
+            watch_event(4, 2000, 1920, 1080, 1),
+            Some(WatchEvent::Stats {
+                kbps: 2000,
+                width: 1920,
+                height: 1080,
+                stalls: 1
+            })
+        );
+        assert_eq!(watch_event(9, 0, 0, 0, 0), None);
+        assert_eq!(check(ERR_SUBSCRIBE, -2), Err(BridgeError::Subscribe(-2)));
     }
 
     #[test]

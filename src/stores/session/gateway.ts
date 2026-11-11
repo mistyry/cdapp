@@ -7,13 +7,13 @@ import { Effect, playEffect } from "../effects";
 import { ui, currentChannelId, currentChatCode } from "../ui";
 import { enterVoice, loadAccess } from "./access";
 import { expire } from "./auth";
-import { parse, plainContent, remember, rememberRefs, stamp, toQuote, toUser, voiceUsers } from "./convert";
+import { parse, plainContent, remember, rememberRefs, stamp, toLive, toQuote, toUser, voiceUsers } from "./convert";
 import { loadDms, noteDmRead, onPrivate, refreshDm } from "./dm";
 import { applyReaction, onUpdated, removeMessage } from "./edit";
 import { append, refreshLatest } from "./history";
 import { dropSubscription, ensureMembers, invalidateMembers, onUserList, patchMember } from "./members";
 import { activate, activated, refreshGuild, reloadChannels, visited } from "./nav";
-import { dmKey, guildOf, isDmKey, report, session, setSession, st } from "./state";
+import { channelById, dmKey, guildOf, isDmKey, report, session, setSession, st } from "./state";
 import { noteRead, noteUnread, syncUnread, windowActive } from "./unread";
 
 // 网关
@@ -195,10 +195,37 @@ export function onVoicePresence(body: Raw, joined: boolean) {
   }));
 }
 
+// 屏幕分享状态变化：开播、改档、停播。body 为 {channel, user}，user.live_info 为完整状态。
+// 只更新已在该语音频道成员列表中的用户；不在列表中时忽略，之后的进出事件或频道刷新会带上状态。
+export function onLiveStatus(body: Raw) {
+  const uid = String(body.user?.id ?? "");
+  const cid = String(body.channel?.id ?? "");
+  if (!uid || !cid) return;
+  const live = toLive(body.user?.live_info);
+  session.guilds.forEach((g, gi) => g.groups.forEach((grp, i) => grp.channels.forEach((ch, j) => {
+    if (ch.id !== cid || ch.type !== "voice") return;
+    const list = ch.users ?? [];
+    if (!list.some((x) => x.id === uid)) return;
+    setSession("guilds", gi, "groups", i, "channels", j, "users", list.map((x) => {
+      if (x.id !== uid) return x;
+      const { live: _, ...rest } = x;
+      return live ? { ...rest, live } : rest;
+    }));
+  })));
+}
+
+// 语音频道中某成员的屏幕分享状态。频道或成员不在已加载的列表中时为 undefined。
+export function liveOf(channelId: string, userId: string) {
+  return channelById(channelId)?.channel.users?.find((x) => x.id === userId)?.live;
+}
+
 export function onSystem(c: Raw | null, target = "") {
   if (!c) return;
   const body = c.body ?? {};
   switch (c.type) {
+    case "live_status_changed":
+      onLiveStatus(body);
+      break;
     case "updated_user_list": {
       const data = body.user_list_data?.data;
       if (Array.isArray(data)) onUserList(String(body.channel_id ?? ""), data);

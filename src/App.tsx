@@ -10,6 +10,8 @@ import Login from "./components/auth/Login";
 import Settings from "./components/settings/Settings";
 import PasswordPrompt from "./components/layout/PasswordPrompt";
 import ScreenSharePicker from "./components/layout/ScreenSharePicker";
+import ScreenView from "./components/layout/ScreenView";
+import { watch, watching } from "./stores/watch";
 import ConnectionBar from "./components/common/ConnectionBar";
 import { TipLayer } from "./components/common/Tip";
 import { loadAudioPrefs } from "./stores/voice";
@@ -90,6 +92,10 @@ export default function App() {
           <Show when={ui.settings}><Settings /></Show>
           <PasswordPrompt />
           <ScreenSharePicker />
+          {/* 软件内全屏与全屏：画面铺满窗口，盖住其余界面，控制台仍浮在画面上。 */}
+          <Show when={watching() && (watch.mode === "app" || watch.mode === "screen")}>
+            <div class="screen-overlay"><ScreenView /></div>
+          </Show>
         </Match>
       </Switch>
       <Show when={session.error}>

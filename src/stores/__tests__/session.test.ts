@@ -16,7 +16,7 @@ mock.module("@tauri-apps/api/core", () => ({
 }));
 mock.module("@tauri-apps/api/event", () => ({ listen: async () => () => {} }));
 
-const { retryAccess, enterVoice, voiceBlock, visible, pwPrompt, cancelPassword, session, setSession, selectGuild, selectChannel, openDm, send, canSend, logout, enter, retry, verify, discard, boot, skipRestore, loadGuilds, loadOlder, loadHistory, onGatewayStatus, onEvent, reconnectNow, ensureMembers, loadMoreMembers, refreshMembers, sendBlock, loadAccess, jumpTo, loadNewer, jumpLatest, plainContent, editMessage, deleteMessage, toggleReaction, isReacting, reactFailed, canEdit, canDelete, canReact, stageFiles, submit, cancelUpload, unstage, onUploadProgress, cardFileSrcs, loadDms, selectDm, openDmWith, loadDmOlder, loadDmHistory, dmKey, dmUnreadTotal, readCurrent, msgKey } = await import("../session");
+const { retryAccess, enterVoice, voiceBlock, visible, pwPrompt, cancelPassword, session, setSession, selectGuild, selectChannel, openDm, send, canSend, logout, enter, retry, verify, discard, boot, skipRestore, loadGuilds, loadOlder, loadHistory, onGatewayStatus, onEvent, reconnectNow, ensureMembers, loadMoreMembers, refreshMembers, sendBlock, loadAccess, jumpTo, loadNewer, jumpLatest, plainContent, editMessage, deleteMessage, toggleReaction, isReacting, reactFailed, canEdit, canDelete, canReact, stageFiles, submit, cancelUpload, unstage, onUploadProgress, cardFileSrcs, loadDms, selectDm, openDmWith, loadDmOlder, loadDmHistory, dmKey, dmUnreadTotal, readCurrent, msgKey, liveOf } = await import("../session");
 const { ui, setUi, currentKey } = await import("../ui");
 
 const VIEW = 1 << 11, SEND = 1 << 12;
@@ -3129,6 +3129,34 @@ test("进出语音频道事件更新成员，加入其他频道时从原频道�
 test("未加载服务器的进出事件被忽略", () => {
   const before = JSON.stringify(session.guilds);
   onEvent({ type: "SYS_MSG", content: JSON.stringify({ type: "joined_channel", body: { id: "u3", channel: { id: "x", guild_id: "zz" } } }) });
+  expect(JSON.stringify(session.guilds)).toBe(before);
+});
+
+test("屏幕分享状态：频道列表初始值、开播改档停播事件、非成员与其他频道忽略", async () => {
+  const live = { resolution: 720, frameRate: 30, startTime: 1, audienceCount: 0, audienceLimit: 20 };
+  auto.channels = ({ guildId }) => [
+    { ...raw(`${guildId}-voice`, "v", 2), users: [
+      { id: "u1", username: "a", nickname: "", identifyNum: "1", avatar: "", live },
+      { id: "u2", username: "b", nickname: "", identifyNum: "2", avatar: "", live: null },
+    ] },
+    raw(`${guildId}-voice2`, "v2", 2),
+  ];
+  await selectGuild("A");
+  expect(liveOf("A-voice", "u1")).toEqual(live);
+  expect(liveOf("A-voice", "u2")).toBeUndefined();
+  const ev = (uid: string, cid: string, info: unknown) =>
+    onEvent({ type: "SYS_MSG", content: JSON.stringify({ type: "live_status_changed", body: { channel: { id: cid }, user: { id: uid, live_info: info } } }) });
+  ev("u2", "A-voice", { in_live: true, resolution: 1080, frame_rate: 60, live_start_time: 5, audience_count: 1, audience_limit: 20 });
+  expect(liveOf("A-voice", "u2")).toEqual({ resolution: 1080, frameRate: 60, startTime: 5, audienceCount: 1, audienceLimit: 20 });
+  ev("u1", "A-voice", { in_live: false, resolution: 0 });
+  expect(liveOf("A-voice", "u1")).toBeUndefined();
+  // 已有的其他成员与名称不受影响。
+  expect(voiceOf("A").users?.map((u) => u.id)).toEqual(["u1", "u2"]);
+  // 不在成员列表中的用户、其他频道与重复的停播事件都不改变状态。
+  const before = JSON.stringify(session.guilds);
+  ev("u9", "A-voice", { in_live: true, resolution: 720 });
+  ev("u2", "A-voice2", { in_live: true, resolution: 720 });
+  ev("u1", "A-voice", { in_live: false });
   expect(JSON.stringify(session.guilds)).toBe(before);
 });
 

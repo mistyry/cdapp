@@ -1,5 +1,5 @@
-import type { ChannelDto, Raw } from "../../lib/api";
-import type { Channel, Group, Message, Quote, Reaction, User } from "../types";
+import type { ChannelDto, LiveInfo, Raw } from "../../lib/api";
+import type { Channel, Group, Message, Quote, Reaction, User, VoiceUser } from "../types";
 import { parse as parseKmd, toPlain, type Names } from "../../lib/kmarkdown";
 import { isText, label, parseCards, toAttachment, Kind } from "../../lib/content";
 import { channelById, session, setSession } from "./state";
@@ -136,14 +136,28 @@ export function toChannel(c: ChannelDto): Channel {
 }
 
 // 语音频道内用户。nickname 为服务器昵称，未设置时为用户名；按 ID 去重。
-export function voiceUsers(list: Raw[]): User[] {
-  const out: User[] = [];
+// 后端转换的列表带 live，网关事件原样带 live_info。
+export function voiceUsers(list: Raw[]): VoiceUser[] {
+  const out: VoiceUser[] = [];
   for (const u of list) {
     const id = String(u?.id ?? "");
     if (!id || out.some((x) => x.id === id)) continue;
-    out.push(toUser({ id, nickname: u.nickname, username: u.username, identify_num: u.identifyNum ?? u.identify_num, avatar: u.avatar }));
+    const user: VoiceUser = toUser({ id, nickname: u.nickname, username: u.username, identify_num: u.identifyNum ?? u.identify_num, avatar: u.avatar });
+    const live = u.live ?? toLive(u.live_info);
+    if (live) user.live = live;
+    out.push(user);
   }
   return out;
+}
+
+// 网关事件中的 live_info，与后端 kook::model::LiveInfo 一致。未分享或缺失时为 undefined。
+export function toLive(r: Raw | null | undefined): LiveInfo | undefined {
+  if (!r?.in_live) return undefined;
+  const n = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  return {
+    resolution: n(r.resolution), frameRate: n(r.frame_rate), startTime: n(r.live_start_time),
+    audienceCount: n(r.audience_count), audienceLimit: n(r.audience_limit),
+  };
 }
 
 // 按 level 排序（相同时保持服务端顺序）。顶层频道与分组按 level 交错排列；

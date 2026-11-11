@@ -41,8 +41,10 @@ export type ChannelDto = {
   hasPassword?: boolean; permissionSync?: boolean;
   users?: VoiceUserDto[]; preview?: string;
 };
-// 后端 kook::model::VoiceUser。
-export type VoiceUserDto = { id: string; username: string; nickname: string; identifyNum: string; avatar: string };
+// 后端 kook::model::VoiceUser。live 为屏幕分享状态，未分享时为 null。
+export type VoiceUserDto = { id: string; username: string; nickname: string; identifyNum: string; avatar: string; live: LiveInfo | null };
+// 后端 kook::model::LiveInfo。startTime 为毫秒。
+export type LiveInfo = { resolution: number; frameRate: number; startTime: number; audienceCount: number; audienceLimit: number };
 
 // 后端 kook::model::Member 与 MemberPage。成员按服务端顺序（在线在前），人数取服务端统计。
 export type MemberDto = {
@@ -109,6 +111,12 @@ export type ShareStart = {
   channelId: string; sourceKind: "screen" | "window"; sourceId: string; sourcePid: number;
   resolution: number; frameRate: number; audio: boolean;
 };
+// 后端 share::watch::WatchState，经 watch://event 以 {generation, state} 广播。
+export type WatchEvent =
+  | { kind: "waiting" }
+  | { kind: "playing" }
+  | { kind: "stats"; kbps: number; width: number; height: number; stalls: number }
+  | { kind: "ended"; message: string | null };
 
 export const api = {
   storageInfo: () => invoke<StorageInfo>("storage_info"),
@@ -132,6 +140,15 @@ export const api = {
   shareStop: () => invoke<void>("share_stop"),
   shareUpdate: (generation: number, resolution: number, frameRate: number) =>
     invoke<void>("share_update", { generation, resolution, frameRate }),
+  // frames 收到的每条消息为 ArrayBuffer，格式见 lib/screenDecoder.ts。
+  watchStart: (channelId: string, liver: string, frames: Channel<ArrayBuffer>) =>
+    invoke<number>("watch_start", { channelId, liver, frames }),
+  watchStop: () => invoke<void>("watch_stop"),
+  watchKeyFrame: (generation: number) => invoke<void>("watch_key_frame", { generation }),
+  watchRedirect: (generation: number, frames: Channel<ArrayBuffer>) =>
+    invoke<void>("watch_redirect", { generation, frames }),
+  watchPipOpen: (generation: number) => invoke<void>("watch_pip_open", { generation }),
+  watchPipClose: () => invoke<void>("watch_pip_close"),
   loginQrCode: () => invoke<string>("login_qr_code"),
   loginQrPoll: (content: string) => invoke<QrStatus>("login_qr_poll", { content }),
   loginQrCancel: (content: string) => invoke<void>("login_qr_cancel", { content }),

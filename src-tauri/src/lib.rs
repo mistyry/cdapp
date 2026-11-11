@@ -114,6 +114,8 @@ pub fn run() {
             app.manage(VoiceState(tokio::sync::Mutex::new(slot)));
             #[cfg(windows)]
             app.manage(commands::ShareState::default());
+            #[cfg(windows)]
+            app.manage(commands::WatchState::default());
             // 设备增减或默认设备变化时通知界面刷新列表。
             let handle = app.handle().clone();
             audio::watch::start(move |input, output| {
@@ -162,6 +164,18 @@ pub fn run() {
             commands::share_stop,
             #[cfg(windows)]
             commands::share_update,
+            #[cfg(windows)]
+            commands::watch_start,
+            #[cfg(windows)]
+            commands::watch_stop,
+            #[cfg(windows)]
+            commands::watch_key_frame,
+            #[cfg(windows)]
+            commands::watch_redirect,
+            #[cfg(windows)]
+            commands::watch_pip_open,
+            #[cfg(windows)]
+            commands::watch_pip_close,
             commands::effect_play,
             commands::effect_play_item,
             commands::set_effect_volume,

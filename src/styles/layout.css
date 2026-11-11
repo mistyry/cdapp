@@ -193,11 +193,73 @@
 .stage-card { padding: 3px; border-radius: 14px; background: var(--c-fill); box-shadow: inset 0 0 0 3px transparent; transition: box-shadow .12s; }
 .stage-card.speaking { box-shadow: inset 0 0 0 3px var(--c-brand); }
 .stage-art {
+  position: relative;
   aspect-ratio: 16 / 9; border-radius: 11px; overflow: hidden; background: var(--c-avatar);
   display: flex; align-items: center; justify-content: center;
 }
 .stage-art img { width: 100%; height: 100%; object-fit: cover; }
 .stage-initial { font-size: 48px; font-weight: 700; color: var(--c-text-2); }
+/* 屏幕分享标记：右上角 LIVE，左下角状态文字。画面上的文字用深色底，亮暗头像上都可读。 */
+.stage-live {
+  position: absolute; top: 6px; right: 6px; padding: 1px 6px; border-radius: 4px;
+  background: var(--c-danger); color: #fff; font-size: 11px; font-weight: 700; letter-spacing: .5px; line-height: 16px;
+}
+.stage-sharing {
+  position: absolute; left: 6px; bottom: 6px; padding: 2px 6px; border-radius: 4px;
+  background: rgba(0, 0, 0, .55); color: #fff; font-size: 11px; line-height: 16px;
+}
+/* 悬停或键盘聚焦卡片时出现观看按钮。 */
+.stage-watch {
+  position: absolute; inset: 0; margin: auto; width: fit-content; height: 32px; padding: 0 12px;
+  display: flex; align-items: center; gap: 6px; border: 0; border-radius: 8px;
+  background: rgba(0, 0, 0, .65); color: #fff; font-size: 13px; cursor: pointer;
+  opacity: 0; transition: opacity .12s;
+}
+.stage-card:hover .stage-watch, .stage-watch:focus-visible { opacity: 1; }
+.stage-watch:hover { background: rgba(0, 0, 0, .8); }
+/* 观看屏幕共享：舞台整块显示分享画面。高度只占窗口一部分，给文字频道留出空间；画面在这块区域内按原始宽高比
+   完整显示，任何宽高比都不裁切，空白处为黑色。 */
+.voice-stage.watching { padding-bottom: 10px; }
+.screen-view {
+  position: relative; height: clamp(200px, 42vh, 460px); border-radius: 12px; overflow: hidden; background: #000;
+}
+.screen-canvas { width: 100%; height: 100%; object-fit: contain; display: block; }
+/* 等待画面：深色底上的转圈，不加文字。 */
+.screen-wait {
+  position: absolute; inset: 0; margin: auto; width: 28px; height: 28px; border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, .25); border-top-color: #fff; animation: screen-spin .9s linear infinite;
+}
+@keyframes screen-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .screen-wait { animation: none; } }
+/* 控制台浮在画面底部，悬停画面或键盘聚焦其中按钮时显示。 */
+.screen-bar {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 44px; padding: 0 8px 0 14px;
+  display: flex; align-items: center; gap: 4px; color: #fff;
+  background: linear-gradient(transparent, rgba(0, 0, 0, .6));
+  opacity: 0; transition: opacity .15s;
+}
+.screen-view:hover .screen-bar, .screen-bar:focus-within { opacity: 1; }
+.screen-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.screen-btn {
+  width: 32px; height: 32px; border: 0; border-radius: 8px; background: none; color: #fff;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.screen-btn:hover { background: rgba(255, 255, 255, .18); }
+/* 软件内全屏与全屏：铺满窗口，盖住其余界面。标题栏留给拖动与窗口按钮；全屏时没有标题栏。 */
+.screen-overlay { position: fixed; inset: 0; z-index: 30; background: #000; }
+.app.titled .screen-overlay { top: 36px; }
+.screen-view.expanded { height: 100%; border-radius: 0; }
+/* 全屏时控制台常驻底部渐变，画面以外没有其他界面。 */
+/* 悬浮窗页面：整窗为画面，按钮在右上角，悬停显示。 */
+:root[data-pip], :root[data-pip] body, :root[data-pip] #root { height: 100%; margin: 0; background: #000; overflow: hidden; }
+.pip { position: relative; width: 100%; height: 100%; background: #000; }
+.pip .screen-canvas { position: absolute; inset: 0; }
+.pip-bar {
+  position: absolute; top: 6px; right: 6px; display: flex; gap: 4px; padding: 2px; border-radius: 10px;
+  background: rgba(0, 0, 0, .55); opacity: 0; transition: opacity .15s;
+}
+.pip:hover .pip-bar, .pip-bar:focus-within { opacity: 1; }
+.pip-bar .screen-btn { width: 28px; height: 28px; }
 .stage-ctrl { padding: 4px 5px 1px 7px; }
 .stage-name { font-size: 13px; font-weight: 600; line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .stage-bar { display: flex; align-items: center; gap: 2px; height: 26px; }

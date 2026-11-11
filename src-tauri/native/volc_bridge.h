@@ -23,6 +23,7 @@ enum {
     VOLC_ERR_PUBLISH = -13,
     VOLC_ERR_TOKEN = -14,
     VOLC_ERR_AUDIO = -15,
+    VOLC_ERR_SUBSCRIBE = -16,
 };
 
 // 事件编号。回调在 SDK 内部线程触发，接收方只能转发，不得阻塞或回调 SDK。
@@ -44,6 +45,23 @@ enum {
     // 共享的窗口已销毁。由系统窗口事件触发，SDK 不一定上报采集失败。
     VOLC_EV_SOURCE_GONE = 8,
 };
+
+// 观看事件编号，经 volc_watch_start 的回调上报，与推流事件分开。
+enum {
+    // a 为房间状态，0 为已进房，非 0 为错误或警告码。
+    VOLC_WEV_ROOM_STATE = 1,
+    // 分享者发布或取消发布屏幕流。a 为 1 发布、0 取消，b 为取消原因。
+    VOLC_WEV_PUBLISH = 2,
+    // 令牌将在 30 秒内过期。
+    VOLC_WEV_TOKEN_WILL_EXPIRE = 3,
+    // a 为接收码率 kbps，b、c 为宽高，d 为卡顿次数。
+    VOLC_WEV_STATS = 4,
+};
+
+// 编码后的远端屏幕帧。codec 1 为 H.264，2 为 ByteVC1；key 非 0 为关键帧；ts_us 为帧时间戳。
+// 在 SDK 内部线程触发，data 只在回调期间有效，接收方须复制，不得阻塞或回调 SDK。
+typedef void (*volc_frame_fn)(void* user, const uint8_t* data, int32_t size, int32_t codec, int32_t key, int32_t width,
+                              int32_t height, int64_t ts_us);
 
 typedef void (*volc_event_fn)(void* user, int32_t kind, int32_t a, int32_t b, int32_t c, int32_t d);
 
@@ -127,6 +145,32 @@ void volc_live_stop(void);
 // 推一帧屏幕音频：48 kHz 立体声 S16 交错，frames 为每声道采样数，应为 480 即 10 ms。
 // 开播时 audio 为 1 才有效。可在任意线程调用，与 volc_live_stop 互斥。
 int32_t volc_push_audio(const int16_t* pcm, int32_t frames, int32_t* sdk_rc);
+
+// 观看参数。字符串在调用期间有效。liver 为分享者用户 ID。
+typedef struct {
+    const char* app_id;
+    const char* room;
+    const char* uid;
+    const char* token;
+    const char* liver;
+} volc_watch;
+
+// 观看与推流、预览共用进程内唯一的引擎，三者都结束后才销毁。
+// 进房但不订阅，等 VOLC_WEV_PUBLISH 后调用 volc_watch_subscribe。SDK 不解码画面，编码帧经 frame 回调交出；
+// 屏幕声音由 SDK 在本进程播放。已在观看时返回 VOLC_ERR_STATE。cb 与 frame 在 volc_watch_stop 返回前保持有效。
+int32_t volc_watch_start(const volc_watch* watch, volc_event_fn cb, volc_frame_fn frame, void* user, int32_t* sdk_rc);
+
+// 订阅分享者的屏幕画面与声音。分享者重新发布后需再次调用。
+int32_t volc_watch_subscribe(int32_t* sdk_rc);
+
+// 请求分享者发送关键帧，用于开始或重新开始解码。
+int32_t volc_watch_key_frame(int32_t* sdk_rc);
+
+// 更换观看令牌。
+int32_t volc_watch_token(const char* token, int32_t* sdk_rc);
+
+// 停止观看并离房。返回后不再触发观看回调。未在观看时无操作。
+void volc_watch_stop(void);
 
 #ifdef __cplusplus
 }

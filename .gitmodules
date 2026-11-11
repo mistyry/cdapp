@@ -1,3 +1,7 @@
 [submodule "third_party/VolcEngineRTC"]
 	path = third_party/VolcEngineRTC
 	url = https://github.com/volcengine/VolcEngineRTC.git
+[submodule "third_party/AgoraAPIExamples"]
+	path = third_party/AgoraAPIExamples
+	url = https://github.com/AgoraIO/API-Examples.git
+	shallow = true

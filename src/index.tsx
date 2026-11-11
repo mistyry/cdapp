@@ -1,7 +1,13 @@
 /* @refresh reload */
 import { render } from "solid-js/web";
 import App from "./App";
+import PipView from "./components/layout/PipView";
 import { hasBackdrop, platform } from "./lib/platform";
+import "./styles/theme.css";
+import "./styles/layout.css";
+
+// 悬浮窗与主窗口共用同一页面，以查询参数 pip=<观看代次> 区分，见 commands::share::watch_pip_open。
+const pip = Number(new URLSearchParams(location.search).get("pip") ?? 0);
 
 // 原生拖放已关闭：未被聊天区接收的文件拖放一律取消，避免窗口导航到 file:// 地址而丢失应用状态。
 const isFileDrag = (e: DragEvent) => [...(e.dataTransfer?.types ?? [])].includes("Files");
@@ -18,7 +24,12 @@ void hasBackdrop().then((ok) => {
   if (ok) document.documentElement.dataset.backdrop = "";
 });
 
-render(() => <App />, document.getElementById("root") as HTMLElement);
+if (pip > 0) {
+  document.documentElement.dataset.pip = "";
+  render(() => <PipView generation={pip} />, document.getElementById("root") as HTMLElement);
+} else {
+  render(() => <App />, document.getElementById("root") as HTMLElement);
+}
 
 // 图片、图标与链接不可拖出，选中的消息文字仍可拖动。
 document.addEventListener("dragstart", (e) => {

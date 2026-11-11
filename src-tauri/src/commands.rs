@@ -241,12 +241,16 @@ fn stop_voice(app: &AppHandle) {
     });
 }
 
-/// 停止屏幕分享并等待引擎销毁。分享依附语音，退出、切换语音与退出登录前调用。
-/// 分享会话另有每秒检查语音的兜底，此处让停止立即发生。
+/// 停止屏幕分享与观看并等待引擎销毁。二者都依附语音，退出、切换语音与退出登录前调用。
+/// 分享与观看会话另由语音会话结束信号兜底，此处让停止立即发生。
 pub(crate) async fn stop_share(app: &AppHandle) {
     #[cfg(windows)]
     {
         use tauri::Manager;
+        let old = app.state::<WatchState>().0.lock().await.session.take();
+        if let Some(w) = old {
+            w.stop().await;
+        }
         let old = app.state::<ShareState>().0.lock().await.session.take();
         if let Some(s) = old {
             s.stop().await;

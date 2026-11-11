@@ -1,7 +1,10 @@
 import { For, type JSX, Show, createSignal, onCleanup } from "solid-js";
 import { Portal } from "solid-js/web";
-import { Headphones, LogOut, Mic, Volume2 } from "lucide-solid";
-import { dropSelfFromVoice, session } from "../../stores/session";
+import { Headphones, LogOut, Mic, MonitorPlay, Volume2 } from "lucide-solid";
+import { dropSelfFromVoice, liveOf, session } from "../../stores/session";
+import { share } from "../../stores/share";
+import { startWatch, watch, watching } from "../../stores/watch";
+import ScreenView from "./ScreenView";
 import { disconnectVoice, isSpeaking, mic, micFailed, output, setPeerVolume, toggleDeafen, toggleMic, togglePeerMute, voice, voiceActive, volumeOf as peerVolume, type VoicePeer } from "../../stores/voice";
 import { HeadphoneOffIcon, MicOffIcon, SpeakerOffMark, VoiceIcon } from "../common/icons";
 import { DeviceMenu, VolumeTrack, setVolumeOf, volumeOf, type AudioKind } from "./AudioPanel";
@@ -58,6 +61,8 @@ function HoverVolume(p: { label: string; value: () => number; set: (v: number) =
 function Card(p: { peer: VoicePeer }) {
   const self = () => p.peer.id === voice.me?.id;
   const name = () => p.peer.name || "未知用户";
+  // 他人的屏幕分享状态来自频道成员列表，本人以推流状态为准。
+  const live = () => (self() ? share.phase === "live" : Boolean(liveOf(voice.channelId, p.peer.id)));
   // 本人服务器闭麦与静音优先于本地开关。
   const micOff = () => p.peer.serverMute || mic.muted || micFailed();
   const headsetOff = () => Boolean(p.peer.serverDeafen) || output.deafened;
@@ -78,6 +83,15 @@ function Card(p: { peer: VoicePeer }) {
       <div class="stage-art">
         <Show when={p.peer.avatar} fallback={<span class="stage-initial">{name().slice(0, 1)}</span>}>
           {(src) => <img src={src()} alt="" draggable={false} referrerPolicy="no-referrer" />}
+        </Show>
+        <Show when={live()}>
+          <span class="stage-live">LIVE</span>
+          <span class="stage-sharing">正在屏幕共享</span>
+          <Show when={!self()}>
+            <button class="stage-watch" onClick={() => void startWatch(voice.channelId, p.peer.id)}>
+              <MonitorPlay size={18} />观看屏幕共享
+            </button>
+          </Show>
         </Show>
       </div>
       <div class="stage-ctrl">
@@ -126,15 +140,19 @@ export default function VoiceStage() {
   const peers = () => (voice.me ? [voice.me, ...voice.peers] : voice.peers);
   const ch = () => channelOf(voice.channelId);
   return (
-    <section class="voice-stage" aria-label="语音频道">
+    <section class={`voice-stage ${watching() && watch.mode === "stage" ? "watching" : ""}`} aria-label="语音频道">
       <div class="stage-head">
         <span class="stage-icon"><VoiceIcon /></span>
         <span class="stage-title">{ch()?.name ?? "语音频道"}</span>
         <span class="stage-count">{peers().length}{ch()?.limit ? ` / ${ch()!.limit}` : ""}</span>
       </div>
-      <div class="stage-grid">
-        <For each={peers()}>{(peer) => <Card peer={peer} />}</For>
-      </div>
+      <Show when={watching() && watch.mode === "stage"} fallback={
+        <div class="stage-grid">
+          <For each={peers()}>{(peer) => <Card peer={peer} />}</For>
+        </div>
+      }>
+        <ScreenView />
+      </Show>
     </section>
   );
 }

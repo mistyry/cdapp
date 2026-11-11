@@ -9,10 +9,17 @@ pub enum ShareSdk {
 }
 
 /// 校验并下载屏幕分享组件，就绪后加载。只执行一次，之后返回首次的结果。不需要登录。
+/// 火山就绪后在后台准备 Agora 观看组件，二者都设置进程的 DLL 搜索目录，须依次加载。
 #[tauri::command]
 pub async fn share_sdk_sync() -> ShareSdk {
     #[cfg(windows)]
-    return crate::share::sdk::sync().await;
+    {
+        let s = crate::share::sdk::sync().await;
+        if matches!(s, ShareSdk::Ready { .. }) {
+            tauri::async_runtime::spawn(crate::share::agora_sdk::sync());
+        }
+        s
+    }
     #[cfg(not(windows))]
     ShareSdk::Unavailable {
         message: "当前系统暂不支持屏幕分享".into(),
@@ -220,4 +227,191 @@ mod win {
             })
             .await
     }
+
+    /// 当前观看会话与代次。同一时间只看一人。
+    #[derive(Default)]
+    pub struct WatchSlot {
+        pub session: Option<crate::share::watch::Session>,
+        pub generation: u64,
+    }
+
+    #[derive(Default)]
+    pub struct WatchState(pub tokio::sync::Mutex<WatchSlot>);
+
+    #[derive(Clone, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct WatchPayload {
+        generation: u64,
+        state: crate::share::watch::WatchState,
+    }
+
+    /// 观看他人的屏幕分享，返回会话代次。须已在该频道语音中。已在观看时先停止旧的。
+    /// 编码后的画面经 `frames` 发送，格式见 `share::watch`；状态以 `watch://event` 广播。
+    #[tauri::command]
+    pub async fn watch_start(
+        channel_id: String,
+        liver: String,
+        frames: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
+        app: AppHandle,
+        state: State<'_, Mutex<AppState>>,
+        voice: State<'_, VoiceState>,
+        watch: State<'_, WatchState>,
+    ) -> AppResult<u64> {
+        use crate::share::watch::{Request, Session, StateSink};
+        ready()?;
+        let api = api(&state)?;
+        let me = lock(&state)?.gate.me.clone().ok_or(AppError::NotLoggedIn)?;
+        if me == liver {
+            return Err(AppError::Other("不能观看自己的屏幕分享".into()));
+        }
+        let voice_ended = {
+            let slot = voice.0.lock().await;
+            match slot
+                .session
+                .as_ref()
+                .filter(|s| s.channel_id == channel_id && !s.is_finished())
+            {
+                Some(s) => s.ended(),
+                None => return Err(AppError::Other("请先加入该语音频道".into())),
+            }
+        };
+        let mut slot = watch.0.lock().await;
+        if let Some(old) = slot.session.take() {
+            old.stop().await;
+        }
+        slot.generation += 1;
+        let generation = slot.generation;
+        let sink: StateSink = Arc::new(move |s| {
+            if let Err(e) = app.emit(
+                "watch://event",
+                WatchPayload {
+                    generation,
+                    state: s,
+                },
+            ) {
+                log::warn!("事件广播失败：{e}");
+            }
+        });
+        let frame_sink = Box::new(move |msg: Vec<u8>| {
+            frames
+                .send(tauri::ipc::InvokeResponseBody::Raw(msg))
+                .map_err(|e| e.to_string())
+        });
+        log::info!("开始观看屏幕分享");
+        slot.session = Some(Session::start(
+            api,
+            Request {
+                channel_id,
+                user_id: me,
+                liver,
+            },
+            generation,
+            sink,
+            frame_sink,
+            Box::pin(voice_ended.wait()),
+        ));
+        Ok(generation)
+    }
+
+    /// 停止观看并等待离房。
+    #[tauri::command]
+    pub async fn watch_stop(watch: State<'_, WatchState>) -> AppResult<()> {
+        let old = watch.0.lock().await.session.take();
+        if let Some(s) = old {
+            s.stop().await;
+        }
+        Ok(())
+    }
+
+    /// 前端解码器需要从关键帧重新开始时调用。`generation` 不是当前会话时无操作。
+    #[tauri::command]
+    pub async fn watch_key_frame(generation: u64, watch: State<'_, WatchState>) -> AppResult<()> {
+        let slot = watch.0.lock().await;
+        if let Some(s) = slot
+            .session
+            .as_ref()
+            .filter(|s| s.generation == generation && !s.is_finished())
+        {
+            s.key_frame();
+        }
+        Ok(())
+    }
+
+    /// 画面改发到调用方页面的通道，用于在主窗口与悬浮窗之间切换，观看不中断。
+    /// `generation` 不是当前会话时返回错误，调用方据此关闭自己。
+    #[tauri::command]
+    pub async fn watch_redirect(
+        generation: u64,
+        frames: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
+        watch: State<'_, WatchState>,
+    ) -> AppResult<()> {
+        let slot = watch.0.lock().await;
+        let s = slot
+            .session
+            .as_ref()
+            .filter(|s| s.generation == generation && !s.is_finished())
+            .ok_or_else(|| AppError::Other("观看已结束".into()))?;
+        s.redirect(Box::new(move |msg: Vec<u8>| {
+            frames
+                .send(tauri::ipc::InvokeResponseBody::Raw(msg))
+                .map_err(|e| e.to_string())
+        }));
+        log::info!("屏幕分享画面改发到新窗口");
+        Ok(())
+    }
+
+    /// 打开悬浮窗：无边框、置顶的小窗，页面以 `?pip=<代次>` 区分，自行调用 `watch_redirect` 接管画面。
+    /// 已打开时只把它带到前台。
+    #[tauri::command]
+    pub async fn watch_pip_open(generation: u64, app: AppHandle) -> AppResult<()> {
+        use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+        if let Some(w) = app.get_webview_window(PIP_LABEL) {
+            let _ = w.show();
+            let _ = w.set_focus();
+            return Ok(());
+        }
+        // 放在主窗口所在显示器的右下角。
+        let (x, y) = app
+            .get_webview_window("main")
+            .and_then(|m| m.current_monitor().ok().flatten())
+            .map_or((100.0, 100.0), |mon| {
+                let s = mon.scale_factor();
+                let (p, z) = (mon.position(), mon.size());
+                (
+                    f64::from(p.x) / s + f64::from(z.width) / s - PIP_W - 24.0,
+                    f64::from(p.y) / s + f64::from(z.height) / s - PIP_H - 72.0,
+                )
+            });
+        WebviewWindowBuilder::new(
+            &app,
+            PIP_LABEL,
+            WebviewUrl::App(format!("index.html?pip={generation}").into()),
+        )
+        .title("屏幕共享")
+        .inner_size(PIP_W, PIP_H)
+        .min_inner_size(240.0, 135.0)
+        .position(x, y)
+        .decorations(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .shadow(true)
+        .focused(false)
+        .build()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+        Ok(())
+    }
+
+    /// 关闭悬浮窗。未打开时无操作。
+    #[tauri::command]
+    pub async fn watch_pip_close(app: AppHandle) -> AppResult<()> {
+        use tauri::Manager;
+        if let Some(w) = app.get_webview_window(PIP_LABEL) {
+            w.destroy().map_err(|e| AppError::Other(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    pub const PIP_LABEL: &str = "pip";
+    const PIP_W: f64 = 480.0;
+    const PIP_H: f64 = 270.0;
 }
