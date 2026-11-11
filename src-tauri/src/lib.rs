@@ -154,6 +154,8 @@ pub fn run() {
             commands::share_start,
             #[cfg(windows)]
             commands::share_stop,
+            #[cfg(windows)]
+            commands::share_update,
             commands::effect_play,
             commands::effect_play_item,
             commands::set_effect_volume,

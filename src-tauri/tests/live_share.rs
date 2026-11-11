@@ -7,16 +7,21 @@
 //! - `CDAPP_LIVE_AUDIO=1`：带屏幕声音，排除本进程。
 //! - `CDAPP_LIVE_SELF_TONE=<频率>`：本进程播放正弦波，并测量推出的声音中该频率与
 //!   `CDAPP_LIVE_OTHER_TONE` 频率的能量，检验是否排除本进程。
+//! - `CDAPP_LIVE_LIFECYCLE=1`：生命周期，需 `test-media`。推流中续期令牌，改为 720p30 再改回 1080p30，
+//!   最后模拟语音结束，确认推流随之结束。各步之间间隔 `CDAPP_LIVE_SECS` 的四分之一。
 #![cfg(windows)]
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use cdapp_lib::kook::api::Api;
 use cdapp_lib::kook::golive::Tier;
 use cdapp_lib::share::bridge::{self, SourceKind};
+#[cfg(feature = "test-media")]
+use cdapp_lib::share::fit::fit;
 use cdapp_lib::share::sdk::{self, Status};
-use cdapp_lib::share::session::{Request, Session, ShareEvent, Sink};
+use cdapp_lib::share::session::{Request, Session, ShareEvent, Sink, VoiceAlive};
 
 fn env(key: &str) -> String {
     std::env::var(key)
@@ -82,6 +87,65 @@ fn db(x: &[f32], f: f32) -> f32 {
     20.0 * ((re * re + im * im).sqrt() / len + 1e-9).log10()
 }
 
+/// 生命周期：续期、改档两次、模拟语音结束。每步打印时间点，供观看端日志对照。
+/// `source` 为显示器尺寸，预期编码尺寸按宽高比换算，不写死 16:9。
+#[cfg(feature = "test-media")]
+async fn lifecycle(
+    session: &Session,
+    secs: u64,
+    source: (u32, u32),
+    in_voice: &AtomicBool,
+    log: &Arc<Mutex<Vec<ShareEvent>>>,
+) {
+    let gap = Duration::from_secs((secs / 4).max(10));
+    let t0 = std::time::Instant::now();
+    let at = || t0.elapsed().as_secs();
+    tokio::time::sleep(gap).await;
+    session.renew().await.expect("续期失败");
+    println!("步骤 {}s 已续期令牌", at());
+    tokio::time::sleep(gap).await;
+    let low = Tier {
+        resolution: 720,
+        frame_rate: 30,
+        mode: 0,
+    };
+    session.update(low).await.expect("改为 720p 失败");
+    println!("步骤 {}s 已改为 720p30", at());
+    tokio::time::sleep(gap).await;
+    let high = Tier {
+        resolution: 1080,
+        frame_rate: 30,
+        mode: 0,
+    };
+    session.update(high).await.expect("改回 1080p 失败");
+    println!("步骤 {}s 已改回 1080p30", at());
+    tokio::time::sleep(gap).await;
+    in_voice.store(false, Ordering::SeqCst);
+    println!("步骤 {}s 模拟语音结束", at());
+    for _ in 0..50 {
+        if session.is_finished() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(session.is_finished(), "语音结束后推流仍在");
+    println!("步骤 {}s 推流已随语音结束", at());
+    let events = log.lock().unwrap();
+    let tiers: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            ShareEvent::Tier { width, height, .. } => Some((*width, *height)),
+            _ => None,
+        })
+        .collect();
+    let want = [fit(720, source), fit(1080, source)];
+    assert_eq!(tiers, want, "{events:?}");
+    assert!(
+        matches!(events.last(), Some(ShareEvent::Ended { message: Some(m) }) if m.contains("语音")),
+        "{events:?}"
+    );
+}
+
 #[test]
 #[ignore = "需要真实账号与语音频道"]
 #[allow(clippy::too_many_lines)]
@@ -136,6 +200,13 @@ fn pushes_primary_screen() {
             }
             l.lock().unwrap().push(e);
         });
+        // 测试进程没有 cdapp 的语音会话。语音实际由 voice.py 维持，这里用开关模拟其状态。
+        let in_voice = Arc::new(AtomicBool::new(true));
+        let v = in_voice.clone();
+        let voice: VoiceAlive = Arc::new(move || {
+            let alive = v.load(Ordering::SeqCst);
+            Box::pin(async move { alive })
+        });
         let session = Session::start(
             Api::new(Some(env("CDAPP_LIVE_TOKEN"))).unwrap(),
             Request {
@@ -153,7 +224,20 @@ fn pushes_primary_screen() {
             },
             1,
             sink,
+            voice,
         );
+        #[cfg(feature = "test-media")]
+        if std::env::var("CDAPP_LIVE_LIFECYCLE").is_ok_and(|v| v == "1") {
+            lifecycle(
+                &session,
+                secs,
+                (screen.width, screen.height),
+                &in_voice,
+                &log,
+            )
+            .await;
+            return;
+        }
         for _ in 0..secs / 5 {
             tokio::time::sleep(Duration::from_secs(5)).await;
             #[cfg(feature = "test-media")]

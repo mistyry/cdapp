@@ -26,9 +26,14 @@ pub async fn storage_info() -> AppResult<StorageInfo> {
     .map_err(|e| crate::error::AppError::Other(e.to_string()))
 }
 
-/// 迁移数据到新位置。先断开语音，成功后需调用 restart。
+/// 迁移数据到新位置。先停屏幕分享并断开语音，成功后需调用 restart。
 #[tauri::command]
-pub async fn storage_relocate(path: PathBuf, voice: State<'_, VoiceState>) -> AppResult<()> {
+pub async fn storage_relocate(
+    path: PathBuf,
+    app: tauri::AppHandle,
+    voice: State<'_, VoiceState>,
+) -> AppResult<()> {
+    super::stop_share(&app).await;
     let old = voice.0.lock().await.session.take();
     if let Some(s) = old {
         s.leave().await;

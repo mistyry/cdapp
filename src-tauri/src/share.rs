@@ -5,3 +5,4 @@ pub mod fit;
 pub mod loopback;
 pub mod sdk;
 pub mod session;
+pub mod source;

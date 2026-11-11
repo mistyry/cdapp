@@ -228,16 +228,32 @@ fn check(
     lock(state)?.gate.check(channel_id, need)
 }
 
-/// 凭据失效后在后台退出语音。
+/// 凭据失效后在后台退出语音，先停屏幕分享。
 fn stop_voice(app: &AppHandle) {
     use tauri::Manager;
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
+        stop_share(&app).await;
         let old = app.state::<VoiceState>().0.lock().await.session.take();
         if let Some(v) = old {
             v.leave().await;
         }
     });
+}
+
+/// 停止屏幕分享并等待引擎销毁。分享依附语音，退出、切换语音与退出登录前调用。
+/// 分享会话另有每秒检查语音的兜底，此处让停止立即发生。
+pub(crate) async fn stop_share(app: &AppHandle) {
+    #[cfg(windows)]
+    {
+        use tauri::Manager;
+        let old = app.state::<ShareState>().0.lock().await.session.take();
+        if let Some(s) = old {
+            s.stop().await;
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = app;
 }
 
 #[cfg(test)]

@@ -62,6 +62,8 @@ pub async fn voice_join(
     // 服务端不校验查看与连接权限，须在申请令牌前拦截。
     check(&state, &channel_id, Need::Connect)?;
     let token = api.token().unwrap_or_default().to_owned();
+    // 分享依附原语音频道，加入或切换前先停。
+    super::stop_share(&app).await;
     let mut slot = voice.0.lock().await;
     // 前端按序号发出请求，但拿锁顺序不定。已被后发的加入或退出取代时不再加入。
     if !slot.admit_join(request) {
@@ -144,9 +146,14 @@ pub async fn voice_join(
 }
 
 /// 退出语音，等待旧连接释放。`request` 为前端请求序号，序号更小的在途加入随之作废。
-/// 退出登录等无序号的调用只释放当前会话。
+/// 退出登录等无序号的调用只释放当前会话。先停屏幕分享。
 #[tauri::command]
-pub async fn voice_leave(request: Option<u64>, voice: State<'_, VoiceState>) -> AppResult<()> {
+pub async fn voice_leave(
+    request: Option<u64>,
+    app: AppHandle,
+    voice: State<'_, VoiceState>,
+) -> AppResult<()> {
+    super::stop_share(&app).await;
     let old = {
         let mut slot = voice.0.lock().await;
         slot.note_leave(request);

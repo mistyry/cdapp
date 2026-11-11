@@ -87,6 +87,7 @@ pub async fn login_qr_cancel(content: String) -> AppResult<()> {
 /// 删除在任何 await 之前完成，退出期间并发完成的新登录不会被删掉。删除失败时内存状态仍已清空。
 #[tauri::command]
 pub async fn logout(
+    app: tauri::AppHandle,
     state: State<'_, Mutex<AppState>>,
     voice: State<'_, VoiceState>,
 ) -> AppResult<()> {
@@ -101,6 +102,7 @@ pub async fn logout(
         };
         auth::clear_token()
     };
+    super::stop_share(&app).await;
     let old = {
         let mut slot = voice.0.lock().await;
         slot.reset_account();
