@@ -1,8 +1,11 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal } from "solid-js";
 import { Folder, MessageCircleMore, Plus, RotateCw } from "lucide-solid";
 import { DM_VIEW, ui, setUi } from "../../stores/ui";
-import { dmUnreadTotal, guildUnread, loadFolders, openDm, selectGuild, session } from "../../stores/session";
+import { dmUnreadTotal, guildOfAny, guildUnread, loadFolders, openDm, selectGuild, session } from "../../stores/session";
+import { voice, voiceActive } from "../../stores/voice";
+import { sharing } from "../../stores/share";
 import { buildRail, folderTint, readOpen, writeOpen } from "../../lib/guildFolders";
+import { GuildScreenMark, GuildVoiceMark } from "../common/icons";
 import Avatar from "../common/Avatar";
 import GuildIcon from "../common/GuildIcon";
 
@@ -16,6 +19,23 @@ const press = (f: () => void, hit = ".guild-btn, .me-entry, .folder-btn") => ({
 
 const count = (n: number) => (n > 99 ? "99+" : n);
 
+// 右下角状态，与官方优先级一致：本人分享、本人语音、他人分享。
+type Mark = "self-share" | "voice" | "screen" | null;
+function guildMark(ids: string[]): Mark {
+  const vg = voiceActive() ? guildOfAny(voice.channelId)?.id ?? "" : "";
+  if (vg && ids.includes(vg)) return sharing() ? "self-share" : "voice";
+  return ids.some((id) => (session.guilds.find((g) => g.id === id)?.liveCount ?? 0) > 0) ? "screen" : null;
+}
+const MARK_NAME = { "self-share": "正在屏幕分享", voice: "正在语音", screen: "有人在屏幕分享" } as const;
+
+function StatusMark(p: { mark: Mark }) {
+  return (
+    <Show when={p.mark}>
+      {(m) => <span class={`guild-mark ${m()}`} role="img" aria-label={MARK_NAME[m()]}>{m() === "voice" ? <GuildVoiceMark /> : <GuildScreenMark />}</span>}
+    </Show>
+  );
+}
+
 function GuildEntry(p: { id: string }) {
   const g = () => session.guilds.find((x) => x.id === p.id);
   const u = () => guildUnread(p.id);
@@ -25,6 +45,7 @@ function GuildEntry(p: { id: string }) {
         <div class={`guild-item ${ui.view === p.id ? "active" : ""} ${u().unread ? "unread" : ""}`} data-tip-side="right" data-tip={g().name} aria-label={u().mentions ? `${g().name}，${u().mentions} 条提及` : g().name} aria-current={ui.view === p.id} {...press(() => void selectGuild(p.id))}>
           <GuildIcon name={g().name} icon={g().icon} />
           <span class="ring" />
+          <StatusMark mark={guildMark([p.id])} />
           <Show when={u().mentions}><span class="badge">{count(u().mentions)}</span></Show>
         </div>
       )}
@@ -83,6 +104,7 @@ export default function GuildBar() {
                           <div class="folder-btn folder-glyph" style={{ color: folderTint(f().color, 1) }}><Folder size={24} fill="currentColor" /></div>
                         </Show>
                         <span class="ring" />
+                        <Show when={!expanded()}><StatusMark mark={guildMark(f().guildIds)} /></Show>
                         <Show when={!expanded() && sum().mentions}><span class="badge">{count(sum().mentions)}</span></Show>
                       </div>
                       <Show when={expanded()}>

@@ -15,7 +15,7 @@ import RangeSlider from "../common/RangeSlider";
 import Avatar from "../common/Avatar";
 import { DenoiseMenu, DeviceMenu, VolumePop, type AudioKind } from "./AudioPanel";
 import { openSharePicker } from "./ScreenSharePicker";
-import { Caret, DenoiseOff, SpeakerOffMark, KookHash, LockIcon, VoiceIcon } from "../common/icons";
+import { Caret, DenoiseOff, HeadphoneOffIcon, MicOffIcon, SpeakerOffMark, KookHash, LockIcon, VoiceIcon } from "../common/icons";
 import { channelIcon } from "../../lib/channelIcon";
 
 // 语音成员右键菜单。对本人提供麦克风与耳机开关，对他人提供音量调节。
@@ -438,28 +438,28 @@ function VoiceBox() {
           <div class="ctrl-wrap" {...hoverProps("input")} onContextMenu={(e) => openMenu(e, "input")}>
             <button
               ref={inBtn}
-              class={`icon-btn ${mic.muted || micFailed() ? "danger" : ""}`}
+              class="icon-btn"
               disabled={mic.busy}
               aria-pressed={mic.muted}
               aria-haspopup="menu"
               aria-label={mic.muted ? "取消静音" : "静音"}
               onClick={() => void toggleMic()}
             >
-              {mic.muted || micFailed() ? <MicOff size={20} /> : <Mic size={20} />}
+              {mic.muted || micFailed() ? <MicOffIcon size={20} /> : <Mic size={20} />}
             </button>
             <Show when={hover() === "input" && !menu()}><VolumePop kind="input" onDrag={setDragging} /></Show>
           </div>
           <div class="ctrl-wrap" {...hoverProps("output")} onContextMenu={(e) => openMenu(e, "output")}>
             <button
               ref={outBtn}
-              class={`icon-btn ${output.deafened ? "danger" : ""}`}
+              class="icon-btn"
               disabled={output.busy}
               aria-pressed={output.deafened}
               aria-haspopup="menu"
               aria-label={output.deafened ? "打开耳机" : "关闭耳机"}
               onClick={() => void toggleDeafen()}
             >
-              {output.deafened ? <HeadphoneOff size={20} /> : <Headphones size={20} />}
+              {output.deafened ? <HeadphoneOffIcon size={20} /> : <Headphones size={20} />}
             </button>
             <Show when={hover() === "output" && !menu()}><VolumePop kind="output" onDrag={setDragging} /></Show>
           </div>

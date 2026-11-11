@@ -31,7 +31,7 @@ export async function loadGuilds() {
   try {
     const list = await api.guilds();
     if (gen !== st.account) return;
-    setSession("guilds", list.map((g) => ({ id: String(g.id), name: g.name, icon: g.icon || undefined, groups: [] })));
+    setSession("guilds", list.map((g) => ({ id: String(g.id), name: g.name, icon: g.icon || undefined, groups: [], liveCount: Number(g.live_count) || 0 })));
   } catch (e) {
     if (gen !== st.account) return;
     setSession("loadFailed", true);

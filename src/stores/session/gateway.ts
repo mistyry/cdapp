@@ -326,7 +326,8 @@ export function onSystem(c: Raw | null, target = "") {
     }
     case "updated_guild": {
       const i = session.guilds.findIndex((g) => g.id === body.id);
-      if (i >= 0) setSession("guilds", i, { name: body.name, icon: body.icon || undefined });
+      // live_count 为该服务器正在屏幕分享的人数，开播与停播时随此事件推送。
+      if (i >= 0) setSession("guilds", i, { name: body.name, icon: body.icon || undefined, ...(body.live_count != null && { liveCount: Number(body.live_count) || 0 }) });
       // 频道覆盖变化只推送此事件：同时刷新角色依据与频道覆盖。
       const gid = String(body.id ?? "");
       if (i >= 0 && visited.has(gid)) refreshGuild(gid);

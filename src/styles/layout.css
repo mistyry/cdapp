@@ -38,6 +38,15 @@
 .guild-item.unread:not(.active)::before { height: 8px; background: var(--c-text); }
 .guild-item:not(.active):hover::before { height: 20px; background: var(--c-text); }
 .guild-item .badge { position: absolute; right: 10px; bottom: 6px; }
+/* 右下角状态角标：本人语音、本人分享、他人分享。有角标时提及数移到右上角。 */
+.guild-mark {
+  position: absolute; right: 10px; bottom: 6px; width: 20px; height: 20px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; color: #fff;
+  background: var(--c-good); box-shadow: 0 0 0 3px var(--c-app-solid); pointer-events: none;
+}
+.guild-mark.screen { background: var(--c-brand); }
+.guild-mark.self-share { background: var(--c-danger); }
+.guild-mark ~ .badge { bottom: auto; top: 6px; }
 .folder.open { margin: 0 12px 4px; border-radius: 16px; background: var(--folder-bg); }
 .folder.open .guild-item::before { left: -12px; }
 .folder-btn {

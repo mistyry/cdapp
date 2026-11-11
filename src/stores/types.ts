@@ -24,7 +24,7 @@ export type MemberList = {
 };
 // loose：未归属分组的顶层频道，不显示分组标题。
 export type Group = { id: string; name: string; loose?: boolean; channels: Channel[] };
-export type Guild = { id: string; name: string; icon?: string; groups: Group[]; loaded?: boolean; failed?: boolean };
+export type Guild = { id: string; name: string; icon?: string; groups: Group[]; loaded?: boolean; failed?: boolean; liveCount?: number };
 // 引用的消息。id 为被引用消息的 rong_id；gone 表示已收到其删除事件。
 export type Quote = { id?: string; authorId?: string; author: string; type: number; content: string; text: string; gone?: boolean };
 // 消息回应。id 为表情 ID（Unicode 表情即字符本身，用于请求与事件匹配）；name 仅用于显示。

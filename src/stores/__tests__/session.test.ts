@@ -2989,6 +2989,16 @@ test("updated_guild 合并刷新角色依据与频道覆盖", async () => {
   expect(calls.filter((c) => c.cmd === "channels").length).toBe(1);
 });
 
+test("updated_guild 更新屏幕分享人数，缺少字段时保留原值", async () => {
+  await selectGuild("A");
+  sys("updated_guild", { id: "A", name: "A", live_count: 1 });
+  expect(session.guilds.find((g) => g.id === "A")?.liveCount).toBe(1);
+  sys("updated_guild", { id: "A", name: "A" });
+  expect(session.guilds.find((g) => g.id === "A")?.liveCount).toBe(1);
+  sys("updated_guild", { id: "A", name: "A", live_count: 0 });
+  expect(session.guilds.find((g) => g.id === "A")?.liveCount).toBe(0);
+});
+
 test("连续点击两个语音频道，只加入后点击的频道；取消密码后进行中的加入作废", async () => {
   auto.voice_join = () => 1;
   auto.channels = () => [raw("A-t1", "t1"), vraw("V1"), vraw("V2", [], { hasPassword: true })];

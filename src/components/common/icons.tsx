@@ -67,6 +67,47 @@ export function DenoiseOff(p: { size?: number }) {
   );
 }
 
+// 麦克风关闭：沿用 lucide mic-off 的路径，斜杠用警示色。
+export function MicOffIcon(p: { size?: number }) {
+  const s = p.size ?? 20;
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M12 19v3M15 9.34V5a3 3 0 0 0-5.68-1.33M16.95 16.95A7 7 0 0 1 5 12v-2M18.89 13.23A7 7 0 0 0 19 12v-2M9 9v3a3 3 0 0 0 5.12 2.12" />
+      <path d="m2 2 20 20" stroke="var(--c-danger)" />
+    </svg>
+  );
+}
+
+// 耳机关闭：沿用 lucide headphone-off 的路径，斜杠用警示色。
+export function HeadphoneOffIcon(p: { size?: number }) {
+  const s = p.size ?? 20;
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M21 14h-1.343M9.128 3.47A9 9 0 0 1 21 12v3.343M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 2.636-6.364M20.414 20.414A2 2 0 0 1 19 21h-1a2 2 0 0 1-2-2v-3" />
+      <path d="m2 2 20 20" stroke="var(--c-danger)" />
+    </svg>
+  );
+}
+
+// 服务器栏角标：喇叭表示本人正在该服务器语音，屏幕表示有人在屏幕分享。
+export function GuildVoiceMark() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M11 5 6 9H2v6h4l5 4z" fill="currentColor" />
+      <path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14" />
+    </svg>
+  );
+}
+
+export function GuildScreenMark() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="2" y="4" width="20" height="13" rx="2" />
+      <path d="M8 21h8M12 17v4" />
+    </svg>
+  );
+}
+
 // 成员已被本地静音。喇叭取自 lucide Volume2，斜杠为危险色。
 export function SpeakerOffMark(p: { size?: number }) {
   const s = p.size ?? 20;
