@@ -182,15 +182,24 @@ fn pushes_primary_screen() {
         let s = sdk::sync().await;
         assert!(matches!(s, Status::Ready { .. }), "{s:?}");
         bridge::set_log_dir(&dir.join("sdklog")).unwrap();
+        // CDAPP_LIVE_WINDOW 按标题选窗口，优先于 CDAPP_LIVE_SCREEN。
+        let want_window = std::env::var("CDAPP_LIVE_WINDOW").ok();
         let want = std::env::var("CDAPP_LIVE_SCREEN").ok();
         let screen = bridge::sources()
             .unwrap()
             .into_iter()
-            .find(|s| {
-                s.kind == SourceKind::Screen && want.as_deref().map_or(s.primary, |n| s.name == n)
+            .find(|s| match &want_window {
+                Some(t) => s.kind == SourceKind::Window && s.name == *t,
+                None => {
+                    s.kind == SourceKind::Screen
+                        && want.as_deref().map_or(s.primary, |n| s.name == n)
+                }
             })
-            .expect("找不到显示器");
-        println!("源 {} {}x{}", screen.name, screen.width, screen.height);
+            .expect("找不到共享源");
+        println!(
+            "源 {:?} {} {}x{} pid={}",
+            screen.kind, screen.name, screen.width, screen.height, screen.pid
+        );
 
         let log: Arc<Mutex<Vec<ShareEvent>>> = Arc::default();
         let l = log.clone();
@@ -212,9 +221,9 @@ fn pushes_primary_screen() {
             Request {
                 channel_id: env("CDAPP_LIVE_VOICE"),
                 user_id: env("CDAPP_LIVE_USER"),
-                source_kind: SourceKind::Screen,
+                source_kind: screen.kind,
                 source_id: screen.id,
-                source_pid: 0,
+                source_pid: screen.pid,
                 tier: Tier {
                     resolution: 1080,
                     frame_rate: 30,

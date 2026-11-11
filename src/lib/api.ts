@@ -94,6 +94,21 @@ export type StorageInfo = {
 
 // 后端 commands::share::ShareSdk。
 export type ShareSdk = { status: "ready"; version: string } | { status: "unavailable"; message: string };
+// 后端 share::bridge::Source。id 为窗口或显示器句柄的十进制字符串，只在本次运行中有效。
+export type ShareSource = {
+  kind: "screen" | "window"; id: string; pid: number; primary: boolean;
+  width: number; height: number; name: string; application: string;
+};
+// 后端 share::session::ShareEvent，经 share://event 以 {generation, event} 广播。
+export type ShareEvent =
+  | { kind: "live"; width: number; height: number }
+  | { kind: "tier"; resolution: number; frameRate: number; width: number; height: number }
+  | { kind: "stats"; kbps: number; fps: number; width: number; height: number }
+  | { kind: "ended"; message: string | null };
+export type ShareStart = {
+  channelId: string; sourceKind: "screen" | "window"; sourceId: string; sourcePid: number;
+  resolution: number; frameRate: number; audio: boolean;
+};
 
 export const api = {
   storageInfo: () => invoke<StorageInfo>("storage_info"),
@@ -109,6 +124,14 @@ export const api = {
     invoke<{ total: number; downloaded: number; failed: number }>("sound_sync", { progress }),
   denoiseSync: () => invoke<void>("denoise_sync"),
   shareSdkSync: () => invoke<ShareSdk>("share_sdk_sync"),
+  sharePreviewOpen: () => invoke<void>("share_preview_open"),
+  sharePreviewClose: () => invoke<void>("share_preview_close"),
+  shareSources: () => invoke<ShareSource[]>("share_sources"),
+  shareThumbnail: (kind: ShareSource["kind"], id: string) => invoke<string | null>("share_thumbnail", { kind, id }),
+  shareStart: (params: ShareStart) => invoke<number>("share_start", { params }),
+  shareStop: () => invoke<void>("share_stop"),
+  shareUpdate: (generation: number, resolution: number, frameRate: number) =>
+    invoke<void>("share_update", { generation, resolution, frameRate }),
   loginQrCode: () => invoke<string>("login_qr_code"),
   loginQrPoll: (content: string) => invoke<QrStatus>("login_qr_poll", { content }),
   loginQrCancel: (content: string) => invoke<void>("login_qr_cancel", { content }),

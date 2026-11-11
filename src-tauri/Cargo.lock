@@ -680,6 +680,7 @@ name = "cdapp"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "block2",
  "bytes",
  "cc",
@@ -694,6 +695,7 @@ dependencies = [
  "objc2-foundation",
  "objc2-web-kit",
  "opus",
+ "png",
  "rand",
  "reqwest",
  "rtc",

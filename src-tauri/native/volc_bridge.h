@@ -93,7 +93,20 @@ int32_t volc_log(const char* dir);
 // 没有引擎时用临时引擎，列完销毁。
 int32_t volc_sources(volc_source* out, int32_t cap);
 
-// 创建引擎、进房、开始采集。成功后等进房与首帧事件再调用 volc_publish。
+// 源缩略图，缩放到 max_w×max_h 以内并保持宽高比，转为 BGRA 写入 out。
+// out 至少 max_w*max_h*4 字节。成功时 *w、*h 为实际尺寸，返回 VOLC_OK。
+// 源不存在或格式不支持时返回 VOLC_ERR_SOURCE。
+int32_t volc_thumbnail(int32_t kind, uint64_t id, int32_t max_w, int32_t max_h, uint8_t* out, int32_t* w,
+                       int32_t* h);
+
+// 选源对话框打开期间保留一个预览引擎，列源与缩略图不再每次新建。已有引擎时无操作。
+// 开播时自动释放，之后需重新打开。
+int32_t volc_preview_open(void);
+
+// 释放预览引擎。推流中或未打开时无操作。
+void volc_preview_close(void);
+
+// 创建引擎、进房、开始采集。开播前释放预览引擎。成功后等进房与首帧事件再调用 volc_publish。
 // 已在推流时返回 VOLC_ERR_STATE。cb 在 volc_live_stop 返回前保持有效。
 int32_t volc_live_start(const volc_live* live, volc_event_fn cb, void* user, int32_t* sdk_rc);
 

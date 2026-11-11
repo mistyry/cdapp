@@ -67,6 +67,9 @@ objc2-web-kit = { version = "0.3", default-features = false, features = ["std", 
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_UI_HiDpi", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_Media_Audio", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Variant", "Win32_System_Threading"] }
 # `windows::core::implement` 展开后引用 `::windows_core`，须为直接依赖。已在依赖树中，MIT 或 Apache-2.0 许可。
 windows-core = "0.62"
+# 屏幕分享选源缩略图编码为 PNG 数据地址。均已在依赖树中，MIT 或 Apache-2.0 许可。
+png = "0.18"
+base64 = "0.22"
 # 解压火山 RTC SDK 压缩包，MIT 许可。压缩包只用 Deflate 与 Stored，复用 flate2。
 zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
 

@@ -149,7 +149,13 @@ pub fn run() {
             commands::denoise_sync,
             commands::share_sdk_sync,
             #[cfg(windows)]
+            commands::share_preview_open,
+            #[cfg(windows)]
+            commands::share_preview_close,
+            #[cfg(windows)]
             commands::share_sources,
+            #[cfg(windows)]
+            commands::share_thumbnail,
             #[cfg(windows)]
             commands::share_start,
             #[cfg(windows)]

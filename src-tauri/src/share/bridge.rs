@@ -49,6 +49,17 @@ mod ffi {
         pub fn volc_version() -> *const c_char;
         pub fn volc_log(dir: *const c_char) -> i32;
         pub fn volc_sources(out: *mut RawSource, cap: i32) -> i32;
+        pub fn volc_thumbnail(
+            kind: i32,
+            id: u64,
+            max_w: i32,
+            max_h: i32,
+            out: *mut u8,
+            w: *mut i32,
+            h: *mut i32,
+        ) -> i32;
+        pub fn volc_preview_open() -> i32;
+        pub fn volc_preview_close();
         pub fn volc_live_start(
             live: *const RawLive,
             cb: EventFn,
@@ -74,6 +85,7 @@ const ERR_NOT_STARTED: i32 = -1;
 const ERR_THREAD: i32 = -2;
 const ERR_LOAD: i32 = -3;
 const ERR_ENGINE: i32 = -4;
+const ERR_SOURCE: i32 = -5;
 const ERR_STATE: i32 = -6;
 const ERR_JOIN: i32 = -10;
 const ERR_ENCODER: i32 = -11;
@@ -93,6 +105,8 @@ pub enum BridgeError {
     Load(u32),
     #[error("屏幕分享引擎创建失败")]
     Engine,
+    #[error("共享源不可用")]
+    Source,
     #[error("屏幕分享状态不符")]
     State,
     #[error("进入分享房间失败：{0}")]
@@ -120,6 +134,7 @@ fn check(rc: i32, extra: i32) -> Result<(), BridgeError> {
         ERR_THREAD => Err(BridgeError::Thread),
         ERR_LOAD => Err(BridgeError::Load(extra.cast_unsigned())),
         ERR_ENGINE => Err(BridgeError::Engine),
+        ERR_SOURCE => Err(BridgeError::Source),
         ERR_STATE => Err(BridgeError::State),
         ERR_JOIN => Err(BridgeError::Join(extra)),
         ERR_ENCODER => Err(BridgeError::Encoder(extra)),
@@ -207,6 +222,8 @@ impl SourceKind {
 pub struct Source {
     pub kind: SourceKind,
     /// 窗口为 HWND，显示器为 HMONITOR。只在本次运行中有效。
+    /// 以十进制字符串传给前端：句柄可能超出 JavaScript 安全整数范围。
+    #[serde(serialize_with = "id_str")]
     pub id: u64,
     pub pid: u32,
     pub primary: bool,
@@ -214,6 +231,21 @@ pub struct Source {
     pub height: u32,
     pub name: String,
     pub application: String,
+}
+
+// serde 的 `serialize_with` 规定以引用传入。
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn id_str<S: serde::Serializer>(id: &u64, s: S) -> Result<S::Ok, S::Error> {
+    s.collect_str(id)
+}
+
+/// 前端传回的源 ID。
+///
+/// # Errors
+///
+/// 不是十进制整数时返回 [`BridgeError::Source`]。
+pub fn parse_id(s: &str) -> Result<u64, BridgeError> {
+    s.parse().map_err(|_| BridgeError::Source)
 }
 
 fn text(buf: &[c_char; NAME_LEN]) -> String {
@@ -266,6 +298,53 @@ pub fn sources() -> Result<Vec<Source>, BridgeError> {
             })
             .collect());
     }
+}
+
+/// 源缩略图，缩放到 `max` 以内并保持宽高比。返回宽、高与紧凑 BGRA 像素。
+///
+/// # Errors
+///
+/// 线程未启动、源已不存在或像素格式不支持。
+pub fn thumbnail(
+    kind: SourceKind,
+    id: u64,
+    max: (u32, u32),
+) -> Result<(u32, u32, Vec<u8>), BridgeError> {
+    let (mw, mh) = (int(max.0), int(max.1));
+    let mut buf = vec![0u8; max.0 as usize * max.1 as usize * 4];
+    let (mut w, mut h) = (0i32, 0i32);
+    // SAFETY: buf 有 max_w*max_h*4 字节，桥接写入不超过此范围；w、h 指向本地变量。
+    let rc = unsafe {
+        ffi::volc_thumbnail(
+            kind.raw(),
+            id,
+            mw,
+            mh,
+            buf.as_mut_ptr(),
+            &raw mut w,
+            &raw mut h,
+        )
+    };
+    check(rc, 0)?;
+    let (w, h) = (w.cast_unsigned(), h.cast_unsigned());
+    buf.truncate(w as usize * h as usize * 4);
+    Ok((w, h, buf))
+}
+
+/// 保留预览引擎，之后列源与缩略图复用它。开播时自动释放。
+///
+/// # Errors
+///
+/// 线程未启动或引擎创建失败。
+pub fn preview_open() -> Result<(), BridgeError> {
+    // SAFETY: 无参数。
+    check(unsafe { ffi::volc_preview_open() }, 0)
+}
+
+/// 释放预览引擎。推流中或未打开时无操作。
+pub fn preview_close() {
+    // SAFETY: 无参数。
+    unsafe { ffi::volc_preview_close() }
 }
 
 /// SDK 事件。
@@ -492,6 +571,26 @@ mod tests {
         );
         assert_eq!(event(4, 0, 0, 0, 0), Some(Event::TokenWillExpire));
         assert_eq!(event(99, 0, 0, 0, 0), None);
+    }
+
+    #[test]
+    fn source_id_round_trips_as_string() {
+        // 句柄可能超出 JavaScript 安全整数，以字符串传递。
+        let s = Source {
+            kind: SourceKind::Window,
+            id: u64::MAX,
+            pid: 1,
+            primary: false,
+            width: 1,
+            height: 1,
+            name: String::new(),
+            application: String::new(),
+        };
+        let v = serde_json::to_value(&s).unwrap();
+        assert_eq!(v["id"], "18446744073709551615");
+        assert_eq!(v["kind"], "window");
+        assert_eq!(parse_id(v["id"].as_str().unwrap()), Ok(u64::MAX));
+        assert_eq!(parse_id("x"), Err(BridgeError::Source));
     }
 
     #[test]

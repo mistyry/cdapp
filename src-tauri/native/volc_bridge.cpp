@@ -26,6 +26,8 @@ MediaStreamType g_media = kMediaStreamTypeVideo;
 bool g_published = false;
 bool g_timer = false;
 bool g_audio = false;
+// g_video 为选源对话框保留的预览引擎，未进房。
+bool g_preview = false;
 char g_log_dir[MAX_PATH * 3] = {0};
 
 // 推音频与销毁引擎互斥。推音频持读锁，销毁持写锁。
@@ -165,6 +167,7 @@ void teardown() {
         destroyRTCVideo();
     }
     g_published = false;
+    g_preview = false;
     if (g_timer) {
         timeEndPeriod(1);
         g_timer = false;
@@ -197,6 +200,91 @@ void load_on_sdk(const wchar_t* dir, int32_t& rc, DWORD& err) {
         return;
     }
     rc = VOLC_OK;
+}
+
+// 列源与缩略图用的预览引擎不进房，appId 不校验。
+IRTCVideo* create_preview() {
+    apply_log();
+    return createRTCVideo("000000000000000000000000", &g_video_handler, "{}");
+}
+
+// 销毁预览引擎，只在 SDK 线程调用。推流引擎不受影响。
+void close_preview() {
+    if (!g_preview) return;
+    g_preview = false;
+    if (g_video && !g_room) {
+        g_video = nullptr;
+        destroyRTCVideo();
+    }
+}
+
+// 在 SDK 线程中以引擎执行 f。已有推流或预览引擎时直接使用；否则建临时引擎，用完销毁。
+template <class F>
+bool with_engine(F& f) {
+    bool temp = g_video == nullptr;
+    if (temp) g_video = create_preview();
+    if (!g_video) return false;
+    f(g_video);
+    if (temp) {
+        g_video = nullptr;
+        destroyRTCVideo();
+    }
+    return true;
+}
+
+uint8_t clamp8(int v) { return static_cast<uint8_t>(v < 0 ? 0 : (v > 255 ? 255 : v)); }
+
+// 视频帧转为紧凑 BGRA。支持 I420、RGBA、ARGB、BGRA，其余返回 false。
+// 实测 3.58 缩略图报 ARGB，内存字节为 B、G、R、A，即小端的 0xAARRGGBB，与 BGRA 相同。
+// RGBA 未实测，按 32 位整数 0xAABBGGRR 小端处理，字节为 R、G、B、A。
+bool to_bgra(IVideoFrame* fr, uint8_t* out, int32_t w, int32_t h) {
+    switch (fr->pixelFormat()) {
+        case kVideoPixelFormatBGRA:
+        case kVideoPixelFormatRGBA:
+        case kVideoPixelFormatARGB: {
+            // 源像素中 B、G、R 的字节位置。
+            int b = 0, g = 1, r = 2;
+            if (fr->pixelFormat() == kVideoPixelFormatRGBA) {
+                b = 2;
+                r = 0;
+            }
+            const uint8_t* src = fr->getPlaneData(0);
+            const int stride = fr->getPlaneStride(0);
+            for (int32_t y = 0; y < h; y++) {
+                const uint8_t* s = src + static_cast<size_t>(y) * stride;
+                uint8_t* d = out + static_cast<size_t>(y) * w * 4;
+                for (int32_t x = 0; x < w; x++, s += 4, d += 4) {
+                    d[0] = s[b];
+                    d[1] = s[g];
+                    d[2] = s[r];
+                    d[3] = 255;
+                }
+            }
+            return true;
+        }
+        case kVideoPixelFormatI420: {
+            const uint8_t* py = fr->getPlaneData(0);
+            const uint8_t* pu = fr->getPlaneData(1);
+            const uint8_t* pv = fr->getPlaneData(2);
+            const int sy = fr->getPlaneStride(0), su = fr->getPlaneStride(1), sv = fr->getPlaneStride(2);
+            // BT.601 有限范围，缩略图精度足够。
+            for (int32_t y = 0; y < h; y++) {
+                uint8_t* d = out + static_cast<size_t>(y) * w * 4;
+                for (int32_t x = 0; x < w; x++, d += 4) {
+                    const int c = py[y * sy + x] - 16;
+                    const int u = pu[(y / 2) * su + x / 2] - 128;
+                    const int v = pv[(y / 2) * sv + x / 2] - 128;
+                    d[0] = clamp8((298 * c + 516 * u + 128) >> 8);
+                    d[1] = clamp8((298 * c - 100 * u - 208 * v + 128) >> 8);
+                    d[2] = clamp8((298 * c + 409 * v + 128) >> 8);
+                    d[3] = 255;
+                }
+            }
+            return true;
+        }
+        default:
+            return false;
+    }
 }
 
 }  // namespace
@@ -266,40 +354,76 @@ extern "C" int32_t volc_log(const char* dir) {
 extern "C" int32_t volc_sources(volc_source* out, int32_t cap) {
     int32_t total = VOLC_ERR_NOT_STARTED;
     auto f = [&] {
-        bool temp = g_video == nullptr;
-        if (temp) {
-            apply_log();
-            // 列源不进房，appId 不会被校验。
-            g_video = createRTCVideo("000000000000000000000000", &g_video_handler, "{}");
-        }
-        if (!g_video) {
-            total = VOLC_ERR_ENGINE;
-            return;
-        }
-        IScreenCaptureSourceList* list = g_video->getScreenCaptureSourceList();
-        total = list ? list->getCount() : 0;
-        for (int32_t i = 0; list && i < total && i < cap; i++) {
-            ScreenCaptureSourceInfo s = list->getSourceInfo(i);
-            volc_source& o = out[i];
-            o.kind = static_cast<int32_t>(s.type);
-            o.id = reinterpret_cast<uint64_t>(s.source_id);
-            o.pid = s.pid;
-            o.primary = s.primary_monitor ? 1 : 0;
-            o.x = s.region_rect.x;
-            o.y = s.region_rect.y;
-            o.width = s.region_rect.width;
-            o.height = s.region_rect.height;
-            copy_str(o.name, sizeof o.name, s.source_name);
-            copy_str(o.application, sizeof o.application, s.application);
-        }
-        if (list) list->release();
-        if (temp) {
-            g_video = nullptr;
-            destroyRTCVideo();
-        }
+        auto list_all = [&](IRTCVideo* v) {
+            IScreenCaptureSourceList* list = v->getScreenCaptureSourceList();
+            total = list ? list->getCount() : 0;
+            for (int32_t i = 0; list && i < total && i < cap; i++) {
+                ScreenCaptureSourceInfo s = list->getSourceInfo(i);
+                volc_source& o = out[i];
+                o.kind = static_cast<int32_t>(s.type);
+                o.id = reinterpret_cast<uint64_t>(s.source_id);
+                o.pid = s.pid;
+                o.primary = s.primary_monitor ? 1 : 0;
+                o.x = s.region_rect.x;
+                o.y = s.region_rect.y;
+                o.width = s.region_rect.width;
+                o.height = s.region_rect.height;
+                copy_str(o.name, sizeof o.name, s.source_name);
+                copy_str(o.application, sizeof o.application, s.application);
+            }
+            if (list) list->release();
+        };
+        if (!with_engine(list_all)) total = VOLC_ERR_ENGINE;
     };
     on_sdk(f);
     return total;
+}
+
+extern "C" int32_t volc_thumbnail(int32_t kind, uint64_t id, int32_t max_w, int32_t max_h, uint8_t* out,
+                                  int32_t* w, int32_t* h) {
+    int32_t rc = VOLC_ERR_NOT_STARTED;
+    auto f = [&] {
+        auto shot = [&](IRTCVideo* v) {
+            IVideoFrame* fr = v->getThumbnail(static_cast<ScreenCaptureSourceType>(kind),
+                                              reinterpret_cast<view_t>(id), max_w, max_h);
+            if (!fr) {
+                rc = VOLC_ERR_SOURCE;
+                return;
+            }
+            const int32_t fw = fr->width(), fh = fr->height();
+            if (fw <= 0 || fh <= 0 || fw > max_w || fh > max_h || !to_bgra(fr, out, fw, fh)) {
+                rc = VOLC_ERR_SOURCE;
+            } else {
+                *w = fw;
+                *h = fh;
+                rc = VOLC_OK;
+            }
+            fr->release();
+        };
+        if (!with_engine(shot)) rc = VOLC_ERR_ENGINE;
+    };
+    on_sdk(f);
+    return rc;
+}
+
+extern "C" int32_t volc_preview_open(void) {
+    int32_t rc = VOLC_ERR_NOT_STARTED;
+    auto f = [&] {
+        if (g_video) {
+            rc = VOLC_OK;
+            return;
+        }
+        g_video = create_preview();
+        g_preview = g_video != nullptr;
+        rc = g_preview ? VOLC_OK : VOLC_ERR_ENGINE;
+    };
+    on_sdk(f);
+    return rc;
+}
+
+extern "C" void volc_preview_close(void) {
+    auto f = [] { close_preview(); };
+    on_sdk(f);
 }
 
 extern "C" int32_t volc_live_start(const volc_live* live, volc_event_fn cb, void* user, int32_t* sdk_rc) {
@@ -310,6 +434,8 @@ extern "C" int32_t volc_live_start(const volc_live* live, volc_event_fn cb, void
             rc = VOLC_ERR_STATE;
             return;
         }
+        // 推流引擎须用 go-live 的 appId，先释放预览引擎。
+        close_preview();
         set_cb(cb, user);
         // 实测默认计时器精度下 SDK 内部采集只有约 22 帧，提高到 1 ms 后为 30 帧。推流期间生效，停止时恢复。
         timeBeginPeriod(1);
@@ -341,8 +467,6 @@ extern "C" int32_t volc_live_start(const volc_live* live, volc_event_fn cb, void
             rc = VOLC_ERR_JOIN;
             return;
         }
-        // 官方客户端顺序：采集边框、编码运行参数、屏幕编码配置、开始采集。
-        g_video->setRuntimeParameters("{\"rtc.use_wgc_highlight\":true}");
         g_video->setRuntimeParameters(
             "{\"rtc.screen_video_encoder_configs\":[{\"codec_mode\":\"auto\",\"codec_name\":\"auto\"}]}");
         g_enc.width = live->width;
@@ -373,7 +497,9 @@ extern "C" int32_t volc_live_start(const volc_live* live, volc_event_fn cb, void
         src.source_id = reinterpret_cast<view_t>(live->source_id);
         ScreenCaptureParameters p;
         p.capture_mouse_cursor = kMouseCursorCaptureStateOn;
-        p.highlight_config.enable_highlight = false;
+        // 采集边框由 SDK 绘制，设为黄色。
+        p.highlight_config.enable_highlight = true;
+        p.highlight_config.border_color = 0xFFFFD700;
         raw = g_video->startScreenVideoCapture(src, p);
         if (raw != 0) {
             teardown();

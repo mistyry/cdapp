@@ -6,6 +6,10 @@ import type { Channel } from "../../stores/types";
 import { accessState, dropSelfFromVoice, enterVoice, loadDms, permsOf, retryAccess, selectChannel, selectDm, session, visible, voiceBlock } from "../../stores/session";
 import { canGoLive, canRejoin, denoise, setDenoise, dismissVoice, isSpeaking, disconnectVoice, mic, micFailed, output, peerDenoised, setPeerDenoise, setPeerVolume, toggleDeafen, togglePeerMute, toggleMic, voice, voiceActive, voiceStatusText, volumeOf, type VoicePeer } from "../../stores/voice";
 import { shareSdkReady } from "../../stores/sounds";
+import { share, sharing, stopShare } from "../../stores/share";
+
+// 分享状态，用于可访问描述。
+const shareStatus = () => (share.phase === "live" && share.fps ? `${share.width}×${share.height}，${share.fps} 帧` : undefined);
 import { DM_VIEW, currentChannelId, currentChatCode, ui, setUi } from "../../stores/ui";
 import RangeSlider from "../common/RangeSlider";
 import Avatar from "../common/Avatar";
@@ -403,7 +407,18 @@ function VoiceBox() {
       </Show>
       <Show when={voiceActive()}>
         <div class="voice-share">
-          <button class="share-btn" disabled={!canGoLive() || !shareSdkReady()} onClick={openSharePicker}><Monitor size={18} />屏幕共享</button>
+          <Show when={sharing()} fallback={
+            <button class="share-btn" disabled={!canGoLive() || !shareSdkReady()} onClick={openSharePicker}><Monitor size={18} />屏幕共享</button>
+          }>
+            <div class="share-live">
+              <button class="share-btn" disabled={share.phase !== "live"} onClick={openSharePicker}
+                aria-label="共享画质" aria-description={shareStatus()}>
+                <Monitor size={18} />{share.phase === "live" ? `${share.resolution}p ${share.frameRate} 帧` : "正在开启共享"}
+              </button>
+              <button class="share-stop" data-tip="停止共享" aria-label="停止共享" onClick={() => void stopShare()}><X size={18} /></button>
+            </div>
+          </Show>
+          <Show when={share.error}>{(m) => <div class="share-error" role="alert">{m()}</div>}</Show>
         </div>
       </Show>
       <div class="voice-ctrls" ref={ctrls}>

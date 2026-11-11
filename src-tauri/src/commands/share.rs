@@ -58,7 +58,8 @@ mod win {
     pub struct ShareStart {
         channel_id: String,
         source_kind: SourceKind,
-        source_id: u64,
+        /// 十进制字符串，见 `share_sources`。
+        source_id: String,
         /// 窗口所属进程，来自 `share_sources`。显示器为 0。
         #[serde(default)]
         source_pid: u32,
@@ -75,6 +76,25 @@ mod win {
         }
     }
 
+    /// 打开选源对话框时调用，保留预览引擎，列源与缩略图不再每次新建。
+    #[tauri::command]
+    pub async fn share_preview_open() -> AppResult<()> {
+        ready()?;
+        tauri::async_runtime::spawn_blocking(bridge::preview_open)
+            .await
+            .map_err(|e| AppError::Other(e.to_string()))?
+            .map_err(|e| AppError::Other(e.to_string()))
+    }
+
+    /// 关闭选源对话框时调用，释放预览引擎。推流中无操作。
+    #[tauri::command]
+    pub async fn share_preview_close() -> AppResult<()> {
+        ready()?;
+        tauri::async_runtime::spawn_blocking(bridge::preview_close)
+            .await
+            .map_err(|e| AppError::Other(e.to_string()))
+    }
+
     /// 可共享的显示器与窗口。
     #[tauri::command]
     pub async fn share_sources() -> AppResult<Vec<Source>> {
@@ -82,6 +102,16 @@ mod win {
         tauri::async_runtime::spawn_blocking(bridge::sources)
             .await
             .map_err(|e| AppError::Other(e.to_string()))?
+            .map_err(|e| AppError::Other(e.to_string()))
+    }
+
+    /// 源缩略图，PNG 数据地址。源已不存在或取不到时为 None，前端显示占位。
+    #[tauri::command]
+    pub async fn share_thumbnail(kind: SourceKind, id: String) -> AppResult<Option<String>> {
+        ready()?;
+        let id = bridge::parse_id(&id).map_err(|e| AppError::Other(e.to_string()))?;
+        tauri::async_runtime::spawn_blocking(move || crate::share::source::thumbnail(kind, id))
+            .await
             .map_err(|e| AppError::Other(e.to_string()))
     }
 
@@ -96,6 +126,8 @@ mod win {
         share: State<'_, ShareState>,
     ) -> AppResult<u64> {
         ready()?;
+        let source_id =
+            bridge::parse_id(&params.source_id).map_err(|e| AppError::Other(e.to_string()))?;
         let api = api(&state)?;
         let (me, guild) = {
             let s = lock(&state)?;
@@ -155,7 +187,7 @@ mod win {
                 channel_id: params.channel_id,
                 user_id: me,
                 source_kind: params.source_kind,
-                source_id: params.source_id,
+                source_id,
                 source_pid: params.source_pid,
                 tier: Tier {
                     resolution: params.resolution,
