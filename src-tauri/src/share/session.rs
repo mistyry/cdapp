@@ -6,8 +6,9 @@ use std::time::Duration;
 use serde::Serialize;
 use tokio::sync::{mpsc, oneshot};
 
-use super::bridge::{BridgeError, Event, Live, LiveParams, SourceKind};
+use super::bridge::{self, BridgeError, Event, Live, LiveParams, SourceKind};
 use super::fit;
+use super::loopback::{Loopback, Scope};
 use crate::error::{AppError, AppResult};
 use crate::kook::api::Api;
 use crate::kook::golive::Tier;
@@ -26,8 +27,20 @@ pub struct Request {
     pub user_id: String,
     pub source_kind: SourceKind,
     pub source_id: u64,
+    /// 窗口所属进程，窗口共享带声音时只采该进程树。显示器共享不使用。
+    pub source_pid: u32,
     pub tier: Tier,
     pub audio: bool,
+}
+
+impl Request {
+    /// 声音采集范围：显示器排除本进程树，窗口只采目标进程树。
+    fn audio_scope(&self) -> Scope {
+        match self.source_kind {
+            SourceKind::Screen => Scope::Exclude(std::process::id()),
+            SourceKind::Window => Scope::Include(self.source_pid),
+        }
+    }
 }
 
 /// 上报给前端的事件。
@@ -65,10 +78,13 @@ impl Session {
         let done = tauri::async_runtime::spawn(async move {
             let mut push = Push::default();
             let r = run(&api, &req, stop_rx, &sink, &mut push).await;
-            // 无论从哪条路径结束，都在阻塞线程中销毁引擎。
-            if let Some(l) = push.live.take() {
-                let _ = tauri::async_runtime::spawn_blocking(move || drop(l)).await;
-            }
+            // 无论从哪条路径结束，先停声音推送，再在阻塞线程中销毁引擎。
+            let (sound, live) = (push.sound.take(), push.live.take());
+            let _ = tauri::async_runtime::spawn_blocking(move || {
+                drop(sound);
+                drop(live);
+            })
+            .await;
             let message = r.err().map(|e| {
                 log::warn!("屏幕分享结束：{e}");
                 e.to_string()
@@ -101,6 +117,8 @@ impl Session {
 #[derive(Default)]
 struct Push {
     live: Option<Live>,
+    /// 屏幕声音采集与推送，须先于 `live` 释放。
+    sound: Option<Loopback>,
     /// 当前编码尺寸。
     size: (u32, u32),
     kbps: u32,
@@ -276,5 +294,15 @@ async fn begin(
     )
     .await?;
     push.call(Live::publish).await?;
+    if req.audio {
+        push.sound = Some(Loopback::start(req.audio_scope(), |pcm| {
+            // 推流停止后桥接返回状态不符，忽略。
+            if let Err(e) = bridge::push_audio(pcm)
+                && e != BridgeError::State
+            {
+                log::debug!("屏幕声音推送失败：{e}");
+            }
+        }));
+    }
     Ok(Some(events))
 }

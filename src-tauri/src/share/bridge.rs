@@ -65,6 +65,7 @@ mod ffi {
         ) -> i32;
         pub fn volc_token(token: *const c_char, sdk_rc: *mut i32) -> i32;
         pub fn volc_live_stop();
+        pub fn volc_push_audio(pcm: *const i16, frames: i32, sdk_rc: *mut i32) -> i32;
     }
 }
 
@@ -79,6 +80,7 @@ const ERR_ENCODER: i32 = -11;
 const ERR_CAPTURE: i32 = -12;
 const ERR_PUBLISH: i32 = -13;
 const ERR_TOKEN: i32 = -14;
+const ERR_AUDIO: i32 = -15;
 
 /// 桥接错误。SDK 接口失败时附带其原始返回值。
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -103,6 +105,8 @@ pub enum BridgeError {
     Publish(i32),
     #[error("更换令牌失败：{0}")]
     Token(i32),
+    #[error("推送屏幕声音失败：{0}")]
+    Audio(i32),
     #[error("参数包含空字符")]
     Nul,
     #[error("屏幕分享组件返回未知错误 {0}")]
@@ -122,6 +126,7 @@ fn check(rc: i32, extra: i32) -> Result<(), BridgeError> {
         ERR_CAPTURE => Err(BridgeError::Capture(extra)),
         ERR_PUBLISH => Err(BridgeError::Publish(extra)),
         ERR_TOKEN => Err(BridgeError::Token(extra)),
+        ERR_AUDIO => Err(BridgeError::Audio(extra)),
         other => Err(BridgeError::Unknown(other)),
     }
 }
@@ -435,6 +440,22 @@ impl Live {
         // SAFETY: t 在调用期间有效，sdk 指向本地变量。
         check(unsafe { ffi::volc_token(t.as_ptr(), &raw mut sdk) }, sdk)
     }
+}
+
+/// 推一帧屏幕声音：48 kHz 立体声 S16 交错，应为 10 ms。可在任意线程调用，开播时须带声音。
+/// 未在推流或已停止时返回 [`BridgeError::State`]。
+///
+/// # Errors
+///
+/// 未在推流或 SDK 返回非 0。
+pub fn push_audio(pcm: &[i16]) -> Result<(), BridgeError> {
+    let frames = i32::try_from(pcm.len() / 2).unwrap_or(0);
+    let mut sdk = 0i32;
+    // SAFETY: pcm 在调用期间有效，桥接按 frames 读取且深拷贝。
+    check(
+        unsafe { ffi::volc_push_audio(pcm.as_ptr(), frames, &raw mut sdk) },
+        sdk,
+    )
 }
 
 impl Drop for Live {

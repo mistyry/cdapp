@@ -714,6 +714,7 @@ dependencies = [
  "wasmtime",
  "webrtc",
  "windows",
+ "windows-core",
  "zip",
 ]
 

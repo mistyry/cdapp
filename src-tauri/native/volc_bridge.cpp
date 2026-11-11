@@ -18,14 +18,18 @@ SRWLOCK g_lock = SRWLOCK_INIT;
 HANDLE g_thread = nullptr;
 DWORD g_thread_id = 0;
 
-// 以下只在 SDK 线程读写。
+// 以下只在 SDK 线程写入。g_video 另由推音频线程在 g_engine_lock 读锁下读取。
 IRTCVideo* g_video = nullptr;
 IRTCRoom* g_room = nullptr;
 ScreenVideoEncoderConfig g_enc{};
 MediaStreamType g_media = kMediaStreamTypeVideo;
 bool g_published = false;
 bool g_timer = false;
+bool g_audio = false;
 char g_log_dir[MAX_PATH * 3] = {0};
+
+// 推音频与销毁引擎互斥。推音频持读锁，销毁持写锁。
+SRWLOCK g_engine_lock = SRWLOCK_INIT;
 
 // 回调目标。SDK 内部线程读取，SDK 线程在创建引擎前写入、销毁引擎后清空。
 SRWLOCK g_cb_lock = SRWLOCK_INIT;
@@ -153,7 +157,11 @@ void teardown() {
     }
     if (g_video) {
         g_video->stopScreenVideoCapture();
+        // 等进行中的推音频结束，之后推音频看到空引擎直接返回。
+        AcquireSRWLockExclusive(&g_engine_lock);
         g_video = nullptr;
+        g_audio = false;
+        ReleaseSRWLockExclusive(&g_engine_lock);
         destroyRTCVideo();
     }
     g_published = false;
@@ -354,6 +362,9 @@ extern "C" int32_t volc_live_start(const volc_live* live, volc_event_fn cb, void
             g_video->setScreenAudioSourceType(kAudioSourceTypeExternal);
             g_video->setScreenAudioStreamIndex(kStreamIndexScreen);
             g_media = kMediaStreamTypeBoth;
+            AcquireSRWLockExclusive(&g_engine_lock);
+            g_audio = true;
+            ReleaseSRWLockExclusive(&g_engine_lock);
         } else {
             g_media = kMediaStreamTypeVideo;
         }
@@ -433,4 +444,31 @@ extern "C" int32_t volc_token(const char* token, int32_t* sdk_rc) {
 extern "C" void volc_live_stop(void) {
     auto f = [] { teardown(); };
     on_sdk(f);
+}
+
+// 推音频不经 SDK 线程：每 10 ms 一次，投递开销与延迟都不合适。SDK 文档未限定调用线程，
+// 探测程序在独立线程调用已验证可用。与销毁引擎用读写锁互斥。
+extern "C" int32_t volc_push_audio(const int16_t* pcm, int32_t frames, int32_t* sdk_rc) {
+    int32_t rc = VOLC_ERR_STATE;
+    int32_t raw = 0;
+    AcquireSRWLockShared(&g_engine_lock);
+    if (g_video && g_audio) {
+        AudioFrameBuilder b;
+        b.sample_rate = kAudioSampleRate48000;
+        b.channel = kAudioChannelStereo;
+        b.data = reinterpret_cast<uint8_t*>(const_cast<int16_t*>(pcm));
+        b.data_size = static_cast<int64_t>(frames) * 2 * sizeof(int16_t);
+        b.deep_copy = true;
+        IAudioFrame* frame = buildAudioFrame(b);
+        if (frame) {
+            raw = g_video->pushScreenAudioFrame(frame);
+            frame->release();
+            rc = raw == 0 ? VOLC_OK : VOLC_ERR_AUDIO;
+        } else {
+            rc = VOLC_ERR_AUDIO;
+        }
+    }
+    ReleaseSRWLockShared(&g_engine_lock);
+    if (sdk_rc) *sdk_rc = raw;
+    return rc;
 }

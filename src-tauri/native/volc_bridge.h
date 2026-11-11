@@ -22,6 +22,7 @@ enum {
     VOLC_ERR_CAPTURE = -12,
     VOLC_ERR_PUBLISH = -13,
     VOLC_ERR_TOKEN = -14,
+    VOLC_ERR_AUDIO = -15,
 };
 
 // 事件编号。回调在 SDK 内部线程触发，接收方只能转发，不得阻塞或回调 SDK。
@@ -107,6 +108,10 @@ int32_t volc_token(const char* token, int32_t* sdk_rc);
 
 // 停止发布与采集，离房并销毁引擎。返回后不再触发回调。未在推流时无操作。
 void volc_live_stop(void);
+
+// 推一帧屏幕音频：48 kHz 立体声 S16 交错，frames 为每声道采样数，应为 480 即 10 ms。
+// 开播时 audio 为 1 才有效。可在任意线程调用，与 volc_live_stop 互斥。
+int32_t volc_push_audio(const int16_t* pcm, int32_t frames, int32_t* sdk_rc);
 
 #ifdef __cplusplus
 }

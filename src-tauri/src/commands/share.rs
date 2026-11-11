@@ -59,6 +59,9 @@ mod win {
         channel_id: String,
         source_kind: SourceKind,
         source_id: u64,
+        /// 窗口所属进程，来自 `share_sources`。显示器为 0。
+        #[serde(default)]
+        source_pid: u32,
         resolution: u32,
         frame_rate: u32,
         #[serde(default)]
@@ -136,6 +139,7 @@ mod win {
                 user_id: me,
                 source_kind: params.source_kind,
                 source_id: params.source_id,
+                source_pid: params.source_pid,
                 tier: Tier {
                     resolution: params.resolution,
                     frame_rate: params.frame_rate,

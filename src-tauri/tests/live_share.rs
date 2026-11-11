@@ -1,7 +1,12 @@
 //! 屏幕分享推流的真实环境测试，仅 Windows。需要会员账号已在语音频道中，例如先运行 poc 的 voice.py：
 //! `CDAPP_LIVE_TOKEN=... CDAPP_LIVE_USER=... CDAPP_LIVE_VOICE=... CDAPP_LIVE_SECS=60
-//!  cargo test --test live_share -- --ignored --nocapture`
+//!  cargo test --features test-media --test live_share -- --ignored --nocapture`
 //! 下载并加载 SDK，以 1080p30 推指定显示器，持续指定秒数后停止。不输出令牌。
+//!
+//! - `CDAPP_LIVE_SCREEN`：按名称选显示器，例如 `\\.\DISPLAY1`，省略时为主显示器。
+//! - `CDAPP_LIVE_AUDIO=1`：带屏幕声音，排除本进程。
+//! - `CDAPP_LIVE_SELF_TONE=<频率>`：本进程播放正弦波，并测量推出的声音中该频率与
+//!   `CDAPP_LIVE_OTHER_TONE` 频率的能量，检验是否排除本进程。
 #![cfg(windows)]
 
 use std::sync::{Arc, Mutex};
@@ -20,15 +25,91 @@ fn env(key: &str) -> String {
         .unwrap_or_else(|| panic!("缺少环境变量 {key}"))
 }
 
+#[cfg(feature = "test-media")]
+fn freq(key: &str) -> Option<f32> {
+    std::env::var(key).ok().and_then(|v| v.parse().ok())
+}
+
+/// 在默认扬声器播放正弦波，返回的流释放时停止。
+#[cfg(feature = "test-media")]
+fn play_tone(f: f32) -> cpal::Stream {
+    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+    let dev = cpal::default_host()
+        .default_output_device()
+        .expect("没有扬声器");
+    let cfg = dev.default_output_config().unwrap();
+    assert_eq!(
+        cfg.sample_format(),
+        cpal::SampleFormat::F32,
+        "测试只支持 f32 输出"
+    );
+    let config: cpal::StreamConfig = cfg.config();
+    #[allow(clippy::cast_precision_loss)]
+    let (rate, ch) = (config.sample_rate as f32, usize::from(config.channels));
+    let mut n = 0u64;
+    let stream = dev
+        .build_output_stream::<f32, _, _>(
+            config,
+            move |d: &mut [f32], _| {
+                for frame in d.chunks_mut(ch) {
+                    #[allow(clippy::cast_precision_loss)]
+                    // 振幅约 -24 dBFS，与 poc 的 tone.py 相同。
+                    let v = (std::f32::consts::TAU * f * n as f32 / rate).sin() * 0.06;
+                    frame.fill(v);
+                    n += 1;
+                }
+            },
+            |e| eprintln!("播放失败：{e}"),
+            None,
+        )
+        .unwrap();
+    stream.play().unwrap();
+    stream
+}
+
+/// 单频能量，dB，按 Goertzel 算法。
+#[cfg(feature = "test-media")]
+fn db(x: &[f32], f: f32) -> f32 {
+    #[allow(clippy::cast_precision_loss)]
+    let (len, w) = (x.len() as f32, std::f32::consts::TAU * f / 48_000.0);
+    let (mut re, mut im) = (0.0f32, 0.0f32);
+    for (i, &v) in x.iter().enumerate() {
+        #[allow(clippy::cast_precision_loss)]
+        let a = w * i as f32;
+        re += v * a.cos();
+        im -= v * a.sin();
+    }
+    20.0 * ((re * re + im * im).sqrt() / len + 1e-9).log10()
+}
+
 #[test]
 #[ignore = "需要真实账号与语音频道"]
+#[allow(clippy::too_many_lines)]
 fn pushes_primary_screen() {
     let secs: u64 = std::env::var("CDAPP_LIVE_SECS")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(60);
+    let audio = std::env::var("CDAPP_LIVE_AUDIO").is_ok_and(|v| v == "1");
     let dir = std::env::temp_dir().join(format!("cdapp-live-share-{}", std::process::id()));
     cdapp_lib::storage::init(&dir.join("fixed"), &dir.join("data"), &dir.join("fixed"));
+
+    // 推出的声音最近 1 秒，左声道。
+    #[cfg(feature = "test-media")]
+    let pushed: Arc<Mutex<Vec<f32>>> = Arc::default();
+    #[cfg(feature = "test-media")]
+    {
+        let p = pushed.clone();
+        *cdapp_lib::share::loopback::TAP.lock().unwrap() = Some(Box::new(move |pcm: &[i16]| {
+            let mut v = p.lock().unwrap();
+            v.extend(pcm.iter().step_by(2).map(|&s| f32::from(s) / 32768.0));
+            let over = v.len().saturating_sub(48_000);
+            v.drain(..over);
+        }));
+    }
+    #[cfg(feature = "test-media")]
+    let _tone = freq("CDAPP_LIVE_SELF_TONE").map(play_tone);
+
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -37,7 +118,6 @@ fn pushes_primary_screen() {
         let s = sdk::sync().await;
         assert!(matches!(s, Status::Ready { .. }), "{s:?}");
         bridge::set_log_dir(&dir.join("sdklog")).unwrap();
-        // CDAPP_LIVE_SCREEN 按名称选显示器，例如 \\.\DISPLAY1；省略时为主显示器。
         let want = std::env::var("CDAPP_LIVE_SCREEN").ok();
         let screen = bridge::sources()
             .unwrap()
@@ -51,7 +131,9 @@ fn pushes_primary_screen() {
         let log: Arc<Mutex<Vec<ShareEvent>>> = Arc::default();
         let l = log.clone();
         let sink: Sink = Arc::new(move |e: ShareEvent| {
-            println!("事件 {e:?}");
+            if !matches!(e, ShareEvent::Stats { .. }) {
+                println!("事件 {e:?}");
+            }
             l.lock().unwrap().push(e);
         });
         let session = Session::start(
@@ -61,17 +143,33 @@ fn pushes_primary_screen() {
                 user_id: env("CDAPP_LIVE_USER"),
                 source_kind: SourceKind::Screen,
                 source_id: screen.id,
+                source_pid: 0,
                 tier: Tier {
                     resolution: 1080,
                     frame_rate: 30,
                     mode: 0,
                 },
-                audio: false,
+                audio,
             },
             1,
             sink,
         );
-        tokio::time::sleep(Duration::from_secs(secs)).await;
+        for _ in 0..secs / 5 {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            #[cfg(feature = "test-media")]
+            if let (Some(me), Some(other)) =
+                (freq("CDAPP_LIVE_SELF_TONE"), freq("CDAPP_LIVE_OTHER_TONE"))
+            {
+                let x = pushed.lock().unwrap().clone();
+                if x.len() == 48_000 {
+                    println!(
+                        "推出声音 本进程 {me} Hz {:.1} dB，其他进程 {other} Hz {:.1} dB",
+                        db(&x, me),
+                        db(&x, other)
+                    );
+                }
+            }
+        }
         assert!(
             !session.is_finished(),
             "推流提前结束：{:?}",
