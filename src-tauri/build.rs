@@ -1,7 +1,8 @@
 use std::path::{Path, PathBuf};
 
-/// 火山 RTC SDK 的头文件与导入库位置，环境变量可覆盖。
+/// 火山 RTC SDK 的头文件与导入库位置，环境变量可覆盖。默认为子模块 `third_party/VolcEngineRTC` 中的 SDK 目录。
 const VOLC_ENV: &str = "CDAPP_VOLC_SDK";
+const VOLC_DEFAULT: &str = "../third_party/VolcEngineRTC/Windows/3rd/Windows/VolcEngineRTC";
 
 fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
@@ -14,8 +15,7 @@ fn main() {
 fn volc_bridge() {
     println!("cargo:rerun-if-env-changed={VOLC_ENV}");
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    let sdk = std::env::var_os(VOLC_ENV)
-        .map_or_else(|| manifest.join("../third_party/volc"), PathBuf::from);
+    let sdk = std::env::var_os(VOLC_ENV).map_or_else(|| manifest.join(VOLC_DEFAULT), PathBuf::from);
     let include = sdk.join("include");
     let lib_dir = sdk.join("lib/x64");
     for need in [
@@ -55,7 +55,7 @@ fn volc_bridge() {
 fn require(path: &Path, sdk: &Path) {
     assert!(
         path.exists(),
-        "缺少火山 RTC SDK 文件：{}\n将 SDK 3.58.1.100 的 include/ 与 lib/x64/VolcEngineRTC.lib 放入 {}，或用环境变量 {VOLC_ENV} 指定所在目录",
+        "缺少火山 RTC SDK 文件：{}\n运行 git submodule update --init third_party/VolcEngineRTC，或用环境变量 {VOLC_ENV} 指定 SDK 目录。当前目录：{}",
         path.display(),
         sdk.display(),
     );

@@ -9,10 +9,6 @@ target/
 .DS_Store
 *.log
 
-# 第三方构建依赖，按需放入，不进入仓库
-/third_party/*
-!/third_party/.gitkeep
-
 # 本地资料与 AI 上下文
 docs/
 .codex/
