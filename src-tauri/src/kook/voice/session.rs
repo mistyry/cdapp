@@ -1,14 +1,15 @@
 #[cfg(any(test, feature = "test-media"))]
 use super::Fault;
 use super::{
-    Api, AppError, AppResult, Arc, Ctl, LEAVE_TIMEOUT, MicPrefs, Mutex, Prefs, Sink, Source,
-    attempt, mpsc, oneshot, output, supervise,
+    Api, AppError, AppResult, Arc, Ctl, LEAVE_TIMEOUT, MicPrefs, Mutex, Phase, Prefs, Sink, Source,
+    VoiceEvent, attempt, mpsc, oneshot, output, supervise,
 };
 
 pub struct VoiceSession {
     pub(super) ctl: mpsc::UnboundedSender<Ctl>,
     pub(super) done: tauri::async_runtime::JoinHandle<()>,
     pub(super) ended: tokio::sync::watch::Receiver<bool>,
+    pub(super) rebuilt: tokio::sync::watch::Receiver<(u64, bool)>,
     pub channel_id: String,
     pub generation: u64,
 }
@@ -20,6 +21,26 @@ impl VoiceEnded {
     pub async fn wait(mut self) {
         let _ = self.0.wait_for(|e| *e).await;
     }
+}
+
+fn count_rebuilds(sink: Sink) -> (Sink, tokio::sync::watch::Receiver<(u64, bool)>) {
+    let (tx, rx) = tokio::sync::watch::channel((0u64, false));
+    let wrapped: Sink = Arc::new(move |e: VoiceEvent| {
+        if let VoiceEvent::State { phase, .. } = &e {
+            match phase {
+                Phase::Reconnecting => tx.send_if_modified(|s| !std::mem::replace(&mut s.1, true)),
+                Phase::Connected => tx.send_if_modified(|s| {
+                    let was = std::mem::replace(&mut s.1, false);
+                    s.0 += u64::from(was);
+                    was
+                }),
+                Phase::Disconnected => tx.send_if_modified(|s| std::mem::replace(&mut s.1, false)),
+                Phase::Connecting => false,
+            };
+        }
+        sink(e);
+    });
+    (wrapped, rx)
 }
 
 impl VoiceSession {
@@ -39,6 +60,7 @@ impl VoiceSession {
         let (ctl, rx) = mpsc::unbounded_channel();
         let prefs = Arc::new(Mutex::new(mic));
         let (ended_tx, ended) = tokio::sync::watch::channel(false);
+        let (sink, rebuilt) = count_rebuilds(sink);
         let task = drive(api, channel_id.clone(), rx, sink, prefs);
         let done = tauri::async_runtime::spawn(async move {
             task.await;
@@ -48,6 +70,7 @@ impl VoiceSession {
             ctl,
             done,
             ended,
+            rebuilt,
             channel_id,
             generation,
         }
@@ -56,6 +79,11 @@ impl VoiceSession {
     #[must_use]
     pub fn ended(&self) -> VoiceEnded {
         VoiceEnded(self.ended.clone())
+    }
+
+    #[must_use]
+    pub fn rebuilt(&self) -> tokio::sync::watch::Receiver<(u64, bool)> {
+        self.rebuilt.clone()
     }
 
     pub async fn leave(self) {

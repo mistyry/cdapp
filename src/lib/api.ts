@@ -135,6 +135,7 @@ export const api = {
   channels: (guildId: string) => invoke<ChannelDto[]>("channels", { guildId }),
   activateGuild: (guildId: string) => invoke<Raw>("activate_guild", { guildId }),
   guildAccess: (guildId: string) => invoke<GuildAccess>("guild_access", { guildId }),
+  channelGuild: (channelId: string) => invoke<string>("channel_guild", { channelId }),
   emojis: () => invoke<EmojiSetDto>("emojis"),
   members: (guildId: string, channelId: string | undefined, page: number) => invoke<MemberPageDto>("members", { guildId, channelId, page }),
   subscribeMembers: (channelId: string, start: number, end: number) => invoke<void>("subscribe_members", { channelId, start, end }),

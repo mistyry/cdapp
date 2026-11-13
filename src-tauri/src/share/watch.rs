@@ -13,6 +13,7 @@ const QUEUE: usize = 60;
 const KEY_FRAME_EVERY: Duration = Duration::from_secs(1);
 const AGORA_REJOIN_EVERY: Duration = Duration::from_secs(10);
 const REFRESH_EVERY: Duration = Duration::from_secs(12 * 3600);
+const MAX_RESUMES: u32 = 3;
 
 fn pack(f: &Frame<'_>) -> Vec<u8> {
     let mut out = Vec::with_capacity(14 + f.data.len());
@@ -99,6 +100,7 @@ impl Session {
         state: StateSink,
         frames: FrameSink,
         voice: super::session::VoiceEnded,
+        rebuilt: super::session::Rebuilt,
     ) -> Self {
         let (stop, stop_rx) = oneshot::channel();
         let (control, control_rx) = mpsc::unbounded_channel();
@@ -106,12 +108,7 @@ impl Session {
         let frames = Frames::new(frames);
         let out = frames.clone();
         let done = tauri::async_runtime::spawn(async move {
-            let mut held = None;
-            let r = run(
-                &api, &req, stop_rx, control_rx, &state, out, voice, &mut held,
-            )
-            .await;
-            let _ = tauri::async_runtime::spawn_blocking(move || drop(held)).await;
+            let r = run(&api, &req, stop_rx, control_rx, &state, out, voice, rebuilt).await;
             let message = r.err().map(|e| {
                 log::warn!("观看屏幕分享结束：{e}");
                 e.to_string()
@@ -191,7 +188,7 @@ fn forwarder(
     (tx, handle)
 }
 
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+#[allow(clippy::too_many_arguments)]
 async fn run(
     api: &Api,
     req: &Request,
@@ -199,17 +196,57 @@ async fn run(
     mut control: mpsc::UnboundedReceiver<Control>,
     state: &StateSink,
     frames: Frames,
-    mut voice: super::session::VoiceEnded,
+    voice: super::session::VoiceEnded,
+    mut rebuilt: super::session::Rebuilt,
+) -> AppResult<()> {
+    use futures_util::FutureExt;
+    let mut voice = voice.fuse();
+    let mut resumes = super::session::Resumes::new(&mut rebuilt);
+    loop {
+        resumes.sync(&mut rebuilt);
+        let mut held = None;
+        let r = watch_once(
+            api,
+            req,
+            &mut stop,
+            &mut control,
+            state,
+            frames.clone(),
+            &mut voice,
+            &mut held,
+        )
+        .await;
+        let _ = tauri::async_runtime::spawn_blocking(move || drop(held)).await;
+        let Err(e) = r else { return Ok(()) };
+        let go = resumes
+            .recover(e, &mut rebuilt, &mut voice, &mut stop, |e, n| {
+                log::warn!("语音重建期间观看中断：{e}；等待语音恢复后重新观看 {n}/{MAX_RESUMES}");
+                state(WatchState::Waiting);
+            })
+            .await?;
+        if !go {
+            return Ok(());
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+async fn watch_once(
+    api: &Api,
+    req: &Request,
+    stop: &mut oneshot::Receiver<()>,
+    control: &mut mpsc::UnboundedReceiver<Control>,
+    state: &StateSink,
+    frames: Frames,
+    voice: &mut super::session::Voice,
     held: &mut Option<Watch>,
 ) -> AppResult<()> {
-    let cred = super::session::until_voice_ends(
-        &mut voice,
-        api.go_live_watch(&req.channel_id, &req.liver),
-    )
-    .await?;
+    let cred =
+        super::session::until_voice_ends(voice, api.go_live_watch(&req.channel_id, &req.liver))
+            .await?;
     let vendor = cred.vendor;
     if vendor == Vendor::Agora {
-        super::session::until_voice_ends(&mut voice, async {
+        super::session::until_voice_ends(voice, async {
             super::agora_sdk::sync().await;
             Ok(())
         })
@@ -257,7 +294,7 @@ async fn run(
     });
     let started = tokio::select! {
         r = &mut start => r,
-        () = voice.as_mut() => {
+        () = &mut *voice => {
             if let Ok(Ok(w)) = start.await {
                 *held = Some(w);
             }
@@ -279,8 +316,8 @@ async fn run(
         let mut last_key: Option<tokio::time::Instant> = None;
         loop {
             tokio::select! {
-                _ = &mut stop => return Ok(()),
-                () = &mut voice => return Err(AppError::Other("已退出语音频道".into())),
+                _ = &mut *stop => return Ok(()),
+                () = &mut *voice => return Err(AppError::Other("已退出语音频道".into())),
                 () = &mut deadline, if !joined => return Err(AppError::Other("进入分享房间超时".into())),
                 _ = refresh.tick() => renew(api, req, held).await?,
                 c = control.recv() => match c {

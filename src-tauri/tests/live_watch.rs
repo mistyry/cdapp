@@ -88,6 +88,7 @@ fn watches_live_share() {
             Box::pin(async move {
                 let _ = voice_end.await;
             }),
+            tokio::sync::watch::channel((0, false)).1,
         );
         let mut keyed = false;
         for _ in 0..secs * 10 {

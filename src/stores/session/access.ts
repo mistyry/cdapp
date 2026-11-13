@@ -5,7 +5,7 @@ import { ui, setUi, NONE, type Target } from "../ui";
 import { createStore } from "solid-js/store";
 import { joinVoice, revokeVoice, setPasswordHandler, voice, voiceActive } from "../voice";
 import { dmOf } from "./dm";
-import { selectChannel } from "./nav";
+import { reloadChannels, selectChannel } from "./nav";
 import { channelById, dmKey, guildOf, report, session, setSession, st } from "./state";
 
 export function canSend(t: Target = ui.target): boolean {
@@ -140,16 +140,26 @@ export const [pwPrompt, setPwPrompt] = createStore<{ channelId: string; error: s
 
 let enterSeq = 0;
 export async function enterVoice(channelId: string, password: string | null = null): Promise<void> {
-  const hit = channelById(channelId);
-  if (!hit) return;
   const gen = st.account;
   const my = ++enterSeq;
-  await refreshAccess(hit.guildId);
-  if (gen !== st.account || my !== enterSeq) return;
-  const block = voiceBlock(channelId);
-  if (block) {
-    if (pwPrompt.channelId === channelId) setPwPrompt({ channelId: "", error: null });
-    return void report(block === "denied" ? "没有连接该语音频道的权限" : "尚未取得频道权限，请稍后重试");
+  const stale = () => gen !== st.account || my !== enterSeq;
+  if (!channelById(channelId)) {
+    const gid = await api.channelGuild(channelId).catch(() => "");
+    if (stale()) return;
+    if (gid && session.guilds.some((g) => g.id === gid)) await reloadChannels(gid);
+    if (stale()) return;
+  }
+  const hit = channelById(channelId);
+  if (hit) {
+    await refreshAccess(hit.guildId);
+    if (stale()) return;
+    if (voiceBlock(channelId) !== null && voiceBlock(channelId) !== "denied") await loadAccess(hit.guildId, true);
+    if (stale()) return;
+    const block = voiceBlock(channelId);
+    if (block) {
+      if (pwPrompt.channelId === channelId) setPwPrompt({ channelId: "", error: null });
+      return void report(block === "denied" ? "没有连接该语音频道的权限" : "无法取得频道权限");
+    }
   }
   setPwPrompt({ channelId: "", error: null });
   lastPassword = { channelId, used: Boolean(password) };

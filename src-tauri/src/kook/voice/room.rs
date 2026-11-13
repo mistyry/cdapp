@@ -58,10 +58,12 @@ impl Room {
             .map(|c| c.ssrc)
     }
 
-    pub(super) fn has_active_tracks(&self) -> bool {
-        self.consumers
-            .iter()
-            .any(|c| !c.closed && !self.paused.contains(&c.id))
+    pub(super) fn expects_audio(&self, tracks: &HashMap<u32, (std::time::Instant, u64)>) -> bool {
+        self.consumers.iter().any(|c| {
+            !c.closed
+                && !self.paused.contains(&c.id)
+                && tracks.get(&c.ssrc).is_some_and(|(_, n)| *n > 0)
+        })
     }
 
     pub(super) fn quiet_tracks(
@@ -265,9 +267,9 @@ mod tests {
         );
         room.on_notification("consumerResumed", &json!({"consumerId": "c1"}), &p, &sink);
         assert_eq!(room.quiet_tracks(&tracks, t0, late, after), vec![11]);
-        assert!(room.has_active_tracks());
+        assert!(room.expects_audio(&tracks));
         room.on_notification("consumerClosed", &json!({"consumerId": "c1"}), &p, &sink);
-        assert!(!room.has_active_tracks());
+        assert!(!room.expects_audio(&tracks));
         assert_eq!(
             room.quiet_tracks(&tracks, t0, late, after),
             Vec::<u32>::new(),
@@ -281,7 +283,35 @@ mod tests {
             Vec::<u32>::new(),
             "以暂停状态加入的音轨不记录"
         );
-        assert!(!room.has_active_tracks());
+        assert!(!room.expects_audio(&tracks));
+    }
+
+    #[test]
+    fn expects_audio_only_from_unpaused_tracks_that_delivered() {
+        use std::time::Instant;
+        let (sink, _) = recorder();
+        let mut room = Room::default();
+        let p = params();
+        let t0 = Instant::now();
+        let mut tracks = HashMap::new();
+        assert!(!room.expects_audio(&tracks), "无音轨");
+        room.on_request("newConsumer", &new_consumer("c1", "u1", 11), &p);
+        assert!(!room.expects_audio(&tracks), "未收到过包的音轨不计时");
+        tracks.insert(11, (t0, 0));
+        assert!(!room.expects_audio(&tracks));
+        tracks.insert(11, (t0, 5));
+        assert!(room.expects_audio(&tracks));
+        room.on_notification("consumerPaused", &json!({"consumerId": "c1"}), &p, &sink);
+        assert!(!room.expects_audio(&tracks), "远端暂停推流不计时");
+        room.on_notification("consumerResumed", &json!({"consumerId": "c1"}), &p, &sink);
+        assert!(room.expects_audio(&tracks));
+        room.on_notification("consumerClosed", &json!({"consumerId": "c1"}), &p, &sink);
+        assert!(!room.expects_audio(&tracks), "远端离开不计时");
+        let mut paused = new_consumer("c2", "u2", 12);
+        paused["producerPaused"] = json!(true);
+        room.on_request("newConsumer", &paused, &p);
+        tracks.insert(12, (t0, 9));
+        assert!(!room.expects_audio(&tracks), "以暂停状态加入不计时");
     }
 
     #[test]

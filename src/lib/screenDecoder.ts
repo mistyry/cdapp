@@ -4,7 +4,10 @@ const HEAD = 14;
 export const H264 = 1;
 export const H265 = 2;
 export const AV1 = 3;
+export const VP8 = 4;
+export const VP9 = 5;
 export const AV1_DEFAULT = "av01.0.08M.08";
+export const VP9_DEFAULT = "vp09.00.40.08";
 
 export function parseFrame(buf: ArrayBuffer): ParsedFrame | null {
   if (buf.byteLength <= HEAD) return null;
@@ -224,10 +227,12 @@ export function codecOf(f: ParsedFrame): string | null {
   if (f.codec === H264) return avcCodec(f.data);
   if (f.codec === H265) return hevcCodec(f.data);
   if (f.codec === AV1) return av1Codec(f.data) ?? AV1_DEFAULT;
+  if (f.codec === VP8) return "vp8";
+  if (f.codec === VP9) return VP9_DEFAULT;
   return null;
 }
 
-export type DecoderStats = { decoded: number; dropped: number; errors: number; hardware: boolean | null };
+export type DecoderStats = { decoded: number; dropped: number; errors: number };
 
 export class ScreenDecoder {
   private decoder: VideoDecoder | null = null;
@@ -242,7 +247,7 @@ export class ScreenDecoder {
   private ctx: CanvasRenderingContext2D | null = null;
   private closed = false;
   private readonly unsupported = new Set<string>();
-  readonly stats: DecoderStats = { decoded: 0, dropped: 0, errors: 0, hardware: null };
+  readonly stats: DecoderStats = { decoded: 0, dropped: 0, errors: 0 };
 
   constructor(private readonly needKey: () => void, private readonly onSize: (w: number, h: number) => void) {}
 
@@ -259,7 +264,7 @@ export class ScreenDecoder {
     if (this.closed) return;
     const f = parseFrame(buf);
     if (!f) return;
-    if (f.codec !== H264 && f.codec !== H265 && f.codec !== AV1) {
+    if (f.codec < H264 || f.codec > VP9) {
       this.stats.dropped++;
       return;
     }
@@ -313,7 +318,7 @@ export class ScreenDecoder {
         if (this.decoder === dec) this.fail(e);
       },
     });
-    dec.configure({ codec, codedWidth: width, codedHeight: height, hardwareAcceleration: "prefer-hardware", optimizeForLatency: true });
+    dec.configure({ codec, codedWidth: width, codedHeight: height, optimizeForLatency: true });
     this.decoder = dec;
     void VideoDecoder.isConfigSupported({ codec, codedWidth: width, codedHeight: height })
       .then((s) => {
@@ -322,11 +327,6 @@ export class ScreenDecoder {
         this.fail(new Error(`不支持的编码 ${codec}`));
       })
       .catch(() => {});
-    if (this.stats.hardware === null) {
-      void VideoDecoder.isConfigSupported({ codec, codedWidth: width, codedHeight: height, hardwareAcceleration: "prefer-hardware" })
-        .then((s) => { this.stats.hardware = Boolean(s.supported); })
-        .catch(() => {});
-    }
   }
 
   private draw() {

@@ -21,6 +21,12 @@ impl Need {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Missing {
+    Channel,
+    Access(String),
+}
+
 #[derive(Default)]
 pub struct Gate {
     pub me: Option<String>,
@@ -70,11 +76,20 @@ impl Gate {
         self.channels.get(channel_id).map(|(g, _)| g.as_str())
     }
 
+    #[must_use]
+    pub fn missing(&self, channel_id: &str) -> Option<Missing> {
+        match self.channels.get(channel_id) {
+            None => Some(Missing::Channel),
+            Some((g, _)) if !self.access.contains_key(g) => Some(Missing::Access(g.clone())),
+            Some(_) => None,
+        }
+    }
+
     /// # Errors
     ///
     /// 依据缺失或权限不足时返回本地错误，请求不会发出。
     pub fn check(&self, channel_id: &str, need: Need) -> AppResult<()> {
-        let unknown = || AppError::Other("尚未取得频道权限，请稍后重试".into());
+        let unknown = || AppError::Other("无法取得频道权限".into());
         let (guild, channel) = self.channels.get(channel_id).ok_or_else(unknown)?;
         let access = self.access.get(guild).ok_or_else(unknown)?;
         let me = self.me.as_deref().ok_or_else(unknown)?;
@@ -189,6 +204,17 @@ mod tests {
         let stale = Channel::from_raw(&json!({"id": "c", "type": 2})).unwrap();
         g.set_channels("g", &[stale], old);
         assert!(g.check("c", Need::Connect).is_err());
+    }
+
+    #[test]
+    fn missing_reports_what_to_load() {
+        let mut g = Gate::default();
+        assert_eq!(g.missing("c"), Some(Missing::Channel));
+        let c = Channel::from_raw(&json!({"id": "c", "type": 2})).unwrap();
+        let t = g.ticket();
+        g.set_channels("g", &[c], t);
+        assert_eq!(g.missing("c"), Some(Missing::Access("g".into())));
+        assert_eq!(gate(0, ALLP).missing("c"), None);
     }
 
     #[test]

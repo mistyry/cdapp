@@ -201,6 +201,45 @@ fn check(
     lock(state)?.gate.check(channel_id, need)
 }
 
+async fn ensure_basis(state: &Mutex<AppState>, api: &Api, channel_id: &str) -> AppResult<()> {
+    use crate::kook::gate::Missing;
+    let token = api.token().unwrap_or_default().to_owned();
+    let missing = lock(state)?.gate.missing(channel_id);
+    let guild = match missing {
+        None => return Ok(()),
+        Some(Missing::Access(g)) => g,
+        Some(Missing::Channel) => {
+            let g = api.channel_guild(channel_id).await?;
+            let ticket = lock(state)?.gate.ticket();
+            let list = api.channels(&g).await?;
+            note(state, &token, |gate| gate.set_channels(&g, &list, ticket));
+            if lock(state)?.gate.missing(channel_id) != Some(Missing::Access(g.clone())) {
+                return Ok(());
+            }
+            g
+        }
+    };
+    log::info!("加入前补取服务器权限依据");
+    let ticket = lock(state)?.gate.ticket();
+    let access = api.guild_access(&guild).await?;
+    note(state, &token, |gate| {
+        gate.set_access(&guild, access, ticket);
+    });
+    Ok(())
+}
+
+async fn check_loaded(
+    state: &Mutex<AppState>,
+    api: &Api,
+    channel_id: &str,
+    need: crate::kook::gate::Need,
+) -> AppResult<()> {
+    if let Err(e) = ensure_basis(state, api, channel_id).await {
+        log::warn!("补取频道权限依据失败：{e}");
+    }
+    check(state, channel_id, need)
+}
+
 fn stop_voice(app: &AppHandle) {
     use tauri::Manager;
     let app = app.clone();

@@ -229,6 +229,7 @@ fn pushes_primary_screen() {
             1,
             sink,
             voice,
+            tokio::sync::watch::channel((0, false)).1,
         );
         #[cfg(feature = "test-media")]
         if std::env::var("CDAPP_LIVE_LIFECYCLE").is_ok_and(|v| v == "1") {

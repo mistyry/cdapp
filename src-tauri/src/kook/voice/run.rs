@@ -135,7 +135,7 @@ pub(super) async fn run_loop(
                     }
                 }
                 let checked = health.check(now, SystemTime::now());
-                let expecting = connected && !play.headset && room.has_active_tracks();
+                let expecting = connected && !play.headset && room.expects_audio(&tracks);
                 if let Some(idle) = health.on_recv(received, expecting, now) {
                     log::warn!(
                         "语音接收停止 {}s，收包 {received}，重建；{}",

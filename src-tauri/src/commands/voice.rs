@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
-use super::{AppState, VoiceState, api, check, expire, lock};
+use super::{AppState, VoiceState, api, check_loaded, expire, lock};
 use crate::audio::capture::{InputDevice, Source};
 use crate::audio::output::{self, Deafen, OutputDevice};
 use crate::error::{AppError, AppResult};
@@ -52,7 +52,7 @@ pub async fn voice_join(
     voice: State<'_, VoiceState>,
 ) -> AppResult<u64> {
     let api = api(&state)?;
-    check(&state, &channel_id, Need::Connect)?;
+    check_loaded(&state, &api, &channel_id, Need::Connect).await?;
     let token = api.token().unwrap_or_default().to_owned();
     super::stop_share(&app).await;
     let mut slot = voice.0.lock().await;

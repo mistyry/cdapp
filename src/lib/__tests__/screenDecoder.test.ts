@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { AV1, AV1_DEFAULT, ScreenDecoder, av1Codec, av1ShowExisting, avcCodec, codecOf, hevcCodec, parseFrame } from "../screenDecoder";
+import { AV1, AV1_DEFAULT, ScreenDecoder, VP8, VP9, VP9_DEFAULT, av1Codec, av1ShowExisting, avcCodec, codecOf, hevcCodec, parseFrame } from "../screenDecoder";
 
 function frame(key: boolean, w: number, h: number, ts: bigint, data: number[], codec = 1) {
   const buf = new ArrayBuffer(14 + data.length);
@@ -80,6 +80,11 @@ test("按帧头 codec 选择解析，AV1 无序列头时用默认值，未知编
   expect(codecOf(parseFrame(frame(true, 1, 1, 1n, [1, 2, 3], 9))!)).toBeNull();
 });
 
+test("VP8 与 VP9 帧映射为 WebCodecs codec 字符串", () => {
+  expect(codecOf(parseFrame(frame(true, 1, 1, 1n, [1], VP8))!)).toBe("vp8");
+  expect(codecOf(parseFrame(frame(true, 1, 1, 1n, [1], VP9))!)).toBe(VP9_DEFAULT);
+});
+
 test("识别只含 show_existing_frame 的 AV1 帧", () => {
   expect(av1ShowExisting(Uint8Array.from([0x1a, 0x01, 0x88]))).toBe(true);
   expect(av1ShowExisting(Uint8Array.from([...obu(2, []), 0x1a, 0x01, 0x88]))).toBe(true);
@@ -92,11 +97,13 @@ test("识别只含 show_existing_frame 的 AV1 帧", () => {
 describe("ScreenDecoder", () => {
   type Chunk = { type: string; timestamp: number };
   const decoded: Chunk[] = [];
+  const configs: Array<Record<string, unknown>> = [];
   const g = globalThis as Record<string, unknown>;
   const saved = { VideoDecoder: g.VideoDecoder, EncodedVideoChunk: g.EncodedVideoChunk };
 
   beforeEach(() => {
     decoded.length = 0;
+    configs.length = 0;
     g.EncodedVideoChunk = class {
       type: string;
       timestamp: number;
@@ -110,7 +117,8 @@ describe("ScreenDecoder", () => {
       static isConfigSupported() {
         return Promise.resolve({ supported: true });
       }
-      configure() {
+      configure(c: Record<string, unknown>) {
+        configs.push(c);
         this.state = "configured";
       }
       decode(c: Chunk) {
@@ -148,5 +156,13 @@ describe("ScreenDecoder", () => {
     d.push(key(3n));
     expect(decoded.map((c) => c.timestamp)).toEqual([3]);
     expect(d.stats.dropped).toBe(2);
+  });
+
+  test("VP8 关键帧配置解码器且不强制硬件偏好", () => {
+    const d = new ScreenDecoder(() => {}, () => {});
+    d.push(frame(true, 1280, 720, 1n, [1], VP8));
+    d.push(frame(false, 1280, 720, 2n, [2], VP8));
+    expect(decoded.map((c) => c.timestamp)).toEqual([1, 2]);
+    expect(configs).toEqual([{ codec: "vp8", codedWidth: 1280, codedHeight: 720, optimizeForLatency: true }]);
   });
 });

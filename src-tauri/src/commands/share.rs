@@ -135,6 +135,13 @@ mod win {
         let source_id =
             bridge::parse_id(&params.source_id).map_err(|e| AppError::Other(e.to_string()))?;
         let api = api(&state)?;
+        super::super::check_loaded(
+            &state,
+            &api,
+            &params.channel_id,
+            crate::kook::gate::Need::Connect,
+        )
+        .await?;
         let (me, guild) = {
             let s = lock(&state)?;
             let me = s.gate.me.clone().ok_or(AppError::NotLoggedIn)?;
@@ -145,14 +152,14 @@ mod win {
                 .to_owned();
             (me, guild)
         };
-        let voice_ended = {
+        let (voice_ended, rebuilt) = {
             let slot = voice.0.lock().await;
             match slot
                 .session
                 .as_ref()
                 .filter(|s| s.channel_id == params.channel_id && !s.is_finished())
             {
-                Some(s) => s.ended(),
+                Some(s) => (s.ended(), s.rebuilt()),
                 None => return Err(AppError::Other("请先加入该语音频道".into())),
             }
         };
@@ -189,6 +196,7 @@ mod win {
             generation,
             sink,
             Box::pin(voice_ended.wait()),
+            rebuilt,
         ));
         Ok(generation)
     }
@@ -269,18 +277,20 @@ mod win {
         use crate::share::watch::{Request, Session, StateSink};
         ready()?;
         let api = api(&state)?;
+        super::super::check_loaded(&state, &api, &channel_id, crate::kook::gate::Need::Connect)
+            .await?;
         let me = lock(&state)?.gate.me.clone().ok_or(AppError::NotLoggedIn)?;
         if me == liver {
             return Err(AppError::Other("不能观看自己的屏幕分享".into()));
         }
-        let voice_ended = {
+        let (voice_ended, rebuilt) = {
             let slot = voice.0.lock().await;
             match slot
                 .session
                 .as_ref()
                 .filter(|s| s.channel_id == channel_id && !s.is_finished())
             {
-                Some(s) => s.ended(),
+                Some(s) => (s.ended(), s.rebuilt()),
                 None => return Err(AppError::Other("请先加入该语音频道".into())),
             }
         };
@@ -318,6 +328,7 @@ mod win {
             sink,
             frame_sink,
             Box::pin(voice_ended.wait()),
+            rebuilt,
         ));
         Ok(generation)
     }

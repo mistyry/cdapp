@@ -380,6 +380,18 @@ impl Api {
 
     /// # Errors
     ///
+    /// 请求失败或响应缺少服务器 ID 时返回错误。
+    pub async fn channel_guild(&self, channel_id: &str) -> AppResult<String> {
+        let v = self
+            .get("/api/v3/channel/view", &[("target_id", channel_id)])
+            .await?;
+        super::model::id_str(v.get("guild_id"))
+            .filter(|g| !g.is_empty())
+            .ok_or_else(|| AppError::Format("频道详情缺少服务器 ID".into()))
+    }
+
+    /// # Errors
+    ///
     /// 请求失败或响应格式异常时返回错误；无效服务器返回 HTTP 204，按格式错误处理。
     pub async fn guild_access(&self, guild_id: &str) -> AppResult<GuildAccess> {
         let data = self.get("/api/v2/guild/view", &[("id", guild_id)]).await?;

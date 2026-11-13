@@ -48,6 +48,17 @@ pub async fn channels(
 }
 
 #[tauri::command]
+pub async fn channel_guild(
+    channel_id: String,
+    state: State<'_, Mutex<AppState>>,
+) -> AppResult<String> {
+    with_api(&state, move |a| async move {
+        a.channel_guild(&channel_id).await
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn guild_access(
     guild_id: String,
     state: State<'_, Mutex<AppState>>,

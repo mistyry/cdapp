@@ -103,3 +103,7 @@ libc = "0.2"
 [[test]]
 name = "live_moderation"
 required-features = ["test-media"]
+
+[[test]]
+name = "live_rebuild_share"
+required-features = ["test-media"]

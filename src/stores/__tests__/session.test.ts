@@ -2824,9 +2824,59 @@ test("依据未就绪时不加入语音", async () => {
   await flush();
   while (pending.some((x) => x.cmd === "guild_access")) release("guild_access", Promise.reject("x"));
   await p;
+  for (let i = 0; i < 5; i++) {
+    await flush();
+    while (pending.some((x) => x.cmd === "guild_access")) release("guild_access", Promise.reject("x"));
+  }
   await j;
   expect(voiceBlock("V-ok")).toBe("failed");
   expect(calls.some((c) => c.cmd === "voice_join")).toBe(false);
+});
+
+test("权限依据加载失败后加入语音前重新加载，成功即加入", async () => {
+  auto.voice_join = () => 1;
+  auto.channels = () => [raw("A-t1", "t1"), vraw("V-ok")];
+  hold.add("guild_access");
+  const p = selectGuild("A");
+  await flush();
+  release("guild_access", Promise.reject("x"));
+  await p;
+  expect(voiceBlock("V-ok")).toBe("failed");
+  hold.clear();
+  auto.guild_access = ({ guildId }) => access(guildId, { everyone: VIEW | SEND | CONNECT });
+  await enterVoice("V-ok");
+  expect(calls.filter((c) => c.cmd === "voice_join").map((c) => c.args.channelId)).toEqual(["V-ok"]);
+  await vs.leaveVoice();
+});
+
+test("未进入过的服务器或未知频道，加入语音交由后端补取权限依据", async () => {
+  auto.voice_join = () => 1;
+  await enterVoice("V-elsewhere");
+  expect(calls.filter((c) => c.cmd === "voice_join").map((c) => c.args.channelId)).toEqual(["V-elsewhere"]);
+  await vs.leaveVoice();
+});
+
+test("未加载服务器的语音频道，加入前取回频道列表，成员 live 状态可见", async () => {
+  auto.voice_join = () => 1;
+  auto.channel_guild = () => "B";
+  auto.channels = ({ guildId }) => (guildId === "B" ? [raw("B-t1", "t1"), vraw("B-v", [], { users: [{ id: "u1", nickname: "u1", live_info: { in_live: true, resolution: 1080 } }] })] : []);
+  auto.guild_access = ({ guildId }) => access(guildId, { everyone: VIEW | SEND | CONNECT });
+  openDm();
+  await enterVoice("B-v");
+  expect(calls.filter((c) => c.cmd === "channel_guild").map((c) => c.args.channelId)).toEqual(["B-v"]);
+  expect(calls.filter((c) => c.cmd === "voice_join").map((c) => c.args.channelId)).toEqual(["B-v"]);
+  expect(liveOf("B-v", "u1")).toMatchObject({ resolution: 1080 });
+  expect(ui.view).toBe("dm");
+  await vs.leaveVoice();
+});
+
+test("未加入的服务器的频道仍交由后端补取，不加载频道列表", async () => {
+  auto.voice_join = () => 1;
+  auto.channel_guild = () => "Z";
+  await enterVoice("Z-v");
+  expect(calls.some((c) => c.cmd === "channels")).toBe(false);
+  expect(calls.filter((c) => c.cmd === "voice_join").map((c) => c.args.channelId)).toEqual(["Z-v"]);
+  await vs.leaveVoice();
 });
 
 test("无 SEND 的文字频道可阅读但不发送", async () => {
