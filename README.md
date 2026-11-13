@@ -7,6 +7,7 @@
 ## 开发
 
 ```sh
+git submodule update --init
 bun install
 bun tauri dev
 ```

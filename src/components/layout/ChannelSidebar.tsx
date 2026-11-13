@@ -4,11 +4,10 @@ import { Portal } from "solid-js/web";
 import { AudioLines, Check, ChevronRight, Volume2, CircleHelp, Headphones, HeadphoneOff, Menu, Mic, MicOff, Monitor, PhoneOff, Settings, UserPlus, X } from "lucide-solid";
 import type { Channel } from "../../stores/types";
 import { accessState, dropSelfFromVoice, enterVoice, loadDms, permsOf, retryAccess, selectChannel, selectDm, session, visible, voiceBlock } from "../../stores/session";
-import { canGoLive, canRejoin, denoise, setDenoise, dismissVoice, isSpeaking, disconnectVoice, mic, micFailed, output, peerDenoised, setPeerDenoise, setPeerVolume, toggleDeafen, togglePeerMute, toggleMic, voice, voiceActive, voiceStatusText, volumeOf, type VoicePeer } from "../../stores/voice";
+import { canGoLive, canRejoin, denoise, setDenoise, dismissVoice, isSpeaking, disconnectVoice, latencyLevel, mic, micFailed, output, peerDenoised, setPeerDenoise, setPeerVolume, toggleDeafen, togglePeerMute, toggleMic, voice, voiceActive, voiceStatusText, volumeOf, type VoicePeer } from "../../stores/voice";
 import { shareSdkReady } from "../../stores/sounds";
 import { share, sharing, stopShare } from "../../stores/share";
 
-// 分享状态，用于可访问描述。
 const shareStatus = () => (share.phase === "live" && share.fps ? `${share.width}×${share.height}，${share.fps} 帧` : undefined);
 import { DM_VIEW, currentChannelId, currentChatCode, ui, setUi } from "../../stores/ui";
 import RangeSlider from "../common/RangeSlider";
@@ -18,7 +17,6 @@ import { openSharePicker } from "./ScreenSharePicker";
 import { Caret, DenoiseOff, HeadphoneOffIcon, MicOffIcon, SpeakerOffMark, KookHash, LockIcon, VoiceIcon } from "../common/icons";
 import { channelIcon } from "../../lib/channelIcon";
 
-// 语音成员右键菜单。对本人提供麦克风与耳机开关，对他人提供音量调节。
 function MemberMenu(p: { peer: VoicePeer; self: boolean; name: string; x: number; y: number; onClose: () => void }) {
   let root!: HTMLDivElement;
   const [pos, setPos] = createSignal({ x: p.x, y: p.y });
@@ -27,7 +25,6 @@ function MemberMenu(p: { peer: VoicePeer; self: boolean; name: string; x: number
     setPos({ x: Math.max(8, Math.min(p.x, innerWidth - r.width - 8)), y: Math.max(8, Math.min(p.y, innerHeight - r.height - 8)) });
     root.querySelector<HTMLElement>("button, [role=slider]")?.focus();
   });
-  // 次级菜单渲染在 body 下，同样算菜单内部。
   const onDown = (e: PointerEvent) => {
     const t = e.target as Element;
     if (!root.contains(t) && !t.closest?.(".member-menu")) p.onClose();
@@ -77,18 +74,15 @@ function MemberMenu(p: { peer: VoicePeer; self: boolean; name: string; x: number
 
 type ToggleItem = (label: string, on: boolean, act: () => void, danger?: boolean) => JSX.Element;
 
-// 成员管理。只列出本人在当前语音频道有权限的操作；踢出服务器与黑名单需再次点击确认。
 function ModSection(p: { peer: VoicePeer; onDone: () => void; toggleItem: ToggleItem }) {
   const ch = () => voice.channelId;
   const perms = () => modPerms(ch());
   const [moveOpen, setMoveOpen] = createSignal(false);
   let subMenu: HTMLDivElement | undefined;
-  // 指针穿过两级菜单之间的间隙时稍后再关闭。
   let closeTimer: ReturnType<typeof setTimeout> | undefined;
   const openSub = () => { clearTimeout(closeTimer); setMoveOpen(true); };
   const closeSub = () => { clearTimeout(closeTimer); closeTimer = setTimeout(() => setMoveOpen(false), 200); };
   onCleanup(() => clearTimeout(closeTimer));
-  // 次级菜单默认在右侧，与触发项顶部对齐；右侧放不下时改到左侧，并限制在窗口内。
   let subHost!: HTMLDivElement;
   const placeSub = (el: HTMLDivElement) => {
     const host = subHost.getBoundingClientRect();
@@ -179,12 +173,10 @@ function ModSection(p: { peer: VoicePeer; onDone: () => void; toggleItem: Toggle
   );
 }
 
-// 语音成员。说话时整行高亮，右键打开成员菜单。
 function RoomMember(p: { peer: VoicePeer }) {
   const user = () => ({ id: p.peer.id, name: p.peer.name || "未知用户", avatar: p.peer.avatar || undefined, online: true });
   const [menu, setMenu] = createSignal<{ x: number; y: number } | null>(null);
   const self = () => p.peer.id === voice.me?.id;
-  // 本人以本地开关为准，不等服务端回执。
   const micOff = () => (self() ? mic.muted : p.peer.micOff);
   const headsetOff = () => (self() ? output.deafened : p.peer.headsetOff);
   const open = (e: MouseEvent) => {
@@ -197,7 +189,6 @@ function RoomMember(p: { peer: VoicePeer }) {
         <Avatar user={user()} size={24} />
         <span class="voice-name">{user().name}</span>
         <Show when={isSpeaking(p.peer.id) && !micOff() && !p.peer.serverMute}><span class="voice-speaking" aria-label="正在说话" role="img"><Mic size={14} /></span></Show>
-        {/* 服务器闭麦与静音时显示红色图标，替代成员自己的开关状态。 */}
         <Show when={p.peer.serverMute} fallback={<Show when={micOff()}><span data-tip="已关闭麦克风" aria-label="已关闭麦克风" role="img"><MicOff size={14} /></span></Show>}>
           <span class="server-off" data-tip="已被服务器闭麦" aria-label="已被服务器闭麦" role="img"><MicOff size={14} /></span>
         </Show>
@@ -217,16 +208,13 @@ const roomPeers = () => (voice.me ? [voice.me, ...voice.peers] : voice.peers);
 
 function ChannelItem(p: { c: Channel }) {
   const active = () => currentChannelId() === p.c.id;
-  // 本人头像在媒体连接成功、播放进场音效时出现，与官方客户端一致。
   const inRoom = () => p.c.type === "voice" && voice.channelId === p.c.id && voiceActive() && voice.phase !== "connecting" && voice.me !== null;
   const connectingHere = () => voice.channelId === p.c.id && voice.phase === "connecting";
   const preview = () => p.c.type === "text" && p.c.preview;
   const unread = () => session.unread[p.c.id];
-  // 可查看但不能连接的语音频道保留显示，并说明原因。
   const noConnect = () => p.c.type === "voice" && voiceBlock(p.c.id) === "denied";
   const icon = () => channelIcon(p.c, permsOf(p.c.id));
   const canJoin = () => p.c.type === "voice" && !noConnect() && !inRoom();
-  // 按下时已处于聚焦，本次单击即为第二下。
   let armed = false;
   return (
     <>
@@ -234,7 +222,6 @@ function ChannelItem(p: { c: Channel }) {
         aria-label={[p.c.name, ...icon().parts].join(" ")}
         aria-disabled={noConnect() || undefined}
         class={`channel ${p.c.type === "unknown" || noConnect() ? "unsupported" : ""} ${active() ? "active" : ""} ${preview() ? "has-preview" : ""}`}
-        // 语音频道第一次单击聚焦并提示，保持聚焦时再次单击或回车加入，不限间隔；点击别处取消。已在该频道时不重复加入。
         tabIndex={canJoin() ? 0 : undefined}
         data-focus-tip={canJoin() ? "再次点击进入频道" : undefined}
         onPointerDown={(e) => (armed = canJoin() && document.activeElement === e.currentTarget)}
@@ -269,11 +256,9 @@ function ChannelItem(p: { c: Channel }) {
         </div>
         <Show when={preview()}><div class="preview">{p.c.preview}</div></Show>
       </div>
-      {/* 本端所在的语音频道以语音服务器的房间成员为准，其余频道显示频道列表中的在线用户。 */}
       <Show when={inRoom()} fallback={
         <For each={connectingHere() ? p.c.users?.filter((u) => u.id !== session.me?.id) : p.c.users}>
           {(u) => {
-            // 本人在此频道但不是由本客户端连接。
             const elsewhere = () => u.id === session.me?.id && !(voice.channelId === p.c.id && voiceActive());
             return (
               <div class="voice-member" classList={{ elsewhere: elsewhere() }} data-tip={elsewhere() ? "已在其他设备连接" : undefined}
@@ -290,7 +275,6 @@ function ChannelItem(p: { c: Channel }) {
   );
 }
 
-// 私信会话列表。只显示对方、最近消息与未读，不显示推荐或广告类内容。
 function DmList() {
   const onScroll = (e: Event) => {
     const el = e.currentTarget as HTMLElement;
@@ -322,30 +306,27 @@ function DmList() {
   );
 }
 
-// 连接延迟柱状图，延迟越低亮起的柱越多。连接中与尚无测量时按良好显示。
 function LatencyBars() {
   const level = () => {
     const r = voice.rtt;
-    if (voice.phase === "connecting") return 4;
+    if (voice.phase === "connecting") return 3;
     if (voice.phase !== "connected") return 0;
-    if (r === null) return 4;
-    return r < 100 ? 4 : r < 200 ? 3 : r < 400 ? 2 : 1;
+    if (r === null) return 3;
+    return latencyLevel(r);
   };
   const tip = () => (voice.phase === "connected" || voice.phase === "connecting" ? `${voice.phase === "connected" ? voice.rtt ?? 0 : 0} ms` : voiceStatusText());
   return (
     <div class={`latency-bars l${level()} ${voice.phase}`} data-tip={tip()} role="img" aria-label={tip()}>
-      <For each={[1, 2, 3, 4]}>{(i) => <span style={{ height: `${i * 25}%` }} classList={{ on: i <= level() }} />}</For>
+      <For each={[1, 2, 3]}>{(i) => <span style={{ height: `${Math.round((i * 100) / 3)}%` }} classList={{ on: i <= level() }} />}</For>
     </div>
   );
 }
 
-// 语音状态栏：连接延迟、频道名与断开，麦克风与耳机开关。
 function VoiceBox() {
   const name = () => {
     for (const g of session.guilds) for (const grp of g.groups) for (const c of grp.channels) if (c.id === voice.channelId) return c.name;
     return "语音频道";
   };
-  // 右键打开设备菜单，按触发位置水平定位；悬停或键盘聚焦时显示音量条，拖动期间保持显示。
   const [menu, setMenu] = createSignal<{ kind: AudioKind | "denoise"; x: number } | null>(null);
   const [hover, setHover] = createSignal<AudioKind | null>(null);
   const [dragging, setDragging] = createSignal(false);
@@ -362,7 +343,6 @@ function VoiceBox() {
     onFocusIn: () => show(k),
     onFocusOut: (e: FocusEvent) => !(e.currentTarget as Element).contains(e.relatedTarget as Node) && setHover(null),
   });
-  // 连接中显示状态，连上后短暂显示已连接，再显示频道名。
   const [justConnected, setJustConnected] = createSignal(false);
   let flash: ReturnType<typeof setTimeout> | undefined;
   createEffect(on(() => voice.phase, (ph, prev) => {
@@ -381,7 +361,6 @@ function VoiceBox() {
     setHover(null);
     const box = ctrls.getBoundingClientRect();
     const btn = (e.currentTarget as Element).getBoundingClientRect();
-    // 菜单以按钮为中心，靠近窗口边缘时向内收，保持完整可见。
     const half = Math.min(232, window.innerWidth - 24) / 2;
     const center = Math.max(8 + half, Math.min(window.innerWidth - 8 - half, btn.left + btn.width / 2));
     setMenu((m) => (m?.kind === kind ? null : { kind, x: center - box.left }));

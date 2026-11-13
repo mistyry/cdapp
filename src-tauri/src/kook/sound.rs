@@ -1,5 +1,3 @@
-//! 音效缓存。系统音效地址固定，装扮提示音来自物品索引，均下载到数据根 `cache/sounds/`。
-
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
@@ -16,7 +14,6 @@ const ITEM_HOST: &str = "https://img.kookapp.cn/";
 const INDEX: &str = "sounds/index.json";
 const CONCURRENCY: usize = 8;
 
-/// 客户端用到的系统音效。
 pub const SYSTEM: &[&str] = &[
     "user-join.mp3",
     "user-leave.mp3",
@@ -32,18 +29,15 @@ pub const SYSTEM: &[&str] = &[
 #[derive(Default, Serialize, Deserialize)]
 struct Index {
     v: u64,
-    /// 物品 id 到音频地址。
     items: BTreeMap<u64, String>,
 }
 
-/// 同步进度。
 #[derive(Clone, Copy, Serialize)]
 pub struct Progress {
     pub done: usize,
     pub total: usize,
 }
 
-/// 同步结果。
 #[derive(Serialize)]
 pub struct Summary {
     pub total: usize,
@@ -70,7 +64,6 @@ fn save_index(index: &Index) {
     }
 }
 
-/// 从物品列表中取出带音频的语音提示音。
 #[must_use]
 pub fn parse_items(v: &Value) -> BTreeMap<u64, String> {
     let mut out = BTreeMap::new();
@@ -91,7 +84,6 @@ pub fn parse_items(v: &Value) -> BTreeMap<u64, String> {
     out
 }
 
-/// 由地址得到缓存文件名。只保留路径部分，非常规字符替换为下划线。
 #[must_use]
 pub fn local_name(url: &str) -> Option<String> {
     let rest = url
@@ -114,19 +106,16 @@ pub fn local_name(url: &str) -> Option<String> {
     (!name.starts_with('.')).then_some(name)
 }
 
-/// 系统音效的缓存路径。
 #[must_use]
 pub fn system_file(name: &str) -> Option<PathBuf> {
     crate::storage::cache_file(&format!("sounds/system/{name}"))
 }
 
-/// 物品音效的缓存路径。
 #[must_use]
 pub fn item_file(url: &str) -> Option<PathBuf> {
     crate::storage::cache_file(&format!("sounds/item/{}", local_name(url)?))
 }
 
-/// 更新物品索引，网络失败时沿用本地索引。
 async fn refresh_index(api: &Api) -> Index {
     match api.get("/api/v3/item/list", &()).await {
         Ok(v) => {
@@ -163,7 +152,6 @@ async fn download(api: &Api, url: &str, path: &std::path::Path) -> bool {
     }
 }
 
-/// 物品音效的本地文件。索引中没有或文件缺失时按 ID 查询并下载，失败返回 None。
 pub async fn item_sound(api: &Api, id: u64) -> Option<PathBuf> {
     let known = load_index().items.get(&id).cloned();
     let url = if let Some(u) = known {
@@ -183,8 +171,6 @@ pub async fn item_sound(api: &Api, id: u64) -> Option<PathBuf> {
     }
 }
 
-/// 检查音效索引并下载本地缺少的文件。`progress` 在开始与每完成一个文件时调用。
-///
 /// # Errors
 ///
 /// 数据目录不可用时返回错误。

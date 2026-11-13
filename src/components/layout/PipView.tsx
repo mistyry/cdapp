@@ -8,8 +8,6 @@ import { ScreenDecoder } from "../../lib/screenDecoder";
 import { notifyMain } from "../../stores/watch";
 import { TipLayer } from "../common/Tip";
 
-// 悬浮窗：独立的置顶小窗，自己接收画面并解码。整窗可拖动，悬停时显示回到舞台与停止观看按钮。
-// 观看结束或会话已不是本窗口的代次时关闭自己。主窗口负责会话与状态，本窗口只显示画面。
 export default function PipView(p: { generation: number }) {
   let canvas!: HTMLCanvasElement;
   const [waiting, setWaiting] = createSignal(true);

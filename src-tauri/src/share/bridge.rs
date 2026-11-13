@@ -1,6 +1,3 @@
-//! 火山 RTC SDK 桥接 `native/volc_bridge.cpp` 的 FFI 声明与安全封装。
-//! 每个调用都会阻塞到 SDK 线程执行完毕，异步代码中须放在 `spawn_blocking` 里调用。
-
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
@@ -111,6 +108,23 @@ mod ffi {
         pub fn agora_watch_rejoin(sdk_rc: *mut i32) -> i32;
         pub fn agora_watch_token(token: *const c_char, sdk_rc: *mut i32) -> i32;
         pub fn agora_watch_stop();
+        pub fn agora_live_start(
+            live: *const RawLive,
+            cb: EventFn,
+            user: *mut c_void,
+            sdk_rc: *mut i32,
+        ) -> i32;
+        pub fn agora_publish(sdk_rc: *mut i32) -> i32;
+        pub fn agora_encoder(
+            width: i32,
+            height: i32,
+            frame_rate: i32,
+            max_kbps: i32,
+            sdk_rc: *mut i32,
+        ) -> i32;
+        pub fn agora_token(token: *const c_char, sdk_rc: *mut i32) -> i32;
+        pub fn agora_live_stop();
+        pub fn agora_push_audio(pcm: *const i16, frames: i32, sdk_rc: *mut i32) -> i32;
     }
 }
 
@@ -129,7 +143,6 @@ const ERR_TOKEN: i32 = -14;
 const ERR_AUDIO: i32 = -15;
 const ERR_SUBSCRIBE: i32 = -16;
 
-/// 桥接错误。SDK 接口失败时附带其原始返回值。
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum BridgeError {
     #[error("屏幕分享线程未启动")]
@@ -188,56 +201,42 @@ fn cstr(s: &str) -> Result<CString, BridgeError> {
     CString::new(s).map_err(|_| BridgeError::Nul)
 }
 
-/// 启动 SDK 线程，重复调用无副作用。
-///
 /// # Errors
 ///
 /// 线程创建失败。
 pub fn start() -> Result<(), BridgeError> {
-    // SAFETY: 无参数，桥接内部加锁。
     check(unsafe { ffi::volc_start() }, 0)
 }
 
-/// 停止推流与 SDK 线程并等待退出。
 pub fn stop() {
-    // SAFETY: 无参数，桥接内部加锁。
     unsafe { ffi::volc_stop() }
 }
 
-/// 从目录加载 SDK，附属 DLL 须在同一目录。
-///
 /// # Errors
 ///
 /// 线程未启动，或 DLL 加载失败。
 pub fn load(dir: &Path) -> Result<(), BridgeError> {
     let wide: Vec<u16> = dir.as_os_str().encode_wide().chain(Some(0)).collect();
     let mut win32 = 0u32;
-    // SAFETY: wide 以 0 结尾且在调用期间有效，win32 指向本地变量。
     let rc = unsafe { ffi::volc_load(wide.as_ptr(), &raw mut win32) };
     check(rc, win32.cast_signed())
 }
 
-/// SDK 版本，须在 [`load`] 成功后调用。
 #[must_use]
 pub fn version() -> String {
-    // SAFETY: SDK 已加载，返回 SDK 持有的以 0 结尾的静态字符串。
     unsafe { CStr::from_ptr(ffi::volc_version()) }
         .to_string_lossy()
         .into_owned()
 }
 
-/// 设置 SDK 日志目录，须在首次创建引擎前调用。
-///
 /// # Errors
 ///
 /// 线程未启动或路径包含空字符。
 pub fn set_log_dir(dir: &Path) -> Result<(), BridgeError> {
     let s = cstr(&dir.to_string_lossy())?;
-    // SAFETY: s 以 0 结尾且在调用期间有效。
     check(unsafe { ffi::volc_log(s.as_ptr()) }, 0)
 }
 
-/// 共享源类型，与 SDK 的 `ScreenCaptureSourceType` 一致。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceKind {
@@ -254,13 +253,10 @@ impl SourceKind {
     }
 }
 
-/// 可共享的显示器或窗口。
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Source {
     pub kind: SourceKind,
-    /// 窗口为 HWND，显示器为 HMONITOR。只在本次运行中有效。
-    /// 以十进制字符串传给前端：句柄可能超出 JavaScript 安全整数范围。
     #[serde(serialize_with = "id_str")]
     pub id: u64,
     pub pid: u32,
@@ -271,14 +267,11 @@ pub struct Source {
     pub application: String,
 }
 
-// serde 的 `serialize_with` 规定以引用传入。
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn id_str<S: serde::Serializer>(id: &u64, s: S) -> Result<S::Ok, S::Error> {
     s.collect_str(id)
 }
 
-/// 前端传回的源 ID。
-///
 /// # Errors
 ///
 /// 不是十进制整数时返回 [`BridgeError::Source`]。
@@ -287,14 +280,11 @@ pub fn parse_id(s: &str) -> Result<u64, BridgeError> {
 }
 
 fn text(buf: &[c_char; NAME_LEN]) -> String {
-    // SAFETY: 桥接写入时以 0 结尾。
     unsafe { CStr::from_ptr(buf.as_ptr()) }
         .to_string_lossy()
         .into_owned()
 }
 
-/// 列出可共享的显示器与窗口。
-///
 /// # Errors
 ///
 /// 线程未启动或引擎创建失败。
@@ -302,7 +292,6 @@ pub fn sources() -> Result<Vec<Source>, BridgeError> {
     let mut cap = 64usize;
     loop {
         let mut buf: Vec<RawSource> = Vec::with_capacity(cap);
-        // SAFETY: buf 有 cap 个元素的空间，桥接最多写入 cap 项。
         let total =
             unsafe { ffi::volc_sources(buf.as_mut_ptr(), i32::try_from(cap).unwrap_or(i32::MAX)) };
         if total < 0 {
@@ -313,7 +302,6 @@ pub fn sources() -> Result<Vec<Source>, BridgeError> {
             cap = total;
             continue;
         }
-        // SAFETY: 桥接已写入前 total 项。
         unsafe { buf.set_len(total) };
         return Ok(buf
             .iter()
@@ -338,8 +326,6 @@ pub fn sources() -> Result<Vec<Source>, BridgeError> {
     }
 }
 
-/// 源缩略图，缩放到 `max` 以内并保持宽高比。返回宽、高与紧凑 BGRA 像素。
-///
 /// # Errors
 ///
 /// 线程未启动、源已不存在或像素格式不支持。
@@ -351,7 +337,6 @@ pub fn thumbnail(
     let (mw, mh) = (int(max.0), int(max.1));
     let mut buf = vec![0u8; max.0 as usize * max.1 as usize * 4];
     let (mut w, mut h) = (0i32, 0i32);
-    // SAFETY: buf 有 max_w*max_h*4 字节，桥接写入不超过此范围；w、h 指向本地变量。
     let rc = unsafe {
         ffi::volc_thumbnail(
             kind.raw(),
@@ -369,26 +354,19 @@ pub fn thumbnail(
     Ok((w, h, buf))
 }
 
-/// 保留预览引擎，之后列源与缩略图复用它。开播时自动释放。
-///
 /// # Errors
 ///
 /// 线程未启动或引擎创建失败。
 pub fn preview_open() -> Result<(), BridgeError> {
-    // SAFETY: 无参数。
     check(unsafe { ffi::volc_preview_open() }, 0)
 }
 
-/// 释放预览引擎。推流中或未打开时无操作。
 pub fn preview_close() {
-    // SAFETY: 无参数。
     unsafe { ffi::volc_preview_close() }
 }
 
-/// SDK 事件。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Event {
-    /// 0 为已进房，非 0 为错误或警告码。
     RoomState(i32),
     FirstFrame {
         width: u32,
@@ -406,12 +384,10 @@ pub enum Event {
         height: i32,
     },
     Error(i32),
-    /// 本地视频流状态与错误码。状态 3 为采集失败，例如窗口关闭。
     VideoState {
         state: i32,
         error: i32,
     },
-    /// 共享的窗口已销毁。
     SourceGone,
 }
 
@@ -442,14 +418,12 @@ fn event(kind: i32, a: i32, b: i32, c: i32, d: i32) -> Option<Event> {
 }
 
 unsafe extern "C" fn on_event(user: *mut c_void, kind: i32, a: i32, b: i32, c: i32, d: i32) {
-    // SAFETY: user 为 Live 持有的 Box<UnboundedSender>，在 volc_live_stop 返回前有效。
     let tx = unsafe { &*user.cast::<UnboundedSender<Event>>() };
     if let Some(e) = event(kind, a, b, c, d) {
         let _ = tx.send(e);
     }
 }
 
-/// 开播参数。
 pub struct LiveParams<'a> {
     pub app_id: &'a str,
     pub room: &'a str,
@@ -468,21 +442,22 @@ fn int(v: u32) -> i32 {
     i32::try_from(v).unwrap_or(i32::MAX)
 }
 
-/// 推流句柄。释放时停止推流、离房并销毁引擎。同一时间只能有一个。
 pub struct Live {
     sender: *mut UnboundedSender<Event>,
+    vendor: Vendor,
 }
 
-// SAFETY: sender 只在桥接回调中只读访问，释放发生在 volc_live_stop 之后。
 unsafe impl Send for Live {}
 
 impl Live {
-    /// 创建引擎、进房并开始采集。事件发往 `events`。成功后等进房与首帧事件再调用 [`Live::publish`]。
-    ///
     /// # Errors
     ///
-    /// 已在推流、参数含空字符或 SDK 接口失败。
-    pub fn start(p: &LiveParams<'_>, events: UnboundedSender<Event>) -> Result<Self, BridgeError> {
+    /// 已在推流、参数含空字符或 SDK 接口失败。Agora 的用户 ID 须为数字。
+    pub fn start(
+        vendor: Vendor,
+        p: &LiveParams<'_>,
+        events: UnboundedSender<Event>,
+    ) -> Result<Self, BridgeError> {
         let (app_id, room, uid, token) =
             (cstr(p.app_id)?, cstr(p.room)?, cstr(p.uid)?, cstr(p.token)?);
         let raw = RawLive {
@@ -500,31 +475,42 @@ impl Live {
         };
         let sender = Box::into_raw(Box::new(events));
         let mut sdk = 0i32;
-        // SAFETY: raw 中的字符串在调用期间有效；sender 在 Live 释放前有效。
-        let rc =
-            unsafe { ffi::volc_live_start(&raw const raw, on_event, sender.cast(), &raw mut sdk) };
+        let rc = unsafe {
+            match vendor {
+                Vendor::Volc => {
+                    ffi::volc_live_start(&raw const raw, on_event, sender.cast(), &raw mut sdk)
+                }
+                Vendor::Agora => {
+                    ffi::agora_live_start(&raw const raw, on_event, sender.cast(), &raw mut sdk)
+                }
+            }
+        };
         if let Err(e) = check(rc, sdk) {
-            // 失败时桥接已清除回调，不再访问 sender。
-            // SAFETY: sender 由上面的 Box::into_raw 得到，只释放一次。
             drop(unsafe { Box::from_raw(sender) });
             return Err(e);
         }
-        Ok(Self { sender })
+        Ok(Self { sender, vendor })
     }
 
-    /// 发布屏幕流。
-    ///
+    #[must_use]
+    pub fn vendor(&self) -> Vendor {
+        self.vendor
+    }
+
     /// # Errors
     ///
     /// SDK 返回非 0。
     pub fn publish(&self) -> Result<(), BridgeError> {
         let mut sdk = 0i32;
-        // SAFETY: sdk 指向本地变量。
-        check(unsafe { ffi::volc_publish(&raw mut sdk) }, sdk)
+        let rc = unsafe {
+            match self.vendor {
+                Vendor::Volc => ffi::volc_publish(&raw mut sdk),
+                Vendor::Agora => ffi::agora_publish(&raw mut sdk),
+            }
+        };
+        check(rc, sdk)
     }
 
-    /// 重新提交编码配置。
-    ///
     /// # Errors
     ///
     /// SDK 返回非 0。
@@ -536,9 +522,12 @@ impl Live {
         max_kbps: u32,
     ) -> Result<(), BridgeError> {
         let mut sdk = 0i32;
-        // SAFETY: sdk 指向本地变量。
+        let f = match self.vendor {
+            Vendor::Volc => ffi::volc_encoder,
+            Vendor::Agora => ffi::agora_encoder,
+        };
         let rc = unsafe {
-            ffi::volc_encoder(
+            f(
                 int(width),
                 int(height),
                 int(frame_rate),
@@ -549,52 +538,53 @@ impl Live {
         check(rc, sdk)
     }
 
-    /// 更换令牌。
-    ///
     /// # Errors
     ///
     /// 令牌含空字符或 SDK 返回非 0。
     pub fn token(&self, token: &str) -> Result<(), BridgeError> {
         let t = cstr(token)?;
         let mut sdk = 0i32;
-        // SAFETY: t 在调用期间有效，sdk 指向本地变量。
-        check(unsafe { ffi::volc_token(t.as_ptr(), &raw mut sdk) }, sdk)
+        let rc = unsafe {
+            match self.vendor {
+                Vendor::Volc => ffi::volc_token(t.as_ptr(), &raw mut sdk),
+                Vendor::Agora => ffi::agora_token(t.as_ptr(), &raw mut sdk),
+            }
+        };
+        check(rc, sdk)
     }
 }
 
-/// 推一帧屏幕声音：48 kHz 立体声 S16 交错，应为 10 ms。可在任意线程调用，开播时须带声音。
-/// 未在推流或已停止时返回 [`BridgeError::State`]。
-///
 /// # Errors
 ///
 /// 未在推流或 SDK 返回非 0。
-pub fn push_audio(pcm: &[i16]) -> Result<(), BridgeError> {
+pub fn push_audio(vendor: Vendor, pcm: &[i16]) -> Result<(), BridgeError> {
     let frames = i32::try_from(pcm.len() / 2).unwrap_or(0);
     let mut sdk = 0i32;
-    // SAFETY: pcm 在调用期间有效，桥接按 frames 读取且深拷贝。
-    check(
-        unsafe { ffi::volc_push_audio(pcm.as_ptr(), frames, &raw mut sdk) },
-        sdk,
-    )
+    let rc = unsafe {
+        match vendor {
+            Vendor::Volc => ffi::volc_push_audio(pcm.as_ptr(), frames, &raw mut sdk),
+            Vendor::Agora => ffi::agora_push_audio(pcm.as_ptr(), frames, &raw mut sdk),
+        }
+    };
+    check(rc, sdk)
 }
 
 impl Drop for Live {
     fn drop(&mut self) {
-        // SAFETY: 无参数。返回后桥接不再调用回调。
-        unsafe { ffi::volc_live_stop() };
-        // SAFETY: sender 由 Box::into_raw 得到，此处唯一一次释放。
+        unsafe {
+            match self.vendor {
+                Vendor::Volc => ffi::volc_live_stop(),
+                Vendor::Agora => ffi::agora_live_stop(),
+            }
+        };
         drop(unsafe { Box::from_raw(self.sender) });
     }
 }
 
-/// 观看事件。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WatchEvent {
-    /// 0 为已进房，非 0 为错误或警告码。
     RoomState(i32),
-    /// 分享者发布屏幕流。
     Published,
-    /// 分享者取消发布，附原因码。
     Unpublished(i32),
     TokenWillExpire,
     Stats {
@@ -621,10 +611,8 @@ fn watch_event(kind: i32, a: i32, b: i32, c: i32, d: i32) -> Option<WatchEvent> 
     })
 }
 
-/// 一帧编码后的画面。`data` 只在回调期间有效。
 pub struct Frame<'a> {
     pub data: &'a [u8],
-    /// 1 为 H.264，2 为 `ByteVC1`。
     pub codec: i32,
     pub key: bool,
     pub width: u32,
@@ -632,14 +620,12 @@ pub struct Frame<'a> {
     pub ts_us: i64,
 }
 
-/// 观看回调的接收方。在 SDK 内部线程调用，不得阻塞或回调 SDK。
 pub struct WatchSink {
     pub events: UnboundedSender<WatchEvent>,
     pub frame: Box<dyn Fn(&Frame<'_>) + Send + Sync>,
 }
 
 unsafe extern "C" fn on_watch_event(user: *mut c_void, kind: i32, a: i32, b: i32, c: i32, d: i32) {
-    // SAFETY: user 为 Watch 持有的 Box<WatchSink>，在 volc_watch_stop 返回前有效。
     let sink = unsafe { &*user.cast::<WatchSink>() };
     if let Some(e) = watch_event(kind, a, b, c, d) {
         let _ = sink.events.send(e);
@@ -660,7 +646,6 @@ unsafe extern "C" fn on_watch_frame(
     if data.is_null() || size <= 0 {
         return;
     }
-    // SAFETY: user 同上；data 在回调期间有效，长度为 size。
     let (sink, data) = unsafe {
         (
             &*user.cast::<WatchSink>(),
@@ -677,35 +662,24 @@ unsafe extern "C" fn on_watch_frame(
     });
 }
 
-/// 观看参数。
 pub struct WatchParams<'a> {
     pub app_id: &'a str,
     pub room: &'a str,
     pub uid: &'a str,
     pub token: &'a str,
-    /// 分享者用户 ID。
     pub liver: &'a str,
 }
 
-/// 分享者分到的 RTC 厂商。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Vendor {
-    Volc,
-    Agora,
-}
+pub use crate::kook::golive::Vendor;
 
-/// 观看句柄。释放时离房。同一时间只能有一个，与推流互不影响。两家厂商的事件与帧格式相同。
 pub struct Watch {
     sink: *mut WatchSink,
     vendor: Vendor,
 }
 
-// SAFETY: sink 只在桥接回调中只读访问，释放发生在桥接停止观看之后。
 unsafe impl Send for Watch {}
 
 impl Watch {
-    /// 进房。火山不订阅，收到 [`WatchEvent::Published`] 后调用 [`Watch::subscribe`]；Agora 自动订阅。
-    ///
     /// # Errors
     ///
     /// 已在观看、引擎正以其他 appId 使用、参数含空字符或 SDK 接口失败。Agora 的用户 ID 须为数字。
@@ -730,7 +704,6 @@ impl Watch {
         };
         let sink = Box::into_raw(Box::new(sink));
         let mut sdk = 0i32;
-        // SAFETY: raw 中的字符串在调用期间有效；sink 在 Watch 释放前有效。
         let rc = unsafe {
             match vendor {
                 Vendor::Volc => ffi::volc_watch_start(
@@ -750,8 +723,6 @@ impl Watch {
             }
         };
         if let Err(e) = check(rc, sdk) {
-            // 失败时桥接已清除回调，不再访问 sink。
-            // SAFETY: sink 由上面的 Box::into_raw 得到，只释放一次。
             drop(unsafe { Box::from_raw(sink) });
             return Err(e);
         }
@@ -763,8 +734,6 @@ impl Watch {
         self.vendor
     }
 
-    /// 订阅分享者的屏幕画面与声音。Agora 进房即自动订阅，无操作。
-    ///
     /// # Errors
     ///
     /// SDK 返回非 0。
@@ -773,18 +742,14 @@ impl Watch {
             return Ok(());
         }
         let mut sdk = 0i32;
-        // SAFETY: sdk 指向本地变量。
         check(unsafe { ffi::volc_watch_subscribe(&raw mut sdk) }, sdk)
     }
 
-    /// 请求关键帧。Agora 没有对应接口，改为离房后重新进房，服务端在新订阅时下发关键帧，画面中断约 4 秒。
-    ///
     /// # Errors
     ///
     /// SDK 返回非 0。
     pub fn key_frame(&self) -> Result<(), BridgeError> {
         let mut sdk = 0i32;
-        // SAFETY: sdk 指向本地变量。
         let rc = unsafe {
             match self.vendor {
                 Vendor::Volc => ffi::volc_watch_key_frame(&raw mut sdk),
@@ -794,15 +759,12 @@ impl Watch {
         check(rc, sdk)
     }
 
-    /// 更换令牌。
-    ///
     /// # Errors
     ///
     /// 令牌含空字符或 SDK 返回非 0。
     pub fn token(&self, token: &str) -> Result<(), BridgeError> {
         let t = cstr(token)?;
         let mut sdk = 0i32;
-        // SAFETY: t 在调用期间有效，sdk 指向本地变量。
         let rc = unsafe {
             match self.vendor {
                 Vendor::Volc => ffi::volc_watch_token(t.as_ptr(), &raw mut sdk),
@@ -815,48 +777,38 @@ impl Watch {
 
 impl Drop for Watch {
     fn drop(&mut self) {
-        // SAFETY: 无参数。返回后桥接不再调用观看回调。
         unsafe {
             match self.vendor {
                 Vendor::Volc => ffi::volc_watch_stop(),
                 Vendor::Agora => ffi::agora_watch_stop(),
             }
         };
-        // SAFETY: sink 由 Box::into_raw 得到，此处唯一一次释放。
         drop(unsafe { Box::from_raw(self.sink) });
     }
 }
 
-/// 从目录加载 Agora SDK，附属 DLL 须在同一目录。须在火山 SDK 加载之后调用。
-///
 /// # Errors
 ///
 /// DLL 加载失败。
 pub fn agora_load(dir: &Path) -> Result<(), BridgeError> {
     let wide: Vec<u16> = dir.as_os_str().encode_wide().chain(Some(0)).collect();
     let mut win32 = 0u32;
-    // SAFETY: wide 以 0 结尾且在调用期间有效，win32 指向本地变量。
     let rc = unsafe { ffi::agora_load(wide.as_ptr(), &raw mut win32) };
     check(rc, win32.cast_signed())
 }
 
-/// Agora SDK 版本，须在 [`agora_load`] 成功后调用。
 #[must_use]
 pub fn agora_version() -> String {
-    // SAFETY: SDK 已加载，返回 SDK 持有的以 0 结尾的静态字符串。
     unsafe { CStr::from_ptr(ffi::agora_version()) }
         .to_string_lossy()
         .into_owned()
 }
 
-/// 设置 Agora SDK 日志文件，下次开始观看时生效。
-///
 /// # Errors
 ///
 /// 路径包含空字符。
 pub fn agora_log(file: &Path) -> Result<(), BridgeError> {
     let s = cstr(&file.to_string_lossy())?;
-    // SAFETY: s 以 0 结尾且在调用期间有效，桥接复制内容。
     unsafe { ffi::agora_log(s.as_ptr()) };
     Ok(())
 }
@@ -913,7 +865,6 @@ mod tests {
 
     #[test]
     fn source_id_round_trips_as_string() {
-        // 句柄可能超出 JavaScript 安全整数，以字符串传递。
         let s = Source {
             kind: SourceKind::Window,
             id: u64::MAX,
@@ -933,14 +884,12 @@ mod tests {
 
     #[test]
     fn layout_matches_header() {
-        // volc_source：kind 后按 8 字节对齐 id，再 6 个 int32，两段名称。
         assert_eq!(
             std::mem::size_of::<RawSource>(),
             8 + 8 + 6 * 4 + 2 * NAME_LEN
         );
     }
 
-    /// 需要本机 SDK 运行文件，用环境变量 `CDAPP_VOLC_BIN` 指定目录。
     #[test]
     #[ignore = "需要 SDK 运行文件"]
     fn loads_real_sdk_and_lists_sources() {

@@ -5,7 +5,6 @@ const calls: Call[] = [];
 const pending: Array<{ cmd: string; args: any; resolve: (v: unknown) => void }> = [];
 let auto: Record<string, (args: any) => unknown> = {};
 
-// 可控的 invoke：默认立即返回，注册到 hold 的命令须手动放行。
 const hold = new Set<string>();
 mock.module("@tauri-apps/api/core", () => ({
   invoke: (cmd: string, args: any, options?: any) => {
@@ -25,7 +24,6 @@ const raw = (id: string, name: string, type = 1, parent = "", level = 0) =>
   ({ id, name, kind: KIND[type] ?? "unknown", rawType: type, parentId: parent || null, level, limit: 0 });
 const pg = (items: unknown[], end = true) => ({ items, end });
 const flush = () => new Promise((r) => setTimeout(r, 0));
-// 按命令与参数放行挂起的请求，便于构造任意返回顺序。
 const release = (cmd: string, v: unknown, match: (a: any) => boolean = () => true) => {
   const i = pending.findIndex((p) => p.cmd === cmd && match(p.args));
   if (i < 0) throw new Error(`没有挂起的 ${cmd}`);
@@ -53,9 +51,9 @@ test("快速切换 A、B，A 的迟到结果不改变 B", async () => {
   hold.add("channels");
   const a = selectGuild("A");
   const b = selectGuild("B");
-  release("channels", [raw("B-t1", "b")], (a) => a.guildId === "B"); // B 先返回
+  release("channels", [raw("B-t1", "b")], (a) => a.guildId === "B");
   await b;
-  release("channels", [raw("A-t1", "a")], (a) => a.guildId === "A"); // A 迟到
+  release("channels", [raw("A-t1", "a")], (a) => a.guildId === "A");
   await a;
   expect(ui.view).toBe("B");
   expect(ui.target).toEqual({ kind: "channel", guildId: "B", channelId: "B-t1" });
@@ -283,8 +281,6 @@ test("历史消息以 rong_id 为标识，与发送响应和推送一致", async
   expect(session.messages["A-t2"].map((m) => m.id)).toEqual(["uuid-1"]);
 });
 
-// M1-03 登录与会话生命周期
-
 const reject = (kind: string, message = "x") => Promise.reject({ kind, message });
 
 test("无保存凭据时进入登录页", async () => {
@@ -463,8 +459,6 @@ test("被限流的发送标为失败而非不确定", async () => {
   expect(session.outbox["A-t1"]?.[0]).toMatchObject({ status: "failed" });
 });
 
-// M2-02 历史翻页
-
 const m = (id: string, t: number, author = "x") => ({ id: `i${id}`, rong_id: id, author: { id: author }, content: id, create_at: t });
 const ids = (c: string) => session.messages[c].map((x) => x.id);
 
@@ -477,7 +471,7 @@ test("上翻以最早消息为游标，前插去重且不覆盖期间的新消�
   const p = loadOlder("A-t1");
   expect(session.history["A-t1"].loading).toBe(true);
   expect(calls[calls.length - 1].args).toEqual({ channelId: "A-t1", before: "c" });
-  setSession("messages", "A-t1", (l) => [...l, { ...l[1], id: "e", createAt: 50 }]); // 期间到达的新消息
+  setSession("messages", "A-t1", (l) => [...l, { ...l[1], id: "e", createAt: 50 }]);
   release("messages", pg([m("a", 10), m("b", 20), m("c", 30)], false));
   await p;
   expect(ids("A-t1")).toEqual(["a", "b", "c", "d", "e"]);
@@ -596,8 +590,6 @@ test("已有列表时重新拉取最新页只合并，保留已加载的更早�
   expect(ids("A-t1")).toEqual(["a", "b", "c", "d"]);
   expect(session.history["A-t1"].end).toBe(true);
 });
-
-// 网关恢复与补偿
 
 const ready = (kind: "new" | "resumed" | "rebuilt") => onGatewayStatus({ state: "ready", kind });
 const down = () => onGatewayStatus({ state: "disconnected", reason: "x", retry_in_ms: 1000 });
@@ -760,8 +752,6 @@ test("断档重建列表时保留拉取期间到达的实时消息", async () =>
   expect(ids("A-t1")).not.toContain("a");
 });
 
-// 未读、提及与跨端已读
-
 const sys = (type: string, body: unknown) => onEvent({ type: "SYS_MSG", content: JSON.stringify({ type, body }) });
 const pushFrom = (channelId: string, msgId: string, author: string, at = 99, guild = "A") =>
   onEvent({ type: "CHANNEL_MSG", channelType: "GROUP", toUserId: channelId, msgId, msgTimestamp: at, fromUserId: author,
@@ -782,7 +772,7 @@ test("登录后拉取全部服务器未读，未进入过的服务器也有汇�
   expect(guildUnread("A")).toEqual({ unread: false, mentions: 0 });
 });
 
-test("后台频道收到消息记未读；提及数来自服务端事件；extra 为 JSON 字符串时可解析", async () => {
+test("后台频道收到消息记未读；提及数取自 unread_count_changed；extra 为 JSON 字符串时可解析", async () => {
   await selectGuild("A");
   pushFrom("A-t2", "p1", "u");
   expect(session.unread["A-t2"]).toMatchObject({ guildId: "A", unread: true, mentions: 0 });
@@ -905,8 +895,6 @@ test("阅读中收到消息但标记已读失败，离开后仍显示未读与�
   expect(session.unread["A-t1"]).toMatchObject({ unread: true, mentions: 1 });
 });
 
-// M3-01 成员与权限
-
 const access = (guildId: string, p: Partial<{ myRoles: number[]; everyone: number; roles: any[]; master: boolean }> = {}) => ({
   guildId, ownerId: "o", master: p.master ?? false, myRoles: p.myRoles ?? [],
   roles: [{ id: 0, name: "", color: 0, position: 999, hoist: false, permissions: p.everyone ?? (VIEW | SEND) }, ...(p.roles ?? [])],
@@ -948,7 +936,6 @@ test("权限依据加载中或失败时不视为已授权，重试后恢复", as
   release("guild_access", Promise.reject("网络错误"));
   await p;
   expect(session.access.A.status).toBe("failed");
-  // 依据失败时不选中频道，也不读取历史。
   expect(ui.target).toEqual({ kind: "none" });
   expect(sendBlock({ kind: "channel", guildId: "A", channelId: "A-t1" })).toBe("failed");
   expect(canSend()).toBe(false);
@@ -1058,8 +1045,6 @@ test("频道覆盖变化后重新拉取频道列表", async () => {
   expect(sendBlock()).toBe("denied");
 });
 
-// M3-01 审查回归
-
 test("同频道失败后不自动重复请求，重试由调用方发起", async () => {
   auto.members = () => Promise.reject("x");
   await selectGuild("A");
@@ -1078,7 +1063,6 @@ test("强制刷新取代进行中的请求，旧结果不覆盖新结果", async
   const fresh = ensureMembers(true);
   await flush();
   release("members", mpage([mem("new")]), () => true);
-  // 先放行的是旧请求：应被丢弃。
   release("members", mpage([mem("new2")]), () => true);
   await Promise.all([old, fresh]);
   expect(session.members?.items.map((m) => m.id)).toEqual(["new2"]);
@@ -1109,7 +1093,7 @@ test("权限请求进行中收到角色变化：另发请求并采用新结果",
   sysTo("A", "user_role_change", { guild_id: "A", user_id: "me", roles: [] });
   await flush();
   expect(pending.filter((p) => p.cmd === "guild_access").length).toBe(2);
-  release("guild_access", access("A", { everyone: VIEW }), () => true); // 旧请求（变化前）
+  release("guild_access", access("A", { everyone: VIEW }), () => true);
   release("guild_access", access("A", { everyone: VIEW | SEND }), () => true);
   await first;
   await flush();
@@ -1139,8 +1123,6 @@ test("补偿时权限刷新失败计为部分失败", async () => {
   expect(session.recovery).toBe("partial");
   expect(session.access.A.status).toBe("ready");
 });
-
-// M3-01 在线状态订阅
 
 const subs = () => calls.filter((c) => c.cmd === "subscribe_members").map((c) => [c.args.channelId, c.args.start, c.args.end]);
 const userList = (channelId: string, data: any[]) =>
@@ -1200,8 +1182,6 @@ test("新网关会话后重新订阅", async () => {
   for (let i = 0; i < 6; i++) await flush();
   expect(subs().filter((s) => s[1] === 0).length).toBe(2);
 });
-
-// M3-02 消息内容与引用
 
 const hist = (id: string, at: number, extra: Record<string, unknown> = {}) => ({ id: `i-${id}`, rong_id: id, create_at: at, type: 9, content: id, author: { id: "u", username: "U" }, ...extra });
 const listIds = (ch: string) => (session.messages[ch] ?? []).map((m) => m.id);
@@ -1263,7 +1243,6 @@ test("跳转：加载目标前后一页作为片段，实时消息暂存，加�
   expect(listIds("A-t1")).toEqual(["p", "t", "n1"]);
   expect(session.history["A-t1"].newer).toBe(true);
   expect(calls.find((c) => c.cmd === "messages" && c.args.before)!.args.before).toBe("n1");
-  // 片段期间的实时消息不追加，避免留下缺口。
   onEvent({ type: "CHANNEL_MSG", channelType: "GROUP", toUserId: "A-t1", msgId: "live", msgTimestamp: 100, fromUserId: "u", content: JSON.stringify({ content: "l", extra: { author: { id: "u" } } }) });
   expect(listIds("A-t1")).not.toContain("live");
   expect(calls.some((c) => c.cmd === "mark_read")).toBe(false);
@@ -1347,8 +1326,6 @@ test("跳转：在片段中再跳到最新消息附近时替换片段，不拼�
   expect(session.history["A-t1"].newer).toBe(false);
 });
 
-// M3-03 编辑、删除与回应
-
 const MANAGE = 1 << 13, REACT = 1 << 18;
 const msgOf = (id: string) => session.messages["A-t1"].find((m) => m.id === id);
 const setupMsgs = async (perm = VIEW | SEND | REACT) => {
@@ -1390,7 +1367,7 @@ test("编辑：进行中显示新内容，成功后标记已编辑，重复的�
   hold.add("update_message");
   const p = editMessage("A-t1", "mine", "新内容");
   expect(msgOf("mine")).toMatchObject({ content: "新内容", pending: "editing" });
-  expect(await editMessage("A-t1", "mine", "再改")).toBe(false); // 进行中不重复提交
+  expect(await editMessage("A-t1", "mine", "再改")).toBe(false);
   release("update_message", null);
   expect(await p).toBe(true);
   expect(msgOf("mine")!.pending).toBeUndefined();
@@ -1424,7 +1401,7 @@ test("删除：进行中标记，失败（403）恢复；成功后移除，重�
   expect(await p).toBe(true);
   expect(msgOf("other")).toBeUndefined();
   sys("deleted_message", { rong_id: "other", id: "i-other", channel_id: "A-t1" });
-  sys("deleted_message", { rong_id: "zzz", id: "mine", channel_id: "A-t1" }); // id 字段不是消息 ID
+  sys("deleted_message", { rong_id: "zzz", id: "mine", channel_id: "A-t1" });
   expect(listIds("A-t1")).toEqual(["mine"]);
   hold.clear();
   auto.delete_message = () => { throw { kind: "rejected", message: "403" }; };
@@ -1512,7 +1489,7 @@ test("退出登录后迟到的编辑、删除、回应结果不修改新会话",
   const e = editMessage("A-t1", "mine", "旧会话");
   const d = deleteMessage("A-t1", "other");
   const r = toggleReaction("A-t1", "mine", { id: "🎉", name: "tada" });
-  expect(await toggleReaction("A-t1", "other", { id: "👍", name: "thumbsup" })).toBe(false); // 删除中不可回应
+  expect(await toggleReaction("A-t1", "other", { id: "👍", name: "thumbsup" })).toBe(false);
   await logout();
   setSession({ phase: "ready", me: { id: "me", name: "me", online: true }, guilds: [{ id: "A", name: "A", groups: [] }] });
   hold.clear();
@@ -1526,10 +1503,9 @@ test("退出登录后迟到的编辑、删除、回应结果不修改新会话",
   expect(msgOf("mine")).toMatchObject({ content: "mine" });
   expect(msgOf("mine")!.reactions).toBeUndefined();
   expect(msgOf("mine")!.pending).toBeUndefined();
-  expect(await toggleReaction("A-t1", "mine", { id: "🎉", name: "tada" })).toBe(true); // 旧会话的进行中标记不阻塞
+  expect(await toggleReaction("A-t1", "mine", { id: "🎉", name: "tada" })).toBe(true);
 });
 
-// M3-03 审查回归：拉取期间的删除、编辑、回应不被旧页覆盖；补拉以服务端副本为准。
 test("首次加载期间的删除、编辑与回应不被迟到的历史页覆盖", async () => {
   hold.add("messages");
   const p = selectGuild("A");
@@ -1568,8 +1544,6 @@ test("重连补拉以服务端副本更新已缓存消息的内容与回应", as
   expect(msgOf("a")).toMatchObject({ content: "a2", updatedAt: 77 });
   expect(msgOf("a")!.reactions).toMatchObject([{ id: "👍", count: 3, me: true }]);
 });
-
-// M3-04 图片与文件发送
 
 const file = (name: string, size: number, type = "") => new File([new Uint8Array(size)], name, { type });
 const settle = async () => { for (let i = 0; i < 5; i++) await flush(); };
@@ -1641,7 +1615,7 @@ test("上传进度与取消：取消后迟到结果被丢弃，重试重新上�
   cancelUpload("A-t1", box()[0].localId);
   expect(calls.find((c) => c.cmd === "upload_cancel")!.args.id).toBe(id);
   expect(box()[0]).toMatchObject({ status: "failed", error: "已取消" });
-  release("upload", { url: "https://img/late.png" }); // 迟到结果
+  release("upload", { url: "https://img/late.png" });
   await settle();
   expect(sends()).toEqual([]);
   expect(box()[0].file!.url).toBeUndefined();
@@ -1685,7 +1659,7 @@ test("文件发送结果不确定时按资源地址核对，不重复发送", as
   submit(ui.target, "");
   await settle();
   expect(box()[0].status).toBe("uncertain");
-  retry("A-t1", box()[0].localId); // 不确定时不允许直接重试
+  retry("A-t1", box()[0].localId);
   await settle();
   expect(sends().length).toBe(1);
   auto.messages = () => pg([{ rong_id: "m1", type: 2, content: "https://img/a.png", create_at: Date.now(), author: { id: "me" } }]);
@@ -1732,7 +1706,6 @@ test("多个附件按选择顺序发送：文字先发，后选的小文件先�
   submit(ui.target, "hi", { id: "q", author: "x", text: "t" });
   await settle();
   expect(sends().map((c) => c.args.content)).toEqual(["hi"]);
-  // 第二个文件先上传完成，第一条文字仍未返回
   release("upload", { url: "https://img/s.png" }, (b) => b.length === 4);
   await settle();
   expect(sends().length).toBe(1);
@@ -1765,8 +1738,6 @@ test("文件卡片核对按解析后的地址比对，兼容斜杠转义", async
   expect(sends().length).toBe(1);
 });
 
-// 私信（M4-01）
-
 const CODE_A = "a".repeat(32), CODE_B = "b".repeat(32);
 const chat = (code: string, uid: string, latestAt: number, unread = 0, preview = "") =>
   ({ code, target: { id: uid, username: `u${uid}`, nickname: "", identifyNum: "0001", avatar: "", online: true, bot: false, system: false }, preview, latestAt, readAt: 0, unread });
@@ -1787,7 +1758,7 @@ test("私信入口加载会话列表，映射 chat_code 与用户 ID，翻页去
   await loadDms(true);
   expect(session.dms.map((c) => c.target.id)).toEqual(["u1", "u2", "u3"]);
   expect(session.dmList.page).toBe(2);
-  await loadDms(true); // 已到最后一页，不再请求
+  await loadDms(true);
   expect(calls.filter((c) => c.cmd === "dm_chats").length).toBe(2);
 });
 
@@ -1815,7 +1786,6 @@ test("私信历史以 chat_code 请求，存放在独立键下，不与同名频
   expect(session.messages[dmKey(CODE_A)].map((m) => m.id)).toEqual(["d1", "d2"]);
   expect(session.messages[CODE_A]).toBeUndefined();
   expect(calls.some((c) => c.cmd === "messages")).toBe(false);
-  // 上翻以最早一条的 id 为游标
   auto.dm_messages = () => pg([dmMsg("d0", 0)]);
   await loadDmOlder(CODE_A);
   expect(calls.filter((c) => c.cmd === "dm_messages").pop()!.args).toEqual({ chatCode: CODE_A, before: "d1" });
@@ -1831,7 +1801,7 @@ test("上翻在途时最新页替换私信列表，迟到的旧页被丢弃，�
   await selectDm(CODE_A);
   hold.add("dm_messages");
   const older = loadDmOlder(CODE_A);
-  const refresh = loadDmHistory(CODE_A); // 已有列表 → refreshDm
+  const refresh = loadDmHistory(CODE_A);
   release("dm_messages", pg([dmMsg("d50", 50), dmMsg("d51", 51)], false), (x) => !x.before);
   await refresh;
   expect(session.messages[dmKey(CODE_A)].map((m) => m.id)).toEqual(["d50", "d51"]);
@@ -1860,7 +1830,7 @@ test("频道与多个私信快速切换，迟到的私信历史不改变当前�
   await b;
   const back = selectChannel("A-t1");
   await back;
-  release("dm_messages", pg([dmMsg("a1", 1)]), (x) => x.chatCode === CODE_A); // A 迟到
+  release("dm_messages", pg([dmMsg("a1", 1)]), (x) => x.chatCode === CODE_A);
   await a;
   await flush();
   expect(ui.target).toMatchObject({ kind: "channel", channelId: "A-t1" });
@@ -1925,7 +1895,6 @@ test("私信推送按 extra.code 路由：追加历史、更新摘要排序与�
   expect(session.dms[0]).toMatchObject({ unread: 1, preview: "b2", latestAt: 40 });
   expect(session.messages[dmKey(CODE_B)].map((m) => m.id)).toEqual(["b1", "b2"]);
   expect(session.messages["A-t1"].some((m) => m.id === "b2")).toBe(false);
-  // 本人另一端发出的私信不计未读
   onEvent(pm(CODE_A, "a9", 50, "me"));
   expect(session.dms.find((c) => c.code === CODE_A)!.unread).toBe(0);
 });
@@ -1953,16 +1922,17 @@ test("打开有未读的私信时按最后一条标记已读，成功后清零�
 test("私信删除事件移除消息；跨端已读事件清零未读", async () => {
   auto.dm_chats = () => ({ items: [chat(CODE_A, "u1", 2, 1)], page: 1, pageTotal: 1, total: 1 });
   auto.dm_messages = () => pg([dmMsg("d1", 1), dmMsg("d2", 2)]);
-  hold.add("mark_dm_read"); // 本端标记未完成，未读只能由跨端事件清零
+  hold.add("mark_dm_read");
   openDm();
   await flush();
   await selectDm(CODE_A);
   await selectGuild("A");
   onEvent({ type: "SYS_MSG", content: JSON.stringify({ type: "private_message_deleted", body: { code: CODE_A, id: "9001", rong_id: "d2", author_id: 1 } }) });
   expect(session.messages[dmKey(CODE_A)].map((m) => m.id)).toEqual(["d1"]);
-  onEvent({ type: "SYS_MSG", content: JSON.stringify({ type: "mark_as_batchread", body: { user_chat: [{ chat_code: CODE_A, time: 5 }] } }) });
+  onEvent({ type: "SYS_MSG", content: JSON.stringify({ type: "mark_as_batchread", body: { user_chat: [{ chat_code: CODE_A, time: 5 }, { channel_or_code: CODE_A, read_time: 5 }, { code: CODE_A, time: 5 }] } }) });
+  expect(session.dms[0].unread).toBe(1);
+  onEvent({ type: "SYS_MSG", content: JSON.stringify({ type: "mark_as_batchread", body: { user_chat: [{ code: CODE_A, last_read_time: 5, latest_msg_time: 5 }] } }) });
   expect(session.dms[0].unread).toBe(0);
-  // 删除事件触发的列表刷新迟到且仍带旧未读时，不使已读的会话回升。
   await flush();
   expect(session.dms[0].unread).toBe(0);
 });
@@ -2036,10 +2006,7 @@ test("退出登录清除私信标记中状态，重新登录后可再次标记�
   expect(session.dms[0].unread).toBe(0);
 });
 
-// 私信（M4-02）
-
 const sysEv = (type: string, body: unknown) => ({ type: "SYS_MSG", content: JSON.stringify({ type, body }) });
-// 真实推送：d.content 解析后 extra 仍是 JSON 字符串。
 const pm2 = (code: string, id: string, at: number, from = "u1", extra: Record<string, unknown> = {}) =>
   ({ type: 1, channelType: "PERSON", fromUserId: from, toUserId: "x", msgId: id, msgTimestamp: at, content: JSON.stringify({ content: id, extra: JSON.stringify({ code, type: 1, author: { id: from, username: `u${from}` }, ...extra }) }) });
 const DM = { kind: "dm" as const, chatId: CODE_A };
@@ -2067,7 +2034,6 @@ test("私信发送只走私信接口，以对方用户 ID 发送并带引用；�
   onEvent(pm2(CODE_A, "m2", 10, "me"));
   expect(session.messages[dmKey(CODE_A)].filter((m) => m.id === "m2").length).toBe(1);
   expect(session.dms[0].unread).toBe(0);
-  // 频道 ID 与 chat_code 相同也不会收到私信内容
   expect(session.messages[CODE_A]).toBeUndefined();
 });
 
@@ -2122,7 +2088,6 @@ test("私信编辑删除只对本人消息开放，走私信接口；对方消�
   expect(calls.find((x) => x.cmd === "delete_dm_message")!.args).toEqual({ msgId: "m1" });
   expect(calls.some((x) => ["update_message", "delete_message"].includes(x.cmd))).toBe(false);
   expect(session.messages[k].map((m) => m.id)).toEqual(["d1"]);
-  // 删除后的重复删除事件与迟到推送都不会带回
   onEvent(sysEv("private_message_deleted", { id: "1", code: CODE_A, rong_id: "m1", author_id: 1 }));
   onEvent(pm2(CODE_A, "m1", 2, "me"));
   expect(session.messages[k].map((m) => m.id)).toEqual(["d1"]);
@@ -2142,7 +2107,6 @@ test("私信回应走私信接口；本端回应后的重复事件与他人事�
   onEvent(ev("private_delete_reaction", 7));
   onEvent(ev("private_delete_reaction", 7));
   expect(session.messages[k][0].reactions).toMatchObject([{ count: 1 }]);
-  // 回应失败回滚
   auto.dm_reaction = () => Promise.reject({ kind: "rejected", message: "消息已删除" });
   expect(await toggleReaction(k, "d1", { id: "❤", name: "❤" })).toBe(false);
   expect(session.messages[k][0].reactions!.some((r) => r.id === "❤")).toBe(false);
@@ -2212,8 +2176,6 @@ test("私信操作在退出登录后迟到返回不改变新会话；私信与�
   expect(msgKey({ kind: "channel", guildId: "A", channelId: CODE_A })).toBe(CODE_A);
 });
 
-// // 语音会话
-
 const vs = await import("../voice");
 const peer = (id: string, extra: Partial<import("../voice").VoicePeer> = {}) =>
   ({ id, name: id, avatar: "", device: "pc", micOff: false, headsetOff: false, permissionSay: true, serverMute: false, ...extra });
@@ -2231,7 +2193,6 @@ test("语音会话：加入后按事件更新成员，已在该频道时不重�
   ev(1, { type: "peer_changed", patch: { id: "u1", micOff: true } });
   ev(1, { type: "peer_left", id: "u2" });
   expect(vs.voice.peers.map((p) => [p.id, p.micOff])).toEqual([["u1", true]]);
-  // // 已在该频道时不重复加入。
   await vs.joinVoice("V1");
   expect(calls.filter((c) => c.cmd === "voice_join").length).toBe(1);
 });
@@ -2249,7 +2210,6 @@ test("语音会话：切换频道后旧会话的迟到事件被忽略", async ()
   ev(1, { type: "state", phase: "connected" });
   await vs.joinVoice("V2");
   expect(vs.voice).toMatchObject({ channelId: "V2", generation: 2, phase: "connecting" });
-  // // 旧会话的退出与成员事件不影响新频道。
   ev(1, { type: "state", phase: "disconnected", reason: "left" });
   ev(1, { type: "joined", me: peer("me"), peers: [peer("old")] });
   expect(vs.voice).toMatchObject({ channelId: "V2", phase: "connecting", peers: [] });
@@ -2261,7 +2221,7 @@ test("语音会话：加入返回前的事件暂存，按返回的代次过滤",
   hold.add("voice_join");
   const p = vs.joinVoice("V1");
   await flush();
-  ev(4, { type: "state", phase: "disconnected", reason: "replaced" }); // // 代次不符，丢弃。
+  ev(4, { type: "state", phase: "disconnected", reason: "replaced" });
   ev(5, { type: "joined", me: peer("me"), peers: [] });
   ev(5, { type: "state", phase: "connected" });
   release("voice_join", 5);
@@ -2321,7 +2281,6 @@ test("加入在途时退出：请求序号让后端拒绝迟到的加入", async
   await flush();
   const join = calls.find((c) => c.cmd === "voice_join")!;
   const leave = calls.find((c) => c.cmd === "voice_leave")!;
-  // // 退出的序号大于加入，后端据此拒绝迟到的加入。
   expect(typeof join.args.request).toBe("number");
   expect(leave.args.request).toBeGreaterThan(join.args.request);
   pending.splice(0).forEach((x) => x.resolve(Promise.reject({ kind: "cancelled", message: "已取消" })));
@@ -2358,8 +2317,6 @@ test("语音会话：加入在途时退出登录，迟到的结果不恢复语�
   expect(vs.voice.phase).toBe("idle");
 });
 
-// // 麦克风
-
 test("麦克风：默认开启，静音后电平归零，操作失败时提示", async () => {
   auto.voice_join = () => 1;
   await vs.joinVoice("V1");
@@ -2374,10 +2331,8 @@ test("麦克风：默认开启，静音后电平归零，操作失败时提示",
   expect(vs.mic.muted).toBe(true);
   ev(1, { type: "mic", status: "muted", muted: true });
   expect(vs.mic).toMatchObject({ status: "muted", level: 0 });
-  // // 静音后的迟到电平被忽略。
   ev(1, { type: "mic_level", level: 80 });
   expect(vs.mic.level).toBe(0);
-  // 后端拒绝时给出提示，静音状态以后端随后的事件为准。
   auto.voice_set_mic = () => Promise.reject({ kind: "rejected", message: "服务端拒绝" });
   await vs.toggleMic();
   expect(vs.mic.busy).toBe(false);
@@ -2389,7 +2344,6 @@ test("麦克风：静音失败时以后端事件为准并显示原因", async ()
   await vs.joinVoice("V1");
   ev(1, { type: "state", phase: "connected" });
   ev(1, { type: "mic", status: "active", muted: false, device: "d" });
-  // // 后端先推送静音状态，再返回错误。
   auto.voice_set_mic = () => {
     ev(1, { type: "mic", status: "muted", muted: true });
     return Promise.reject({ kind: "rejected", message: "暂停推流失败" });
@@ -2407,7 +2361,6 @@ test("麦克风：取消静音失败时保持静音", async () => {
   ev(1, { type: "mic", status: "muted", muted: true });
   auto.voice_set_mic = () => Promise.reject({ kind: "rejected", message: "恢复推流失败" });
   const p = vs.setMuted(false);
-  // // 后端恢复失败后回到静音。
   ev(1, { type: "mic", status: "muted", muted: true, message: "恢复推流失败" });
   await p;
   expect(vs.mic).toMatchObject({ status: "muted", muted: true });
@@ -2445,7 +2398,6 @@ test("麦克风：退出登录时释放语音并重置偏好", async () => {
   ev(1, { type: "mic_level", level: 50 });
   calls.length = 0;
   await logout();
-  // // 退出登录时同时退出语音。
   expect(calls.some((c) => c.cmd === "logout")).toBe(true);
   expect(vs.voice.phase).toBe("idle");
   expect(vs.mic).toMatchObject({ muted: false, status: "off", device: null, level: 0, message: null, busy: false });
@@ -2495,7 +2447,6 @@ test("麦克风：加入前静音随加入请求发送，重连与断开时清�
   expect(vs.mic.status).toBe("off");
   ev(1, { type: "state", phase: "disconnected", reason: "replaced" });
   expect(vs.mic).toMatchObject({ status: "off", device: null, level: 0 });
-  // // 新会话忽略旧代次的事件。
   auto.voice_join = () => 2;
   await vs.joinVoice("V2");
   ev(1, { type: "mic", status: "active", muted: false, device: "old" });
@@ -2517,20 +2468,16 @@ test("麦克风：选择输入设备，失败时恢复之前的选择", async ()
   expect(vs.inputs.error).toBeTruthy();
 });
 
-// // 耳机与播放
-
 test("耳机：未连接时关闭耳机同时静音，打开后恢复之前的状态", async () => {
   await vs.setDeafened(true);
   expect(vs.output.deafened).toBe(true);
   expect(vs.mic.muted).toBe(true);
   await vs.setDeafened(false);
   expect(vs.mic.muted).toBe(false);
-  // // 关闭前已静音，打开后保持静音。
   await vs.setMuted(true);
   await vs.setDeafened(true);
   await vs.setDeafened(false);
   expect(vs.mic.muted).toBe(true);
-  // // 关闭耳机期间取消静音会同时打开耳机。
   await vs.setDeafened(true);
   await vs.setMuted(false);
   expect(vs.output.deafened).toBe(false);
@@ -2565,7 +2512,6 @@ test("耳机：关闭状态随加入请求发送，连接后可以切换", async
   ev(1, { type: "mic", status: "active", muted: false });
   expect(vs.output).toMatchObject({ deafened: false, active: true, device: "内置扬声器", busy: false });
   expect(vs.mic.muted).toBe(false);
-  // // 操作失败时显示原因。
   auto.voice_set_deafen = () => Promise.reject({ kind: "rejected", message: "服务端拒绝" });
   await vs.setDeafened(true);
   expect(vs.output.message).toBe("服务端拒绝");
@@ -2613,7 +2559,6 @@ test("音量：成员音量限制在 0 至 200，退出登录时重置", async (
   expect(calls.find((c) => c.cmd === "voice_set_master")!.args).toEqual({ percent: 80 });
   vs.resetVoice();
   expect(vs.volumeOf("u1")).toBe(100);
-  // 总音量属于本机偏好，退出登录时保留。
   expect(vs.output.master).toBe(80);
   await vs.setMasterVolume(100);
 });
@@ -2635,7 +2580,6 @@ test("音量：麦克风增益限制范围，连续调节以最新值为准，�
   await vs.setMicGain(250);
   expect(vs.output.gain).toBe(200);
   expect(calls[calls.length - 1].args).toEqual({ percent: 200 });
-  // 先发的请求晚返回，不覆盖后来的值。
   hold.add("voice_set_gain");
   const a = vs.setMicGain(50);
   const b = vs.setMicGain(150);
@@ -2718,7 +2662,6 @@ test("设备：连续切换以最后一次为准，迟到的失败不回滚新�
   const b = vs.selectInput("b");
   release("set_audio_input", null, (x) => x.id === "b");
   await b;
-  // 先发的请求迟到失败。
   const i = pending.findIndex((x) => x.cmd === "set_audio_input");
   pending.splice(i, 1)[0].resolve(Promise.reject({ kind: "local", message: "x" }));
   await a;
@@ -2742,7 +2685,6 @@ test("设备：同名设备按序号区分，所选设备缺失时提示回退",
   expect(vs.selectionMissing(vs.outputs)).toBe(true);
   await vs.selectOutput("y");
   expect(vs.selectionMissing(vs.outputs)).toBe(false);
-  // 列表在途期间的选择不被返回的旧选择覆盖。
   hold.add("audio_outputs");
   const l = vs.loadOutputs();
   await flush();
@@ -2753,8 +2695,6 @@ test("设备：同名设备按序号区分，所选设备缺失时提示回退",
   hold.clear();
   await vs.selectOutput(null);
 });
-
-// // 连接恢复
 
 test("连接恢复：显示链路质量与重连次数", async () => {
   auto.voice_join = () => 1;
@@ -2813,7 +2753,6 @@ test("连接恢复：网络恢复与网关重连时唤醒语音会话", async ()
   await vs.joinVoice("V1");
   ev(1, { type: "state", phase: "connected" });
   calls.length = 0;
-  // 已连接时也唤醒：媒体可能已断开而阶段仍为 connected，后端据此立即重建。
   networkBack();
   onGatewayStatus({ state: "ready", kind: "resumed" });
   await flush();
@@ -2825,7 +2764,6 @@ test("连接恢复：网络恢复与网关重连时唤醒语音会话", async ()
   onGatewayStatus({ state: "ready", kind: "rebuilt" });
   await flush();
   expect(calls.filter((c) => c.cmd === "voice_wake").length).toBe(4);
-  // // 首次连接网关不唤醒。
   onGatewayStatus({ state: "ready", kind: "new" });
   await flush();
   expect(calls.filter((c) => c.cmd === "voice_wake").length).toBe(4);
@@ -2845,8 +2783,6 @@ test("设备摘要：显示当前设备与设备提示", async () => {
   ev(1, { type: "output", deafened: false, active: false, message: "扬声器已断开" });
   expect(vs.deviceSummary()).toMatchObject({ text: "麦克风：无权限 扬声器：未开启", ok: false });
 });
-
-// M5-02a 频道权限与可见性
 
 const CONNECT = 1 << 15;
 const vraw = (id: string, overwrites: any[] = [], extra: any = {}) => ({ ...raw(id, id, 2), overwrites, userOverwrites: [], ...extra });
@@ -2886,7 +2822,6 @@ test("依据未就绪时不加入语音", async () => {
   await flush();
   const j = enterVoice("V-ok");
   await flush();
-  // 首次读取与加入前的刷新均失败。
   while (pending.some((x) => x.cmd === "guild_access")) release("guild_access", Promise.reject("x"));
   await p;
   await j;
@@ -2906,13 +2841,12 @@ test("无 SEND 的文字频道可阅读但不发送", async () => {
   expect(calls.some((c) => c.cmd === "send_message")).toBe(false);
 });
 
-test("分组无可见子项时不读取，同步子频道不叠加父分组覆盖", async () => {
+test("同步子频道不叠加父分组覆盖", async () => {
   auto.channels = () => [
     { ...raw("cat", "c", 0), overwrites: [{ roleId: 0, allow: 0, deny: VIEW }], userOverwrites: [] },
     { ...withOw("A-sync", "s", []), parentId: "cat", permissionSync: true },
   ];
   await selectGuild("A");
-  // 子频道自身覆盖为空，按服务端复制的结果计算，不继承分组的拒绝。
   expect(ui.target).toMatchObject({ channelId: "A-sync" });
   expect(session.guilds[0].groups[0].channels[0].sync).toBe(true);
 });
@@ -2923,16 +2857,13 @@ test("权限撤销后移除内容、未读，切离当前频道并丢弃迟到�
   await selectGuild("A");
   await selectChannel("A-t2");
   setSession("unread", "A-t2", { guildId: "A", unread: true, mentions: 1, readAt: 0 });
-  // 频道覆盖变更：A-t2 失去查看权限。
   auto.channels = () => [raw("A-t1", "t1"), withOw("A-t2", "t2", [{ roleId: 0, allow: 0, deny: VIEW }]), raw("A-t3", "t3")];
   await nav.reloadChannels("A");
   expect(session.messages["A-t2"]).toBeUndefined();
   expect(session.unread["A-t2"]).toBeUndefined();
   expect(ui.target).toMatchObject({ channelId: "A-t1" });
-  // 撤销后的推送与未读不写回。
   sys("unread_count_changed", { channel_id: "A-t2", guild_id: "A", msg_time: 99, mention_count: 1 });
   expect(session.unread["A-t2"]).toBeUndefined();
-  // A-t3 历史在途时被撤销：迟到结果不写回。
   hold.add("messages");
   const late = selectChannel("A-t3");
   await flush();
@@ -3099,12 +3030,10 @@ test("服务器文件夹：读取、失败降级与迟到结果", async () => {
   expect(calls.some((c) => c.cmd === "guild_folders" && c.args)).toBe(false);
 });
 
-// 语音频道在线成员
-
 const ids2 = (c: { users?: { id: string }[] }) => (c.users ?? []).map((u) => u.id);
 const voiceOf = (gid: string) => session.guilds.find((g) => g.id === gid)!.groups.flatMap((g) => g.channels).find((c) => c.type === "voice")!;
 
-test("频道列表中的语音成员显示在频道下并记入已知用户", async () => {
+test("频道列表中的语音成员显示在频道下", async () => {
   auto.channels = ({ guildId }) => [{ ...raw(`${guildId}-voice`, "v", 2), users: [{ id: "u1", username: "a", nickname: "甲", identifyNum: "1", avatar: "" }] }, raw(`${guildId}-t1`, "t1")];
   await selectGuild("A");
   expect(voiceOf("A").users?.map((u) => [u.id, u.name])).toEqual([["u1", "甲"]]);
@@ -3150,17 +3079,13 @@ test("屏幕分享状态：频道列表初始值、开播改档停播事件、�
   expect(liveOf("A-voice", "u2")).toEqual({ resolution: 1080, frameRate: 60, startTime: 5, audienceCount: 1, audienceLimit: 20 });
   ev("u1", "A-voice", { in_live: false, resolution: 0 });
   expect(liveOf("A-voice", "u1")).toBeUndefined();
-  // 已有的其他成员与名称不受影响。
   expect(voiceOf("A").users?.map((u) => u.id)).toEqual(["u1", "u2"]);
-  // 不在成员列表中的用户、其他频道与重复的停播事件都不改变状态。
   const before = JSON.stringify(session.guilds);
   ev("u9", "A-voice", { in_live: true, resolution: 720 });
   ev("u2", "A-voice2", { in_live: true, resolution: 720 });
   ev("u1", "A-voice", { in_live: false });
   expect(JSON.stringify(session.guilds)).toBe(before);
 });
-
-// 文字频道预览、作者名称与系统消息
 
 const textOf = (gid: string, id: string) => session.guilds.find((g) => g.id === gid)!.groups.flatMap((g) => g.channels).find((c) => c.id === id)!;
 const pushCh = (channelId: string, msgId: string, extra: Record<string, unknown>) =>
@@ -3208,11 +3133,9 @@ test("提示音：连接、成员进出与主动断开", async () => {
     auto.voice_join = () => 1;
     await vs.joinVoice("V1");
     ev(1, { type: "state", phase: "connected" });
-    // 本人信息到达后才播放进入提示音。
     expect(effectIds()).toEqual([]);
     ev(1, { type: "joined", me: peer("me"), peers: [] });
     expect(effectIds()).toEqual([1]);
-    // 连接后 1 秒内不播放成员进出。
     ev(1, { type: "peer_joined", peer: peer("u2") });
     expect(effectIds()).toEqual([1]);
     now += 1500;
@@ -3221,12 +3144,45 @@ test("提示音：连接、成员进出与主动断开", async () => {
     ev(1, { type: "peer_left", id: "u2" });
     ev(1, { type: "peer_left", id: "nobody" });
     expect(effectIds()).toEqual([1, 1, 2]);
-    // 重连恢复不播放进入提示音。
     ev(1, { type: "state", phase: "reconnecting" });
     ev(1, { type: "state", phase: "connected" });
     expect(effectIds()).toEqual([1, 1, 2]);
     await vs.disconnectVoice();
     expect(effectIds()).toEqual([1, 1, 2, 3]);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test("提示音：电台频道离开不播放，人满时只播放进入装扮音效", async () => {
+  const realNow = Date.now;
+  let now = 3_000_000;
+  Date.now = () => now;
+  try {
+    setSession("guilds", 0, { loaded: true, groups: [{ id: "g", name: "", channels: [{ id: "R1", name: "r", type: "unknown", radio: true }, { id: "V2", name: "v", type: "voice" }] }] });
+    const crowd = Array.from({ length: 29 }, (_, k) => peer(`p${k}`));
+    for (const ch of ["R1", "V2"]) {
+      auto.voice_join = () => 1;
+      await vs.joinVoice(ch);
+      ev(1, { type: "joined", me: peer("me"), peers: crowd.slice(0, 27) });
+      ev(1, { type: "state", phase: "connected" });
+      now += 1500;
+      calls.length = 0;
+      ev(1, { type: "peer_left", id: "p0" });
+      ev(1, { type: "peer_joined", peer: peer("p0") });
+      ev(1, { type: "peer_joined", peer: peer("d1", { joinVoice: 10011 }) });
+      ev(1, { type: "peer_joined", peer: peer("x1") });
+      ev(1, { type: "peer_joined", peer: peer("d2", { joinVoice: 10012 }) });
+      const items = calls.filter((c) => c.cmd === "effect_play_item").map((c) => c.args.item);
+      if (ch === "R1") {
+        expect(effectIds()).toEqual([1, 1]);
+        expect(items).toEqual([10011, 10012]);
+      } else {
+        expect(effectIds()).toEqual([2, 1, 1]);
+        expect(items).toEqual([10011]);
+      }
+      await vs.leaveVoice();
+    }
   } finally {
     Date.now = realNow;
   }
@@ -3277,8 +3233,6 @@ test("提示音：成员装扮音效", async () => {
   }
 });
 
-// 成员管理
-
 test("被移动到其他语音频道时加入目标频道，未在语音或已在目标时忽略", async () => {
   auto.voice_join = ({ channelId }) => (channelId === "V-a" ? 1 : 2);
   auto.channels = () => [raw("A-t1", "t1"), vraw("V-a"), vraw("V-b")];
@@ -3312,7 +3266,7 @@ test("管理权限按语音频道有效权限判断，频道覆盖可拒绝", as
   const { modPerms, anyMod, moveTargets } = await import("../moderation");
   const VM = 1 << 16, MUTE = 1 << 25, DEAF = 1 << 24;
   auto.channels = () => [raw("A-t1", "t1"), vraw("V-a"), vraw("V-b", [{ roleId: 0, allow: 0, deny: VM | MUTE }]), vraw("V-hide", [{ roleId: 0, allow: 0, deny: VIEW }])];
-  auto.guild_access = ({ guildId }) => access(guildId, { everyone: VIEW | CONNECT | VM | MUTE | DEAF + 2 ** 32 });
+  auto.guild_access = ({ guildId }) => access(guildId, { everyone: VIEW | CONNECT | VM | MUTE | (DEAF + 2 ** 32) });
   await selectGuild("A");
   expect(modPerms("V-a")).toEqual({ voiceManage: true, mute: true, deafen: true, kick: false, ban: false });
   expect(modPerms("V-b")).toEqual({ voiceManage: false, mute: false, deafen: true, kick: false, ban: false });

@@ -1,5 +1,3 @@
-//! 读取一次设备快照，确认监视所用的枚举可用：
-//! `cargo test --test live_devices_watch -- --ignored --nocapture`
 #[test]
 #[ignore = "读取本机音频设备"]
 fn snapshot_lists_devices() {

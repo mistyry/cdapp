@@ -1,8 +1,3 @@
-//! 本地存储布局。
-//!
-//! 固定目录保存 `location.json` 与凭据，不随数据迁移。`location.json` 指向数据根，
-//! 为空时使用默认数据根。数据根内为 `root.json`、`config/`、`accounts/` 与 `cache/`。
-
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -19,11 +14,8 @@ const MARKER: &str = "root.json";
 const LOCK: &str = ".lock";
 const CREDENTIALS: &str = "credentials.json";
 const VERSION: u64 = 1;
-/// 缓存目录容量上限，启动时按最近访问时间清理。
 const CACHE_LIMIT: u64 = 512 * 1024 * 1024;
-/// 单个账号状态文件上限。
 const ACCOUNT_LIMIT: usize = 256 * 1024;
-/// 允许前端写入的账号状态字段。
 const ACCOUNT_KEYS: &[&str] = &["emojiRecent", "openFolders", "peerVolumes", "peerDenoise"];
 
 #[derive(Default, Serialize, Deserialize)]
@@ -32,23 +24,16 @@ struct Location {
     v: u64,
     #[serde(default)]
     root: Option<PathBuf>,
-    /// 迁移成功后待删除的旧数据根，下次启动时清理。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     remove: Option<PathBuf>,
 }
 
-/// 数据根状态。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum Status {
     Ready,
-    /// 自定义数据根不存在或缺少标记文件。
     Missing,
-    /// 数据根无法写入。
-    Unwritable {
-        message: String,
-    },
-    /// 另一个实例正在使用数据根。
+    Unwritable { message: String },
     Locked,
 }
 
@@ -60,7 +45,6 @@ pub struct Storage {
     _lock: Option<File>,
 }
 
-/// 前端展示的存储信息。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Info {
@@ -72,15 +56,10 @@ pub struct Info {
 }
 
 static STORAGE: OnceLock<Storage> = OnceLock::new();
-/// 数据根写入闸门。普通写入持读锁，迁移与清除缓存持写锁。
 static GATE: RwLock<()> = RwLock::new(());
 static ACCOUNT: Mutex<()> = Mutex::new(());
-/// 迁移完成等待重启时置位，此后不再写入数据根。
 static FROZEN: AtomicBool = AtomicBool::new(false);
 
-/// 打开存储并迁移旧版平铺文件。只在启动时调用一次。
-///
-/// `fixed` 为固定目录，`default_root` 为默认数据根，`legacy` 为旧版平铺文件所在目录。
 pub fn init(fixed: &Path, default_root: &Path, legacy: &Path) {
     let s = open(fixed, default_root, legacy);
     if s.status != Status::Ready {
@@ -160,7 +139,6 @@ fn write_location_full(fixed: &Path, root: Option<&Path>, remove: Option<&Path>)
     )
 }
 
-/// 默认数据根缺少标记时创建；自定义数据根缺少标记时视为丢失，不新建空目录。
 fn prepare(root: &Path, is_default: bool) -> Status {
     if root.join(MARKER).is_file() {
         return Status::Ready;
@@ -195,7 +173,6 @@ fn acquire(root: &Path) -> Result<File, fs::TryLockError> {
     Ok(f)
 }
 
-/// 迁移旧文件。目标已存在时删除旧文件。
 fn move_file(from: &Path, to: &Path) {
     if from == to || !from.is_file() {
         return;
@@ -228,26 +205,21 @@ fn data_file(dir: &str, name: &str) -> Option<PathBuf> {
     ready().ok().map(|s| s.root.join(dir).join(name))
 }
 
-/// 设置文件路径。数据根不可用时返回 None，调用方不应写盘。
 #[must_use]
 pub fn config_file(name: &str) -> Option<PathBuf> {
     data_file("config", name)
 }
 
-/// 缓存文件路径。数据根不可用时返回 None。
 #[must_use]
 pub fn cache_file(name: &str) -> Option<PathBuf> {
     data_file("cache", name)
 }
 
-/// 凭据路径，位于固定目录。
 #[must_use]
 pub fn credentials() -> Option<PathBuf> {
     STORAGE.get().map(|s| s.fixed.join(CREDENTIALS))
 }
 
-/// 原子写入数据根内的文件。迁移进行中时等待。
-///
 /// # Errors
 ///
 /// 目录创建或写入失败时返回错误。
@@ -259,8 +231,6 @@ pub fn write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     write_raw(path, bytes, false)
 }
 
-/// 写入临时文件后原子替换。`private` 为真时 Unix 权限为 0600。
-///
 /// # Errors
 ///
 /// 目录创建或写入失败时返回错误。
@@ -284,7 +254,6 @@ pub fn write_raw(path: &Path, bytes: &[u8], private: bool) -> io::Result<()> {
     fs::rename(&tmp, path)
 }
 
-/// 当前存储信息。
 #[must_use]
 pub fn info() -> Info {
     STORAGE.get().map_or_else(
@@ -305,7 +274,6 @@ pub fn info() -> Info {
     )
 }
 
-/// 缓存占用字节数。
 #[must_use]
 pub fn cache_size() -> u64 {
     ready().map_or(0, |s| {
@@ -313,8 +281,6 @@ pub fn cache_size() -> u64 {
     })
 }
 
-/// 清空缓存目录。
-///
 /// # Errors
 ///
 /// 数据根不可用或删除失败时返回错误。
@@ -332,11 +298,6 @@ pub fn clear_cache() -> AppResult<()> {
     Ok(())
 }
 
-/// 把数据迁移到新位置并改写 `location.json`。成功后需重启应用，旧目录在下次启动时删除。
-/// 目标已是本应用数据根时直接切换，不复制也不删除当前数据。
-///
-/// 成功返回后数据根不再写入，直到重启。
-///
 /// # Errors
 ///
 /// 目标无效、不为空或复制校验失败时返回错误，当前位置保持可用。
@@ -370,8 +331,6 @@ pub fn relocate(target: &Path) -> AppResult<()> {
     Ok(())
 }
 
-/// 数据根丢失时切换到已有数据根或默认位置，不复制数据。`None` 表示默认位置。
-///
 /// # Errors
 ///
 /// 目标不是本应用数据根或写入失败时返回错误。
@@ -398,7 +357,6 @@ fn as_custom<'a>(s: &Storage, target: &'a Path) -> Option<&'a Path> {
     (target != default).then_some(target)
 }
 
-/// 规范化目标路径，拒绝与当前数据根相同或互相包含的位置。
 fn checked_target(root: &Path, target: &Path) -> AppResult<PathBuf> {
     if !target.is_absolute() {
         return Err(AppError::Other("请选择完整的文件夹路径".into()));
@@ -421,7 +379,6 @@ fn checked_target(root: &Path, target: &Path) -> AppResult<PathBuf> {
     Ok(target)
 }
 
-/// 复制数据根并按文件大小校验，最后写入标记文件。
 fn copy_root(from: &Path, to: &Path) -> AppResult<()> {
     let list = files(from);
     for (rel, size) in &list {
@@ -444,7 +401,6 @@ fn copy_root(from: &Path, to: &Path) -> AppResult<()> {
     Ok(())
 }
 
-/// 只删除数据根内由本应用创建的条目。默认数据根可能与固定目录相同，不能整个删除。
 fn remove_root(root: &Path) -> io::Result<()> {
     for dir in ["config", "accounts", "cache"] {
         match fs::remove_dir_all(root.join(dir)) {
@@ -472,7 +428,6 @@ fn clear_dir(dir: &Path) {
     }
 }
 
-/// 递归列出文件的相对路径与大小，不跟随符号链接。
 fn files(dir: &Path) -> Vec<(PathBuf, u64)> {
     fn walk(base: &Path, dir: &Path, out: &mut Vec<(PathBuf, u64)>) {
         let Ok(entries) = fs::read_dir(dir) else {
@@ -496,7 +451,6 @@ fn files(dir: &Path) -> Vec<(PathBuf, u64)> {
     out
 }
 
-/// 超出上限时按最近修改时间从旧到新删除缓存文件。
 fn prune(dir: &Path, limit: u64) {
     let mut list: Vec<_> = files(dir)
         .into_iter()
@@ -543,8 +497,6 @@ fn read_account(path: &Path) -> Map<String, Value> {
         .unwrap_or_default()
 }
 
-/// 读取账号状态。文件不存在或损坏时返回空对象。
-///
 /// # Errors
 ///
 /// 用户 ID 无效或数据根不可用时返回错误。
@@ -555,8 +507,6 @@ pub fn account_get(user: &str) -> AppResult<Value> {
     Ok(Value::Object(m))
 }
 
-/// 写入账号状态的一个字段。
-///
 /// # Errors
 ///
 /// 字段不允许、内容过大、数据根不可用或写入失败时返回错误。

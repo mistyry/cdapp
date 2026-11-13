@@ -2,9 +2,6 @@ import { createEffect, on, onCleanup, onMount } from "solid-js";
 import { insertText, type Pick } from "../../lib/emoji";
 import { emojiNode, read, render } from "../../lib/draftDom";
 
-// 图形化输入框。草稿以 KMarkdown 文本为唯一来源：自定义表情显示为普通行内图片，与文字一样参与光标、选择、复制与删除，Unicode 与其他文字为普通文本。
-// 只读取 DOM 中的文本、换行与表情单元，粘贴一律按纯文本插入，不发送编辑器 DOM 或 HTML。
-
 export type EmojiInputApi = { insert: (p: Pick) => void; focus: () => void };
 
 export default function EmojiInput(p: {
@@ -17,9 +14,7 @@ export default function EmojiInput(p: {
   ref?: (api: EmojiInputApi) => void;
 }) {
   let el!: HTMLDivElement;
-  // 自身输入产生的值，不再回写 DOM，避免打断光标与输入法。
   let own: string | null = null;
-  // 最近一次光标位置。点击选择器后输入框失焦，插入时恢复到原位置。
   let saved: Range | null = null;
 
   const sync = () => {
@@ -51,7 +46,6 @@ export default function EmojiInput(p: {
           r = document.createRange();
           r.selectNodeContents(el);
           r.collapse(false);
-          // 末尾 br 是显示空行的占位，插入到它之前。
           if (el.lastChild instanceof HTMLBRElement) {
             r.setStartBefore(el.lastChild);
             r.collapse(true);
@@ -77,7 +71,6 @@ export default function EmojiInput(p: {
     e.preventDefault();
     const text = e.clipboardData?.getData("text/plain") ?? "";
     if (!text) return;
-    // 粘贴文本中的表情标记同样显示为图形。
     const s = getSelection();
     if (!s?.rangeCount) return;
     const r = s.getRangeAt(0);
@@ -88,7 +81,6 @@ export default function EmojiInput(p: {
     const nodes = document.createDocumentFragment();
     nodes.append(...frag.childNodes);
     r.insertNode(nodes);
-    // 粘贴内容以换行结尾且位于末尾时，补上显示空行的占位 br，否则读取时会把这个换行当作占位去掉。
     if (last instanceof HTMLBRElement && el.lastChild === last) el.append(document.createElement("br"));
     if (last) {
       r.setStartAfter(last);
@@ -99,7 +91,6 @@ export default function EmojiInput(p: {
     sync();
   };
 
-  // 复制时输出标记文本，便于粘贴回输入框后保持表情。
   const onCopy = (e: ClipboardEvent, cut: boolean) => {
     const s = getSelection();
     if (!s?.rangeCount || s.isCollapsed || !el.contains(s.anchorNode)) return;
@@ -108,7 +99,6 @@ export default function EmojiInput(p: {
     box.append(s.getRangeAt(0).cloneContents());
     const text = read(box);
     e.clipboardData?.setData("text/plain", text);
-    // 外部程序粘贴时得到名称与图片，本输入框只读取纯文本标记。
     e.clipboardData?.setData("text/html", box.innerHTML);
     e.preventDefault();
     if (cut) {

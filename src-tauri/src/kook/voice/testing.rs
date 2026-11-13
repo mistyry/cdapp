@@ -1,5 +1,3 @@
-//! 单元测试共用的构造函数。
-
 use super::{Arc, JoinParams, Mutex, Sink, Value, VoiceEvent};
 use serde_json::json;
 

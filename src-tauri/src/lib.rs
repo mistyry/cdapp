@@ -15,7 +15,6 @@ use std::sync::Mutex;
 
 use commands::{AppState, VoiceState};
 
-/// 启动参数 `--data-dir <目录>` 或环境变量 `CDAPP_DATA_DIR` 指定独立的数据目录，用于测试。
 fn data_dir_arg() -> Option<std::path::PathBuf> {
     let mut args = std::env::args().skip(1);
     let mut found = None;
@@ -37,8 +36,6 @@ fn data_dir_arg() -> Option<std::path::PathBuf> {
     }
 }
 
-/// 日志写入应用日志目录并轮换保留。本应用模块开发构建为 Debug、发行构建为 Info，依赖库只记录警告；
-/// `CDAPP_LOG` 可覆盖本应用模块的级别。
 fn log_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
     use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
     let default = if cfg!(debug_assertions) {
@@ -59,7 +56,6 @@ fn log_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
         .level(log::LevelFilter::Warn)
         .level_for("cdapp_lib", level)
         .level_for("app", level)
-        // 多网卡环境下向不可达网卡发包、mDNS 地址不一致与 DTLS server_name 提示均不影响连接。
         .level_for("webrtc::peer_connection::driver", log::LevelFilter::Off)
         .level_for("rtc_mdns", log::LevelFilter::Off)
         .level_for("rtc_dtls::config", log::LevelFilter::Error)
@@ -70,15 +66,10 @@ fn log_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
-/// 启动应用。
-///
-/// 关闭对客户端无用的浏览器行为：右键菜单、查找、刷新、打印、下载、查看源码等。
-/// 开发模式保留右键菜单、调试工具与刷新。Shift+Tab 用于键盘导航，不拦截。
 fn prevent_default<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
     use tauri_plugin_prevent_default::Flags;
     let builder = tauri_plugin_prevent_default::Builder::new()
         .with_flags(Flags::debug().difference(Flags::FOCUS_MOVE));
-    // WebView2 原生开关：发行版关闭浏览器快捷键与默认右键菜单。
     #[cfg(windows)]
     let builder = builder.platform(
         tauri_plugin_prevent_default::PlatformOptions::new()
@@ -91,7 +82,6 @@ fn prevent_default<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
 /// # Panics
 ///
 /// 应用初始化失败时触发。
-// 主要篇幅是命令注册表，拆分不会更清楚。
 #[allow(clippy::too_many_lines)]
 pub fn run() {
     kook::emoji_cache::protocol(tauri::Builder::default())
@@ -102,7 +92,6 @@ pub fn run() {
         .setup(|app| {
             use tauri::Manager;
             if let Some(dir) = data_dir_arg() {
-                // 独立目录：固定目录与数据根都放在其中，不读取系统位置的配置。
                 let fixed = dir.join("fixed");
                 storage::init(&fixed, &dir.join("data"), &fixed);
             } else {
@@ -116,7 +105,6 @@ pub fn run() {
             app.manage(commands::ShareState::default());
             #[cfg(windows)]
             app.manage(commands::WatchState::default());
-            // 设备增减或默认设备变化时通知界面刷新列表。
             let handle = app.handle().clone();
             audio::watch::start(move |input, output| {
                 use tauri::Emitter;
@@ -245,7 +233,6 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
         .run(|app, event| {
-            // 进程退出前停止屏幕分享并离开分享房间，观看端立即结束，不等服务端超时。
             if let tauri::RunEvent::Exit = event {
                 tauri::async_runtime::block_on(commands::stop_share(app));
             }

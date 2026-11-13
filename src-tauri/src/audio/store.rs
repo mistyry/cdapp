@@ -1,6 +1,3 @@
-//! 本机音频偏好：输入输出设备、输入增益、输出总音量、降噪与麦克风耳机开关。
-//! 保存在数据根 `config/audio.json`，与凭据分开。文件损坏或字段缺失时使用默认值。
-
 use std::fs;
 use std::io;
 use std::sync::Mutex;
@@ -11,30 +8,20 @@ use super::dsp::MAX_GAIN;
 use super::mixer::MAX_VOLUME;
 
 const FILE: &str = "audio.json";
-/// 提示音默认音量百分比。
 pub const DEFAULT_EFFECT_VOLUME: u16 = 30;
 
-/// 音频偏好。设备为 None 时跟随系统默认。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AudioPrefs {
     pub input: Option<String>,
     pub output: Option<String>,
-    /// 输入增益百分比，0 至 200。
     pub gain: u16,
-    /// 输出总音量百分比，0 至 200。
     pub master: u16,
-    /// 提示音音量百分比，0 至 100。
     pub effect_volume: u16,
-    /// 关闭的提示音编号，与官方 `audio_setting` 编号一致。
     pub effects_off: Vec<u8>,
-    /// 麦克风关闭。
     pub muted: bool,
-    /// 耳机关闭。
     pub deafened: bool,
-    /// 降噪开启。
     pub denoise: bool,
-    /// 降噪方式，关闭时也保留。
     pub denoise_mode: super::denoise::Mode,
 }
 
@@ -56,7 +43,6 @@ impl Default for AudioPrefs {
 }
 
 impl AudioPrefs {
-    /// 截断越界数值，空设备 ID 视为系统默认。
     #[must_use]
     pub fn sanitized(mut self) -> Self {
         self.gain = self.gain.min(MAX_GAIN);
@@ -77,7 +63,6 @@ impl AudioPrefs {
     }
 }
 
-/// 读取偏好。未初始化、文件不存在或损坏时返回默认值。
 #[must_use]
 pub fn load() -> AudioPrefs {
     crate::storage::config_file(FILE)
@@ -85,8 +70,6 @@ pub fn load() -> AudioPrefs {
         .map_or_else(AudioPrefs::default, |b| AudioPrefs::parse(&b))
 }
 
-/// 原子写入偏好。数据根不可用时不写入。
-///
 /// # Errors
 ///
 /// 目录创建或写入失败时返回错误。
@@ -97,11 +80,9 @@ pub fn save(prefs: &AudioPrefs) -> io::Result<()> {
     crate::storage::write(&path, &serde_json::to_vec_pretty(prefs)?)
 }
 
-/// 待保存的最新偏好与写入锁。连续修改时只写最新值，写入顺序不会倒置。
 static PENDING: Mutex<Option<AudioPrefs>> = Mutex::new(None);
 static WRITER: Mutex<()> = Mutex::new(());
 
-/// 在后台线程保存偏好，不阻塞调用方。失败只记录日志。
 pub fn save_later(prefs: AudioPrefs) {
     if let Ok(mut p) = PENDING.lock() {
         *p = Some(prefs);

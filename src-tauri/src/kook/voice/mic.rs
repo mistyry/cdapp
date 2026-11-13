@@ -1,14 +1,10 @@
-//! 连接期间的麦克风控制与推流请求队列。
-
 use super::{
     AppResult, Capture, CaptureEvent, DEVICE_RETRY, Instant, MicAction, MicCtl, MicStatus,
     PeerPatch, Prefs, Signal, Sink, Value, VoiceEvent, json, mpsc, oneshot, peer, prefs_get,
 };
 
-/// 暂停或恢复推流的请求，附带可选的结果通道。
 pub(super) type ProducerOp = (bool, Option<oneshot::Sender<AppResult<()>>>);
 
-/// 推流请求的完成通知：是否为暂停请求与结果。
 pub(super) type ProducerDone = (bool, Result<(), String>);
 
 pub(super) fn producer_queue(
@@ -40,7 +36,6 @@ pub(super) fn producer_queue(
     tx
 }
 
-/// 从成员信息变化中读取本人的发言权限。
 pub(super) fn own_say(method: &str, data: &Value, me: &str) -> Option<bool> {
     if method != "peerInfoChanged" && method != "peerPermissionChanged" {
         return None;
@@ -50,7 +45,6 @@ pub(super) fn own_say(method: &str, data: &Value, me: &str) -> Option<bool> {
         .and_then(|p| p.permission_say)
 }
 
-/// 连接期间的麦克风控制。
 pub(super) struct MicRun<'a> {
     pub(super) mic: MicCtl,
     pub(super) prefs: &'a Prefs,
@@ -60,12 +54,10 @@ pub(super) struct MicRun<'a> {
     pub(super) uplink: peer::Uplink,
     pub(super) epoch: u64,
     pub(super) device: Option<String>,
-    /// 设备失败的时间，用于定时重试。
     pub(super) failed_at: Option<Instant>,
 }
 
 impl MicRun<'_> {
-    /// 设备失败超过重试间隔且麦克风未静音时，返回重新开始采集的动作。
     pub(super) fn retry_due(&mut self, now: Instant) -> Option<Vec<MicAction>> {
         let due = self
             .failed_at
@@ -77,7 +69,6 @@ impl MicRun<'_> {
         (!self.mic.muted() && !self.mic.running()).then(|| self.mic.set_muted(false))
     }
 
-    /// 执行麦克风动作。`reply` 在推流请求完成或全部动作执行后答复。
     pub(super) async fn apply(
         &mut self,
         actions: Vec<MicAction>,
@@ -132,7 +123,6 @@ impl MicRun<'_> {
         }
     }
 
-    /// 推流恢复失败导致静音时写回偏好。
     pub(super) fn sync_prefs(&self) {
         if self.mic.muted()
             && let Ok(mut p) = self.prefs.lock()
@@ -141,7 +131,6 @@ impl MicRun<'_> {
         }
     }
 
-    /// 处理采集事件，忽略旧采集轮次的事件。
     pub(super) fn on_capture(&mut self, ev: CaptureEvent) -> Vec<MicAction> {
         match ev {
             CaptureEvent::Started { epoch, device } if epoch == self.epoch => {

@@ -6,26 +6,20 @@ import MessageItem from "./MessageItem";
 import { setUi } from "../../stores/ui";
 import { readCurrent } from "../../stores/session";
 
-// 窗口化消息列表：只渲染可视区附近的消息，高度按实测缓存（图片加载等变化由 ResizeObserver 更新）。
-// 位于底部时跟随新消息；阅读旧消息时保持位置并提示新消息；上翻插入旧消息后保持阅读位置。
 type Props = {
   messages: Message[];
   history: History | undefined;
   onOlder: () => void;
   onRetry: () => void;
-  // 跳转片段之后还有消息时，滚到底部附近加载更新一页；onLatest 放弃片段回到最新。
   onNewer: () => void;
   onLatest: () => void;
   focus: Focus | null;
-  // 列表之后的非虚拟内容（待发消息）。
   footer?: JSX.Element;
-  // footer 内容变化的标记，例如待发条数。
   footerKey?: unknown;
-  // 私信会话：系统消息按普通消息显示。
   dm?: boolean;
 };
 
-const HEAD = 40; // 顶部状态行固定高度，避免状态切换影响锚点。
+const HEAD = 40;
 const OVERSCAN = 600;
 const NEAR_TOP = 400;
 const BOTTOM_SLACK = 8;
@@ -38,13 +32,10 @@ export default function MessageList(p: Props) {
   const [top, setTop] = createSignal(0);
   const [viewH, setViewH] = createSignal(0);
   const [atBottom, setAtBottom] = createSignal(true);
-  // 用户离开底部时看到的最后一条消息，之后到达的计为新消息。
   const [seen, setSeen] = createSignal<string | undefined>();
 
-  // 同作者且间隔五分钟内的连续消息合并。
   const isFirst = (i: number) => {
     const l = p.messages;
-    // 服务器内的系统消息不显示作者，也不与前后消息合并。
     const sys = (m: Message) => Boolean(m.system) && !p.dm;
     if (sys(l[i])) return false;
     return i === 0 || sys(l[i - 1]) || l[i - 1].author !== l[i].author || l[i].createAt - l[i - 1].createAt > 300_000;
@@ -54,7 +45,6 @@ export default function MessageList(p: Props) {
     return prefix(p.messages.map((m, i) => heights.get(m.id) ?? estimate(isFirst(i))));
   });
   const range = createMemo(() => visibleRange(offsets(), top() - HEAD, viewH(), OVERSCAN));
-  // 以消息对象为键，滚动时只增删进出窗口的行。
   const rows = createMemo(() => {
     const [s, e] = range();
     return p.messages.slice(s, e);
@@ -66,7 +56,6 @@ export default function MessageList(p: Props) {
     return i < 0 ? 0 : p.messages.length - 1 - i;
   });
 
-  // 阅读锚点：视口顶部所在消息及其相对偏移。布局变化后据此还原位置。
   let anchor: { id: string; delta: number } | undefined;
   const capture = () => {
     const o = offsets();
@@ -76,11 +65,8 @@ export default function MessageList(p: Props) {
     anchor = { id: p.messages[i].id, delta: y - o[i] };
   };
   const bottomGap = () => box.scrollHeight - box.scrollTop - box.clientHeight;
-  // 跳转片段的底部不是最新消息：不贴底、不标记已读。
   const fragment = () => Boolean(p.history?.newer);
   const [flash, setFlash] = createSignal<string | undefined>();
-  // 程序设定的滚动位置。滚动事件异步派发，期间内容高度可能已变化，
-  // 位置未变的滚动事件来自程序设定，不据此改变贴底状态。
   let expected = -1;
   const setScroll = (y: number) => {
     box.scrollTop = y;
@@ -97,7 +83,6 @@ export default function MessageList(p: Props) {
     if (bottom !== atBottom()) {
       setAtBottom(bottom);
       setUi("atBottom", bottom);
-      // 滚动到底部即读到最新消息。
       if (bottom) readCurrent();
       if (!bottom) setSeen(p.messages[p.messages.length - 1]?.id);
     }
@@ -110,7 +95,6 @@ export default function MessageList(p: Props) {
     if (fragment() && p.messages.length && bottomGap() < NEAR_TOP) p.onNewer();
   };
 
-  // 定位到指定消息并短暂高亮。未测高度的行先按估计值滚动，测量后锚点还原会修正位置。
   const scrollTo = (id: string) => {
     const i = p.messages.findIndex((m) => m.id === id);
     if (i < 0) return;
@@ -131,7 +115,6 @@ export default function MessageList(p: Props) {
     if (box.scrollTop < NEAR_TOP && h && !h.end && !h.loading && !h.failed && p.messages.length) p.onOlder();
   };
 
-  // 布局变化（新消息、旧消息前插、高度更新）后：在底部则继续贴底，否则按锚点还原。
   const restore = () => {
     if (!anchor) return;
     const i = p.messages.findIndex((m) => m.id === anchor!.id);
@@ -142,10 +125,8 @@ export default function MessageList(p: Props) {
   };
   createEffect(on(offsets, () => (atBottom() && !fragment() ? toBottom() : restore()), { defer: true }));
 
-  // 待发消息等非虚拟内容变化时，在底部则继续贴底。
   createEffect(on(() => p.footerKey, () => atBottom() && queueMicrotask(toBottom), { defer: true }));
 
-  // 内容不足一屏时无法滚动触发上翻，加载完成后再检查一次。
   createEffect(on(() => [p.history?.loading, p.history?.end, p.history?.newer, p.messages.length], () => queueMicrotask(() => (maybeOlder(), maybeNewer())), { defer: true }));
 
   const observer = new ResizeObserver((entries) => {
@@ -153,7 +134,6 @@ export default function MessageList(p: Props) {
     for (const e of entries) {
       const el = e.target as HTMLElement;
       if (el === box) {
-        // 视口变化（窗口缩放、输入框增高、回复栏出现）不触发滚动事件：贴底时保持贴底，否则按锚点还原。
         setViewH(box.clientHeight);
         if (atBottom()) toBottom();
         else restore();

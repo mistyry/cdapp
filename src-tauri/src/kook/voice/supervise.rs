@@ -1,12 +1,8 @@
-//! 断线重建与退避。
-
 use super::{
     Ctl, Duration, EndReason, MAX_REBUILDS, Outcome, Phase, Prefs, Sink, VoiceEvent, health, mpsc,
     offline_ctl,
 };
 
-/// 运行会话并在连接中断时重建。
-/// `step` 完成一次连接并返回结果，控制通道在两次连接之间交回。
 pub(super) async fn supervise<F, Fut>(
     mut ctl: mpsc::UnboundedReceiver<Ctl>,
     sink: &Sink,
@@ -131,7 +127,6 @@ mod tests {
             let (_tx, rx) = mpsc::unbounded_channel();
             let tries = Arc::new(Mutex::new(0));
             let t = tries.clone();
-            // 首次断开后重建，第二次以不可重建的原因结束。
             supervise(rx, &sink, &Prefs::default(), move |ctl| {
                 let n = {
                     let mut g = t.lock().unwrap();
@@ -201,7 +196,6 @@ mod tests {
         })
         .await;
         assert_eq!(reconnects(&log), vec![(1, 1000), (2, 2000), (3, 4000)]);
-        // 三次退避共 1 + 2 + 4 秒。
         assert_eq!(t0.elapsed(), Duration::from_secs(7));
     }
 
@@ -212,7 +206,6 @@ mod tests {
         let tries = Arc::new(Mutex::new(0u32));
         let t = tries.clone();
         let t0 = tokio::time::Instant::now();
-        // 第一次退避期间收到唤醒，第二次为紧急重建。
         tx.send(Ctl::Wake).unwrap();
         supervise(rx, &sink, &Prefs::default(), move |ctl| {
             let n = {
@@ -249,7 +242,6 @@ mod tests {
         let (_tx, rx) = mpsc::unbounded_channel();
         let tries = Arc::new(Mutex::new(0u32));
         let t = tries.clone();
-        // 前 5 次断开前已稳定，不计入重建次数，之后按上限结束。
         supervise(rx, &sink, &Prefs::default(), move |ctl| {
             let n = {
                 let mut g = t.lock().unwrap();

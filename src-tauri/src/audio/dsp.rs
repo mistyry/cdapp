@@ -1,18 +1,11 @@
-//! 音频处理基础：声道混合、重采样、输入增益、分帧、电平计算与有界队列。
-//! 只依赖标准库，在采集与播放回调中调用，不分配锁。
-
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU16, Ordering};
 
-/// 内部处理采样率，与 Opus 协商一致。
 pub const RATE: u32 = 48_000;
-/// 每帧时长，单位毫秒，与 `ptime=60` 一致。
 pub const FRAME_MS: u32 = 60;
-/// 每帧单声道样本数。
 pub const FRAME_SAMPLES: usize = (RATE / 1000 * FRAME_MS) as usize;
 
-/// 把交错多声道样本按帧取平均，混为单声道。
 #[must_use]
 #[allow(clippy::cast_precision_loss)]
 pub fn mixdown(data: &[f32], channels: usize) -> Vec<f32> {
@@ -24,20 +17,13 @@ pub fn mixdown(data: &[f32], channels: usize) -> Vec<f32> {
         .collect()
 }
 
-/// 插值核单侧零点数。
 const HALF: usize = 16;
-/// 每个零点间隔的查表精度。
 const STEPS: usize = 512;
 
-/// 带限 sinc 重采样器，使用 Blackman 窗。
-/// 降采样时按目标采样率收窄截止频率，抑制混叠。输入可分块送入，块间保持连续。
 pub struct Resampler {
-    /// 每个输出样本对应的输入步长。
     step: f64,
-    /// 下一个输出样本在缓冲中的位置。
     pos: f64,
     buf: Vec<f32>,
-    /// 插值核查表，下标为距离乘以 `STEPS`。
     table: Vec<f32>,
     passthrough: bool,
 }
@@ -47,14 +33,12 @@ impl Resampler {
     #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
     pub fn new(from: u32, to: u32) -> Self {
         let step = f64::from(from) / f64::from(to);
-        // 截止频率取两侧较低的奈奎斯特频率，留出 5% 过渡带。
         let cutoff = (1.0 / step).min(1.0) * 0.95;
         let table = (0..=HALF * STEPS)
             .map(|i| {
                 let d = i as f64 / STEPS as f64;
                 let x = std::f64::consts::PI * d * cutoff;
                 let sinc = if d == 0.0 { 1.0 } else { x.sin() / x };
-                // Blackman 窗，以核中心为窗口中点。
                 let w = 0.5 + d / (2.0 * HALF as f64);
                 let win = 0.42 - 0.5 * (2.0 * std::f64::consts::PI * w).cos()
                     + 0.08 * (4.0 * std::f64::consts::PI * w).cos();
@@ -85,7 +69,6 @@ impl Resampler {
         self.table[i] + (self.table[i + 1] - self.table[i]) * t
     }
 
-    /// 转换一段输入，返回已能确定的输出样本。
     #[allow(
         clippy::cast_precision_loss,
         clippy::cast_possible_truncation,
@@ -107,7 +90,6 @@ impl Resampler {
             out.push(acc);
             self.pos += self.step;
         }
-        // 只保留下一次插值所需的历史样本。
         let keep_from = (self.pos.floor() as usize).saturating_sub(HALF);
         if keep_from > 0 {
             self.buf.drain(..keep_from);
@@ -117,7 +99,6 @@ impl Resampler {
     }
 }
 
-/// 把浮点样本转为 i16，并按 60 ms 切分为完整帧。
 #[derive(Default)]
 pub struct Framer {
     pending: Vec<i16>,
@@ -139,7 +120,6 @@ impl Framer {
     }
 }
 
-/// 按 RFC 6464 计算帧电平，返回 0 至 127 的 -dBov 值，127 表示静音。
 #[must_use]
 #[allow(
     clippy::cast_precision_loss,
@@ -164,16 +144,12 @@ pub fn audio_level(frame: &[i16]) -> u8 {
     (-20.0 * rms.log10()).round().clamp(0.0, 127.0) as u8
 }
 
-/// 把 -dBov 电平换算为 0 至 100 的显示值，-60 dBov 及以下为 0。
 #[must_use]
 pub fn meter(level: u8) -> u8 {
     let l = level.min(60);
-    // 60 - l 不超过 60，结果不超过 100。
     u8::try_from((u32::from(60 - l) * 100) / 60).unwrap_or(100)
 }
 
-/// 检测输入是否持续全零。
-/// macOS 拒绝麦克风权限时不报错，只提供全零样本。窗口内没有非零样本即判定为无输入，结果确定后不再改变。
 pub struct ZeroProbe {
     window: usize,
     seen: usize,
@@ -190,7 +166,6 @@ impl ZeroProbe {
         }
     }
 
-    /// 送入样本，返回已确定的结果。`Some(true)` 表示判定为全零。
     pub fn feed(&mut self, samples: &[f32]) -> Option<bool> {
         if self.done.is_none() {
             if samples.iter().any(|&x| x != 0.0) {
@@ -206,11 +181,9 @@ impl ZeroProbe {
     }
 }
 
-/// 输入增益，百分比，100 为单位增益。采集线程每次回调读取，修改立即生效。
 #[derive(Clone, Debug)]
 pub struct Gain(Arc<AtomicU16>);
 
-/// 输入增益上限，百分比。
 pub const MAX_GAIN: u16 = 200;
 
 impl Default for Gain {
@@ -225,12 +198,10 @@ impl Gain {
         self.0.load(Ordering::Relaxed)
     }
 
-    /// 设置增益，超过上限时取上限。
     pub fn set(&self, percent: u16) {
         self.0.store(percent.min(MAX_GAIN), Ordering::Relaxed);
     }
 
-    /// 按当前增益处理样本。100% 时不改变样本；高于 100% 时经软限幅，避免削波。
     pub fn apply(&self, samples: &mut [f32]) {
         let p = self.percent();
         if p == 100 {
@@ -248,7 +219,6 @@ impl Gain {
     }
 }
 
-/// 软限幅。0.8 以下不变，以上平滑压缩到 1 以内。
 #[must_use]
 pub fn soft_limit(x: f32) -> f32 {
     const KNEE: f32 = 0.8;
@@ -261,7 +231,6 @@ pub fn soft_limit(x: f32) -> f32 {
     }
 }
 
-/// 定长队列，满时丢弃最旧的元素。
 pub struct Bounded<T> {
     items: VecDeque<T>,
     cap: usize,
@@ -278,7 +247,6 @@ impl<T> Bounded<T> {
         }
     }
 
-    /// 追加元素。队列已满并丢弃了最旧元素时返回 true。
     pub fn push(&mut self, item: T) -> bool {
         let full = self.items.len() >= self.cap;
         if full {
@@ -303,7 +271,6 @@ impl<T> Bounded<T> {
         self.items.is_empty()
     }
 
-    /// 累计丢弃的元素数。
     #[must_use]
     pub fn dropped(&self) -> u64 {
         self.dropped
@@ -327,7 +294,6 @@ mod tests {
             .collect()
     }
 
-    /// 单频点的幅度，用于检查频谱。
     #[allow(clippy::cast_precision_loss)]
     fn magnitude(x: &[f32], freq: f64, rate: u32) -> f64 {
         let w = 2.0 * std::f64::consts::PI * freq / f64::from(rate);
@@ -350,7 +316,6 @@ mod tests {
         for from in [44_100, 16_000, 96_000] {
             let mut r = Resampler::new(from, RATE);
             let input = tone(440.0, from, from as usize, 0.5);
-            // 按非整数块长分段送入，检查块间连续。
             let mut out = Vec::new();
             for chunk in input.chunks(473) {
                 out.extend(r.process(chunk));
@@ -361,7 +326,6 @@ mod tests {
                 "{from}: {}",
                 out.len()
             );
-            // 去掉两端各 0.1 秒的过渡段。
             let seg = &out[4800..out.len() - 4800];
             let at = magnitude(seg, 440.0, RATE);
             assert!((at - 0.5).abs() < 0.03, "{from}: 440 Hz 幅度为 {at}");
@@ -371,7 +335,6 @@ mod tests {
 
     #[test]
     fn resampler_suppresses_aliasing_when_downsampling() {
-        // 30 kHz 超出 48 kHz 的奈奎斯特频率，不得混叠到 18 kHz。
         let mut r = Resampler::new(96_000, RATE);
         let out = r.process(&tone(30_000.0, 96_000, 96_000, 0.5));
         let seg = &out[2000..out.len() - 2000];
@@ -400,12 +363,10 @@ mod tests {
     fn level_follows_dbov() {
         assert_eq!(audio_level(&[0; 100]), 127);
         assert_eq!(audio_level(&[]), 127);
-        // 满幅方波为 0 dBov。
         let square: Vec<i16> = (0..960)
             .map(|i| if i % 2 == 0 { 32767 } else { -32767 })
             .collect();
         assert_eq!(audio_level(&square), 0);
-        // 幅度 0.1 的正弦波约为 -23 dBov。
         #[allow(clippy::cast_possible_truncation)]
         let sine: Vec<i16> = tone(440.0, RATE, 2880, 0.1)
             .iter()
@@ -422,7 +383,6 @@ mod tests {
         let mut p = ZeroProbe::new(1000);
         assert_eq!(p.feed(&[0.0; 600]), None);
         assert_eq!(p.feed(&[0.0; 600]), Some(true));
-        // 结果确定后不再改变。
         assert_eq!(p.feed(&[0.5]), Some(true));
         let mut p = ZeroProbe::new(1000);
         assert_eq!(p.feed(&[0.0, 1e-6]), Some(false));
@@ -461,7 +421,6 @@ mod tests {
         for (a, b) in run(50).iter().zip(base) {
             assert!((a - b * 0.5).abs() < 1e-6);
         }
-        // 200% 时线性区内翻倍，超过拐点的样本压缩到 1 以内且保持单调。
         let r = run(200);
         assert!((r[1] - 0.2).abs() < 1e-6);
         assert!((r[2] + 0.4).abs() < 1e-6);
@@ -477,7 +436,6 @@ mod tests {
 
     #[test]
     fn gain_changes_frame_level() {
-        // 1 kHz 正弦，峰值 0.25，经分帧后计算电平。
         #[allow(clippy::cast_precision_loss)]
         let tone: Vec<f32> = (0..FRAME_SAMPLES)
             .map(|i| 0.25 * (i as f32 * 2.0 * std::f32::consts::PI / 48.0).sin())
@@ -489,7 +447,6 @@ mod tests {
             g.apply(&mut v);
             audio_level(&Framer::default().push(&v)[0])
         };
-        // 约 -15 dBov；50% 降 6 dB，200% 升 6 dB，0% 为静音。
         assert_eq!(level(100), 15);
         assert_eq!(level(50), 21);
         assert_eq!(level(200), 9);

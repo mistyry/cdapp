@@ -1,37 +1,24 @@
-//! 音频偏好与控制命令，未连接时只更新偏好。
-
 use super::{
     AppResult, Arc, Deafen, HashMap, MicStatus, Mutex, Source, VoiceEvent, oneshot, output,
 };
 
-/// 混音输出的录制缓冲。
 #[cfg(any(test, feature = "test-media"))]
 pub type Tap = Arc<Mutex<Vec<f32>>>;
 
-/// 会话的音频偏好。
-/// 会话内的修改会写回，重建连接时沿用。
 #[derive(Clone)]
 pub struct MicPrefs {
     pub muted: bool,
     pub source: Source,
-    /// 输入增益，与命令层共享，修改立即作用于采集。
     pub gain: crate::audio::dsp::Gain,
-    /// 降噪开关，与命令层共享，修改立即作用于采集。
     pub denoise: crate::audio::denoise::Denoise,
     pub deafen: Deafen,
     pub output: output::Sink,
-    /// 成员音量百分比，按用户 ID 记录。
     pub volumes: HashMap<String, u16>,
-    /// 开启降噪的成员 ID。
     pub denoised: std::collections::HashSet<String>,
-    /// 总音量百分比。
     pub master: u16,
-    /// 频道密码，只保存在内存中，不写入日志。
     pub password: Option<String>,
-    /// 把混音输出追加到该缓冲。
     #[cfg(any(test, feature = "test-media"))]
     pub tap: Option<Tap>,
-    /// 下一次加入直接失败。
     #[cfg(any(test, feature = "test-media"))]
     pub fail_join: bool,
 }
@@ -67,40 +54,26 @@ pub type Sink = Arc<dyn Fn(VoiceEvent) + Send + Sync>;
 
 pub(super) enum Ctl {
     Leave,
-    /// 设置麦克风静音，结果经通道返回。
     Mute(bool, oneshot::Sender<AppResult<()>>),
-    /// 切换采集来源。
     Source(Source),
-    /// 设置耳机关闭，结果经通道返回。
     Deafen(bool, oneshot::Sender<AppResult<()>>),
-    /// 切换播放设备。
     Output(output::Sink),
-    /// 设置成员音量。
     Volume(String, u16),
-    /// 开启或关闭成员降噪。
     PeerDenoise(String, bool),
-    /// 设置总音量。
     Master(u16),
-    /// 系统唤醒。等待重建时立即重试，媒体连接已断开时立即重建。
     Wake,
-    /// 注入故障。
     #[cfg(any(test, feature = "test-media"))]
     Fault(Fault),
 }
 
-/// 可注入的故障。
 #[cfg(any(test, feature = "test-media"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Fault {
-    /// 关闭信令连接。
     CloseSignal,
-    /// 模拟系统睡眠。
     Sleep,
-    /// 关闭信令连接，并使之后的加入失败。
     FailJoin,
 }
 
-/// 构造扬声器输出事件。
 pub(super) fn output_event(
     deafened: bool,
     active: bool,
@@ -115,7 +88,6 @@ pub(super) fn output_event(
     }
 }
 
-/// 更新耳机偏好，返回需要同步的麦克风静音状态。
 pub(super) fn deafen_prefs(prefs: &Prefs, on: bool) -> Option<bool> {
     let mut p = prefs.lock().ok()?;
     let muted = p.muted;
@@ -126,7 +98,6 @@ pub(super) fn deafen_prefs(prefs: &Prefs, on: bool) -> Option<bool> {
     change
 }
 
-/// 更新麦克风静音偏好。打开麦克风会同时打开耳机，此时返回 true。
 pub(super) fn mute_prefs(prefs: &Prefs, muted: bool) -> bool {
     prefs.lock().is_ok_and(|mut p| {
         p.muted = muted;
@@ -134,7 +105,6 @@ pub(super) fn mute_prefs(prefs: &Prefs, muted: bool) -> bool {
     })
 }
 
-/// 未连接时处理控制命令，只更新偏好并上报状态。
 pub(super) fn offline_ctl(c: Ctl, sink: &Sink, prefs: &Prefs) {
     match c {
         Ctl::Mute(muted, tx) => {
@@ -200,7 +170,6 @@ pub(super) fn offline_ctl(c: Ctl, sink: &Sink, prefs: &Prefs) {
                 p.master = v.min(crate::audio::mixer::MAX_VOLUME);
             }
         }
-        // 退出与唤醒由调用方处理。
         Ctl::Leave | Ctl::Wake => {}
         #[cfg(any(test, feature = "test-media"))]
         Ctl::Fault(_) => {}

@@ -1,7 +1,3 @@
-//! 真实账号私信列表与历史验证（只读；`open_dm` 只对已有会话调用，服务端不新建）。默认忽略：
-//! `CDAPP_LIVE_TOKEN=... cargo test --test live_dm -- --ignored`
-//! 只输出数量。
-
 use std::collections::HashSet;
 
 use cdapp_lib::kook::api::Api;

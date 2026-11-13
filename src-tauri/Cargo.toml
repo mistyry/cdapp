@@ -7,18 +7,12 @@ edition = "2024"
 rust-version = "1.90"
 license = "GPL-3.0-only"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [lib]
-# The `_lib` suffix may seem redundant but it is necessary
-# to make the lib name unique and wouldn't conflict with the bin name.
-# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "cdapp_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
-# 编译火山 RTC SDK 的 C++ 桥接，只在 Windows 目标使用。已在依赖树中，MIT 或 Apache-2.0 许可。
 cc = "1"
 
 [dependencies]
@@ -36,25 +30,19 @@ rand = "0.10"
 url = "2"
 thiserror = "2"
 tokio = { version = "1", features = ["sync", "time", "macros", "net"] }
-# 与 reqwest 统一使用 aws-lc-rs：同时启用 ring 会使 rustls 无法确定默认提供者，wss 连接直接崩溃。
 webrtc = { version = "0.21", default-features = false, features = ["runtime-tokio", "crypto-aws-lc-rs"] }
 rtc = { version = "0.21", default-features = false, features = ["crypto-aws-lc-rs"] }
 async-trait = "0.1"
 bytes = "1"
-# 音频采集播放与 Opus 编解码。cpal 为 Apache-2.0 许可，opus 为 MIT 或 Apache-2.0 许可，libopus 为 BSD 许可。
 cpal = "0.18"
 opus = "0.4"
 tauri-plugin-dialog = "2"
-# KOOK AI 降噪的 wasm 运行时与资源校验。wasmtime 为 Apache-2.0 许可，sha2 为 MIT 或 Apache-2.0 许可。
 wasmtime = { version = "50", default-features = false, features = ["cranelift", "runtime", "std"] }
 sha2 = "0.10"
-# RNNoise 降噪，BSD-3-Clause 许可。
 nnnoiseless = { version = "0.5", default-features = false }
 symphonia = { version = "0.5", default-features = false, features = ["mp3", "ogg", "wav", "pcm"] }
 tauri-plugin-prevent-default = { version = "6", features = ["platform-windows"] }
 
-
-# 开发构建的窗口截图。均为 Tauri 已有的传递依赖，版本与 Cargo.lock 一致，MIT 许可。
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 block2 = "0.6"
@@ -62,18 +50,13 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["std
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "objc2-core-foundation", "NSBezierPath", "NSBitmapImageRep", "NSButton", "NSControl", "NSGraphics", "NSGraphicsContext", "NSImage", "NSImageRep", "NSResponder", "NSView", "NSWindow"] }
 objc2-web-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-app-kit", "WKSnapshotConfiguration", "WKWebView"] }
 
-# Windows 拖动窗口时的焦点闪烁修正。tao 与 tauri 已依赖同一版本，MIT 或 Apache-2.0 许可。
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_UI_HiDpi", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_Media_Audio", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Variant", "Win32_System_Threading"] }
-# `windows::core::implement` 展开后引用 `::windows_core`，须为直接依赖。已在依赖树中，MIT 或 Apache-2.0 许可。
 windows-core = "0.62"
-# 屏幕分享选源缩略图编码为 PNG 数据地址。均已在依赖树中，MIT 或 Apache-2.0 许可。
 png = "0.18"
 base64 = "0.22"
-# 解压火山 RTC SDK 压缩包，MIT 许可。压缩包只用 Deflate 与 Stored，复用 flate2。
 zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
 
-# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
 codegen-units = 1
 lto = true
@@ -87,7 +70,6 @@ all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 
 [features]
-# 合成音源、无设备输出、混音录制与故障注入，仅供测试使用，正式构建不启用。
 test-media = []
 
 [[test]]
@@ -116,7 +98,6 @@ required-features = ["test-media"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "test-util"] }
-# 测试中读取进程资源占用。
 libc = "0.2"
 
 [[test]]

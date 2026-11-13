@@ -16,7 +16,6 @@ const PAGES: { id: Page; name: string; group: string; icon: () => JSX.Element }[
   { id: "storage", name: "数据存储", group: "应用设置", icon: () => <HardDrive size={18} /> },
 ];
 
-// 全屏设置页。只保留本客户端实际支持的项目，不展示商城、背包等运营入口。
 export default function Settings() {
   const [confirming, setConfirming] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
@@ -34,7 +33,6 @@ export default function Settings() {
   onMount(() => window.addEventListener("keydown", onKey));
   onCleanup(() => window.removeEventListener("keydown", onKey));
 
-  // 导航按方向键在分区间移动
   const navKey = (e: KeyboardEvent) => {
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
     e.preventDefault();
@@ -132,7 +130,6 @@ function AccountSettings(p: { onLogout: () => void }) {
   );
 }
 
-// 语音设置：与语音栏快捷面板共用状态，保存在本机。
 function VoiceSettings() {
   onMount(() => {
     void loadInputs();

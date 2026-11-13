@@ -2,8 +2,6 @@ import { type JSX, Show, children, createEffect } from "solid-js";
 import { ChevronDown } from "lucide-solid";
 import RangeSlider from "../common/RangeSlider";
 
-// 设置页通用控件：分区卡片、行、开关、滑块与下拉框。
-
 export function Section(p: { title: string; children: JSX.Element; notes?: JSX.Element }) {
   return (
     <section class="st-section">
@@ -30,7 +28,6 @@ export function Slider(p: { value: number; max: number; label: string; onInput: 
   return <RangeSlider class="st-slider" value={p.value} max={p.max} label={p.label} onInput={p.onInput} />;
 }
 
-// 选项异步渲染时，原生 select 会停在首项，与 value 不一致。选项变化后按 value 重新选中。
 export function Select(p: { id?: string; value: string; disabled?: boolean; label: string; onChange: (v: string) => void; children: JSX.Element }) {
   let el!: HTMLSelectElement;
   const opts = children(() => p.children);

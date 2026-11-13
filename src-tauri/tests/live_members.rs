@@ -1,7 +1,3 @@
-//! 真实账号成员与权限验证（只读）。默认忽略：
-//! `CDAPP_LIVE_TOKEN=... cargo test --test live_members -- --ignored --nocapture`
-//! 成员分页结构与人数；用与前端 perms.ts 相同的算法计算查看权限，抽样对照历史接口是否可读。只输出计数。
-
 use cdapp_lib::error::ErrorKind;
 use cdapp_lib::kook::api::Api;
 use cdapp_lib::kook::model::{Channel, ChannelKind, GuildAccess};
@@ -80,7 +76,6 @@ async fn members_and_view_permission() {
             .filter(|c| c.kind == ChannelKind::Text)
             .collect();
         hidden += texts.iter().filter(|c| !can_view(&a, &me, c)).count();
-        // 每个服务器抽可见与不可见各 2 个对照历史接口。
         for want in [true, false] {
             for c in texts
                 .iter()

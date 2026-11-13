@@ -1,13 +1,10 @@
 import { readAccount, writeAccount } from "./accountState";
-// 服务器栏结构：独立服务器与服务器文件夹。与服务器内的频道分组无关。
-// 服务器业务数据仍按 ID 存放在 session.guilds，这里只保存顺序与归属。
 
 export type FolderDto = { id: string; name: string; color: number | null; guildIds: string[] };
 export type RailItem =
   | { kind: "guild"; id: string }
   | { kind: "folder"; id: string; name: string; color: number | null; guildIds: string[] };
 
-// 解析接口条目，字段缺失或类型不符的条目跳过，不影响其他条目。
 export function parseFolders(raw: unknown): FolderDto[] {
   if (!Array.isArray(raw)) return [];
   const out: FolderDto[] = [];
@@ -26,8 +23,6 @@ export function parseFolders(raw: unknown): FolderDto[] {
   return out;
 }
 
-// 按文件夹顺序排列服务器。未归组条目展开为独立服务器；不在服务器列表中的引用与重复引用忽略；
-// 没有有效成员的文件夹不显示；文件夹未覆盖的服务器按服务器列表顺序追加在末尾，保证不丢失。
 export function buildRail(guildIds: readonly string[], folders: readonly FolderDto[] | null): RailItem[] {
   const known = new Set(guildIds);
   const placed = new Set<string>();
@@ -48,13 +43,11 @@ export function buildRail(guildIds: readonly string[], folders: readonly FolderD
   return out;
 }
 
-// 文件夹底色。服务端颜色为 0xRRGGBB，缺失时使用品牌色。
 export function folderTint(color: number | null, alpha: number): string {
   if (color == null || color < 0 || color > 0xffffff) return `color-mix(in srgb, var(--c-brand) ${Math.round(alpha * 100)}%, transparent)`;
   return `rgba(${(color >> 16) & 255}, ${(color >> 8) & 255}, ${color & 255}, ${alpha})`;
 }
 
-// 展开状态按账号保存在数据目录。只保存展开的文件夹，新文件夹默认折叠。
 export function parseOpen(v: unknown): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string").slice(0, 256) : [];
 }

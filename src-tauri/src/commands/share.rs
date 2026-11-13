@@ -1,6 +1,5 @@
 use serde::Serialize;
 
-/// 屏幕分享组件状态。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum ShareSdk {
@@ -8,8 +7,6 @@ pub enum ShareSdk {
     Unavailable { message: String },
 }
 
-/// 校验并下载屏幕分享组件，就绪后加载。只执行一次，之后返回首次的结果。不需要登录。
-/// 火山就绪后在后台准备 Agora 观看组件，二者都设置进程的 DLL 搜索目录，须依次加载。
 #[tauri::command]
 pub async fn share_sdk_sync() -> ShareSdk {
     #[cfg(windows)]
@@ -42,7 +39,6 @@ mod win {
     use crate::share::bridge::{self, Source, SourceKind};
     use crate::share::session::{Request, Session, ShareEvent, Sink};
 
-    /// 当前推流会话与代次。停止需跨 await 等待引擎销毁，因此使用 tokio 锁。
     #[derive(Default)]
     pub struct ShareSlot {
         pub session: Option<Session>,
@@ -59,15 +55,12 @@ mod win {
         event: ShareEvent,
     }
 
-    /// 开播参数。
     #[derive(Debug, Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub struct ShareStart {
         channel_id: String,
         source_kind: SourceKind,
-        /// 十进制字符串，见 `share_sources`。
         source_id: String,
-        /// 窗口所属进程，来自 `share_sources`。显示器为 0。
         #[serde(default)]
         source_pid: u32,
         resolution: u32,
@@ -83,7 +76,6 @@ mod win {
         }
     }
 
-    /// 打开选源对话框时调用，保留预览引擎，列源与缩略图不再每次新建。
     #[tauri::command]
     pub async fn share_preview_open() -> AppResult<()> {
         ready()?;
@@ -93,7 +85,6 @@ mod win {
             .map_err(|e| AppError::Other(e.to_string()))
     }
 
-    /// 关闭选源对话框时调用，释放预览引擎。推流中无操作。
     #[tauri::command]
     pub async fn share_preview_close() -> AppResult<()> {
         ready()?;
@@ -102,7 +93,6 @@ mod win {
             .map_err(|e| AppError::Other(e.to_string()))
     }
 
-    /// 可共享的显示器与窗口。
     #[tauri::command]
     pub async fn share_sources() -> AppResult<Vec<Source>> {
         ready()?;
@@ -112,7 +102,6 @@ mod win {
             .map_err(|e| AppError::Other(e.to_string()))
     }
 
-    /// 源缩略图，PNG 数据地址。源已不存在或取不到时为 None，前端显示占位。
     #[tauri::command]
     pub async fn share_thumbnail(kind: SourceKind, id: String) -> AppResult<Option<String>> {
         ready()?;
@@ -122,10 +111,20 @@ mod win {
             .map_err(|e| AppError::Other(e.to_string()))
     }
 
-    /// 开始屏幕分享，返回会话代次。须已在该频道语音中。事件以 `share://event` 广播。
-    /// 只提供本人拥有的档位：会员与档位由 go-live 校验，厂商须为火山。
     #[tauri::command]
     pub async fn share_start(
+        params: ShareStart,
+        app: AppHandle,
+        state: State<'_, Mutex<AppState>>,
+        voice: State<'_, VoiceState>,
+        share: State<'_, ShareState>,
+    ) -> AppResult<u64> {
+        share_start_inner(params, app, state, voice, share)
+            .await
+            .inspect_err(|e| log::warn!("屏幕分享开始失败：{e}"))
+    }
+
+    async fn share_start_inner(
         params: ShareStart,
         app: AppHandle,
         state: State<'_, Mutex<AppState>>,
@@ -158,9 +157,8 @@ mod win {
             }
         };
         let vendor = api.golive_vendor(&guild, &params.channel_id, &me).await?;
-        if vendor != "volc" {
-            return Err(AppError::Other("当前账号分配的分享服务暂不支持".into()));
-        }
+        let vendor = crate::kook::golive::Vendor::parse(&vendor)
+            .ok_or_else(|| AppError::Other("当前账号分配的分享服务暂不支持".into()))?;
         let mut slot = share.0.lock().await;
         if let Some(old) = slot.session.take() {
             old.stop().await;
@@ -186,16 +184,15 @@ mod win {
                     mode: 0,
                 },
                 audio: params.audio,
+                vendor,
             },
             generation,
             sink,
-            // 分享依附语音：语音会话结束即结束推流。切换频道与退出前另有 stop_share。
             Box::pin(voice_ended.wait()),
         ));
         Ok(generation)
     }
 
-    /// 停止屏幕分享，等待引擎销毁。
     #[tauri::command]
     pub async fn share_stop(share: State<'_, ShareState>) -> AppResult<()> {
         let old = share.0.lock().await.session.take();
@@ -205,7 +202,6 @@ mod win {
         Ok(())
     }
 
-    /// 推流中改档。`generation` 须为当前会话代次。只传本人拥有的档位，服务端不校验。
     #[tauri::command]
     pub async fn share_update(
         generation: u64,
@@ -218,7 +214,8 @@ mod win {
             .session
             .as_ref()
             .filter(|s| s.generation == generation && !s.is_finished())
-            .ok_or_else(|| AppError::Other("屏幕分享已结束".into()))?;
+            .ok_or_else(|| AppError::Other("屏幕分享已结束".into()))
+            .inspect_err(|e| log::warn!("屏幕分享改档失败：{e}"))?;
         session
             .update(Tier {
                 resolution,
@@ -226,9 +223,9 @@ mod win {
                 mode: 0,
             })
             .await
+            .inspect_err(|e| log::warn!("屏幕分享改档失败：{e}"))
     }
 
-    /// 当前观看会话与代次。同一时间只看一人。
     #[derive(Default)]
     pub struct WatchSlot {
         pub session: Option<crate::share::watch::Session>,
@@ -245,10 +242,22 @@ mod win {
         state: crate::share::watch::WatchState,
     }
 
-    /// 观看他人的屏幕分享，返回会话代次。须已在该频道语音中。已在观看时先停止旧的。
-    /// 编码后的画面经 `frames` 发送，格式见 `share::watch`；状态以 `watch://event` 广播。
     #[tauri::command]
     pub async fn watch_start(
+        channel_id: String,
+        liver: String,
+        frames: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
+        app: AppHandle,
+        state: State<'_, Mutex<AppState>>,
+        voice: State<'_, VoiceState>,
+        watch: State<'_, WatchState>,
+    ) -> AppResult<u64> {
+        watch_start_inner(channel_id, liver, frames, app, state, voice, watch)
+            .await
+            .inspect_err(|e| log::warn!("观看屏幕分享失败：{e}"))
+    }
+
+    async fn watch_start_inner(
         channel_id: String,
         liver: String,
         frames: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
@@ -313,7 +322,6 @@ mod win {
         Ok(generation)
     }
 
-    /// 停止观看并等待离房。
     #[tauri::command]
     pub async fn watch_stop(watch: State<'_, WatchState>) -> AppResult<()> {
         let old = watch.0.lock().await.session.take();
@@ -323,7 +331,6 @@ mod win {
         Ok(())
     }
 
-    /// 前端解码器需要从关键帧重新开始时调用。`generation` 不是当前会话时无操作。
     #[tauri::command]
     pub async fn watch_key_frame(generation: u64, watch: State<'_, WatchState>) -> AppResult<()> {
         let slot = watch.0.lock().await;
@@ -337,8 +344,6 @@ mod win {
         Ok(())
     }
 
-    /// 画面改发到调用方页面的通道，用于在主窗口与悬浮窗之间切换，观看不中断。
-    /// `generation` 不是当前会话时返回错误，调用方据此关闭自己。
     #[tauri::command]
     pub async fn watch_redirect(
         generation: u64,
@@ -360,8 +365,6 @@ mod win {
         Ok(())
     }
 
-    /// 打开悬浮窗：无边框、置顶的小窗，页面以 `?pip=<代次>` 区分，自行调用 `watch_redirect` 接管画面。
-    /// 已打开时只把它带到前台。
     #[tauri::command]
     pub async fn watch_pip_open(generation: u64, app: AppHandle) -> AppResult<()> {
         use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
@@ -370,7 +373,6 @@ mod win {
             let _ = w.set_focus();
             return Ok(());
         }
-        // 放在主窗口所在显示器的右下角。
         let (x, y) = app
             .get_webview_window("main")
             .and_then(|m| m.current_monitor().ok().flatten())
@@ -401,7 +403,6 @@ mod win {
         Ok(())
     }
 
-    /// 关闭悬浮窗。未打开时无操作。
     #[tauri::command]
     pub async fn watch_pip_close(app: AppHandle) -> AppResult<()> {
         use tauri::Manager;

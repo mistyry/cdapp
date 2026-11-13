@@ -1,20 +1,13 @@
-//! 命令边界的频道权限门禁。前端判断之外，Rust 依据最近取得的服务器权限与频道覆盖再判断一次，
-//! 不信任前端传来的允许标志。服务端对无查看文字发送和无查看、无连接语音加入均不拦截。
-
 use std::collections::HashMap;
 
 use super::model::{Channel, GuildAccess};
 use super::perms;
 use crate::error::{AppError, AppResult};
 
-/// 所需操作。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Need {
-    /// 读取历史。
     Read,
-    /// 发送消息。
     Send,
-    /// 加入语音。
     Connect,
 }
 
@@ -30,25 +23,20 @@ impl Need {
 
 #[derive(Default)]
 pub struct Gate {
-    /// 当前账号 ID。
     pub me: Option<String>,
     access: HashMap<String, GuildAccess>,
-    /// 频道 ID 到所属服务器与频道数据。
     channels: HashMap<String, (String, Channel)>,
-    /// 请求序号。发出请求时取号，结果只在没有更新请求已写入时采用。
     seq: u64,
     access_seq: HashMap<String, u64>,
     channels_seq: HashMap<String, u64>,
 }
 
 impl Gate {
-    /// 发出请求前取号。
     pub fn ticket(&mut self) -> u64 {
         self.seq += 1;
         self.seq
     }
 
-    /// 写入权限依据。较早发出的请求迟到时不覆盖较新的结果。
     pub fn set_access(&mut self, guild_id: &str, a: GuildAccess, ticket: u64) {
         if !fresher(&mut self.access_seq, guild_id, ticket) {
             return;
@@ -56,7 +44,6 @@ impl Gate {
         self.access.insert(guild_id.to_owned(), a);
     }
 
-    /// 以完整列表替换服务器的频道，已删除的频道随之移除。较早的请求迟到时不覆盖。
     pub fn set_channels(&mut self, guild_id: &str, list: &[Channel], ticket: u64) {
         if !fresher(&mut self.channels_seq, guild_id, ticket) {
             return;
@@ -68,26 +55,21 @@ impl Gate {
         }
     }
 
-    /// 只保留仍在服务器列表中的服务器。
     pub fn retain_guilds(&mut self, ids: &std::collections::HashSet<String>) {
         self.access.retain(|g, _| ids.contains(g));
         self.channels.retain(|_, (g, _)| ids.contains(g));
     }
 
-    /// 频道是否属于已知服务器。私信等不经过服务器频道的会话不在此列。
     #[must_use]
     pub fn knows(&self, channel_id: &str) -> bool {
         self.channels.contains_key(channel_id)
     }
 
-    /// 频道所属服务器。
     #[must_use]
     pub fn guild_of(&self, channel_id: &str) -> Option<&str> {
         self.channels.get(channel_id).map(|(g, _)| g.as_str())
     }
 
-    /// 判断当前账号能否执行操作。依据缺失时拒绝，不把未知当作允许。
-    ///
     /// # Errors
     ///
     /// 依据缺失或权限不足时返回本地错误，请求不会发出。

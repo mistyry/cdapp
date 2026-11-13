@@ -4,19 +4,16 @@ import { emojiUrl, mentionLabel, parse, type Block, type Inline } from "../../li
 import { names, session } from "../../stores/session";
 import { singleEmoji } from "../../lib/emoji";
 
-// 链接交给系统浏览器打开，不在应用内导航。href 已经过 safeUrl 校验，只会是 http/https。
 export function open(e: MouseEvent, href: string) {
   e.preventDefault();
   openUrl(href).catch(() => window.open(href, "_blank", "noopener,noreferrer"));
 }
 
-// 是否提及本人：按用户 ID 判断，@全体成员与 @在线成员同样视为提及。
 const mentionsMe = (n: Inline) => n.t === "met" && (n.id === "all" || n.id === "here" || n.id === session.me?.id);
 
-// 放大显示时不超过图片原始分辨率（官方网页端：上限 120px，原图更小时按原图）。
 function fitNatural(img: HTMLImageElement) {
-  const n = Math.min(img.naturalWidth, img.naturalHeight);
-  if (n > 0) img.style.setProperty("--emoji-natural", `${n}px`);
+  const w = img.naturalWidth;
+  if (w > 0) img.style.setProperty("--emoji-natural", `${w}px`);
 }
 
 function Emoji(p: { name: string; id: string }) {
@@ -71,7 +68,6 @@ function Blocks(p: { blocks: Block[] }): JSX.Element {
   );
 }
 
-// 只含一个表情（前后仅有空白）的消息放大显示；其他情况一律按正文中的表情大小显示。
 export default function Kmd(p: { text: string }) {
   return <div class="kmd" classList={{ "kmd-jumbo": singleEmoji(p.text) }}><Blocks blocks={parse(p.text)} /></div>;
 }

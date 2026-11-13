@@ -1,10 +1,7 @@
 use std::path::{Path, PathBuf};
 
-/// 火山 RTC SDK 的头文件与导入库位置，环境变量可覆盖。默认为子模块 `third_party/VolcEngineRTC` 中的 SDK 目录。
 const VOLC_ENV: &str = "CDAPP_VOLC_SDK";
 const VOLC_DEFAULT: &str = "../third_party/VolcEngineRTC/Windows/3rd/Windows/VolcEngineRTC";
-/// Agora RTC SDK 头文件位置，环境变量可覆盖。默认为子模块 `third_party/AgoraAPIExamples`（Agora 官方示例仓库
-/// tag 4.6.2）中的头文件目录，与 Windows SDK 4.6.2 的头文件只差一行注释。桥接以 `GetProcAddress` 取导出函数，不需要导入库。
 const AGORA_ENV: &str = "CDAPP_AGORA_INCLUDE";
 const AGORA_DEFAULT: &str = "../third_party/AgoraAPIExamples/Android/APIExample/agora-stream-encrypt/src/main/cpp/include/agora";
 
@@ -16,7 +13,6 @@ fn main() {
     tauri_build::build();
 }
 
-/// 编译火山 SDK 桥接，返回桥接头文件目录。头文件或导入库缺失时构建失败。
 fn volc_bridge() -> PathBuf {
     println!("cargo:rerun-if-env-changed={VOLC_ENV}");
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
@@ -59,7 +55,6 @@ fn volc_bridge() -> PathBuf {
     native
 }
 
-/// 编译 Agora SDK 观看桥接。头文件缺失时构建失败。
 fn agora_bridge(native: &Path) {
     println!("cargo:rerun-if-env-changed={AGORA_ENV}");
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));

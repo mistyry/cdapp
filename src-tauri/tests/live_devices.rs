@@ -1,6 +1,3 @@
-//! 本机音频设备枚举：`cargo test --test live_devices -- --ignored --nocapture`
-//! 只读取列表，不打开设备。输出设备数量与默认标记，不打印设备名称。
-
 use cdapp_lib::audio::capture::input_devices;
 use cdapp_lib::audio::output::output_devices;
 

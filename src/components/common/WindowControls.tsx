@@ -1,7 +1,6 @@
 import { Copy, Minus, Square, X } from "lucide-solid";
 import { closeWindow, maximized, minimize, toggleMaximize } from "../../stores/window";
 
-// Windows 窗口按钮，位于标题栏右侧。
 export default function WindowControls() {
   return (
     <div class="win-ctrls">

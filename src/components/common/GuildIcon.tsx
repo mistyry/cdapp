@@ -1,7 +1,5 @@
 import { Show } from "solid-js";
 
-// 服务器图标。侧边栏与表情页签共用同一份渲染：始终按 48px 绘制，较小尺寸整体等比缩放，
-// 因此缩小后的图形、圆角、底色与无图标时的名称文字与侧边栏完全一致。
 export default function GuildIcon(p: { name: string; icon?: string; size?: number; onClick?: () => void }) {
   const scale = () => (p.size ?? 48) / 48;
   return (

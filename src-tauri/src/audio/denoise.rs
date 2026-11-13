@@ -1,11 +1,3 @@
-//! 降噪。可选 KOOK AI 降噪 2.0 与 `RNNoise`。
-//! KOOK AI 降噪 2.0 在本机运行 KOOK 网页端使用的声网降噪模块。
-//! 模块是 Emscripten 编译的 wasm，由 wasmtime 加载，宿主导入在此实现。
-//! 没有可用的 Rust 实现或 C 接口可替代，只能按模块的导入表补齐宿主函数。
-//! 采集回调按 128 样本块处理 48 kHz 单声道音频。实例创建较慢，在采集线程中完成后交给回调。
-//! KOOK AI 降噪尚未就绪时用 `RNNoise` 处理。实例出错或无法创建时改用 `RNNoise` 并通知界面，
-//! 直到下次加入语音或修改降噪设置时再尝试。输出持续为零只记录日志。
-//! 同一实现也用于远端成员，每路音轨一个阶段。
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -22,49 +14,35 @@ use wasmtime::{
     bail, format_err,
 };
 
-/// 每次处理的样本数，与模块创建参数一致。
 pub const BLOCK: usize = 128;
-/// 模块要求的版本。
 const VERSION: &str = "2.0.0-beta4-license";
-/// `RNNoise` 的帧长。
 const RNN_FRAME: usize = nnnoiseless::FRAME_SIZE;
-/// 输入有声而输出持续为零的样本数，约 2 秒，超过时记录日志。
-/// 已知的许可失效在创建时返回错误码或运行中陷入，通话中途到期的表现尚未实测。
 const MUTED_LOG: usize = 48_000 * 2;
 
-/// 已编译的模块。编译耗时较长，全进程只做一次。
 static MODULE: OnceLock<(Engine, Module)> = OnceLock::new();
-/// 当前许可证书，只保存在内存中。
 static LICENSE: Mutex<Option<String>> = Mutex::new(None);
-/// KOOK AI 降噪已出现故障，全部阶段改用 `RNNoise`。
 static BROKEN: AtomicBool = AtomicBool::new(false);
 
-/// KOOK AI 降噪是否已出现故障。
 #[must_use]
 pub fn broken() -> bool {
     BROKEN.load(Ordering::SeqCst)
 }
 
-/// 清除故障标记，下次需要时重新创建 KOOK AI 降噪实例。
 pub fn retry_kook() {
     BROKEN.store(false, Ordering::SeqCst);
 }
 
-/// 设置许可证书。
 pub fn set_license(cert: Option<String>) {
     if let Ok(mut l) = LICENSE.lock() {
         *l = cert;
     }
 }
 
-/// 是否已有许可证书。
 #[must_use]
 pub fn has_license() -> bool {
     LICENSE.lock().is_ok_and(|l| l.is_some())
 }
 
-/// 编译模块并缓存。已编译时直接返回。
-///
 /// # Errors
 ///
 /// 模块无法编译时返回错误。
@@ -78,7 +56,6 @@ pub fn prepare(wasm: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// 模块是否已编译。
 #[must_use]
 pub fn ready() -> bool {
     MODULE.get().is_some()
@@ -101,14 +78,12 @@ fn cstr(data: &[u8], ptr: u32) -> String {
     String::from_utf8_lossy(&s[..n]).into_owned()
 }
 
-/// 墙上时间毫秒数，许可按它计时。
 fn now_ms() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0.0, |d| d.as_secs_f64() * 1000.0)
 }
 
-/// Emscripten 的 invoke 系列：从间接函数表取函数调用。
 fn invoke(c: &mut Caller<'_, Host>, idx: i32, args: &[Val], ret: bool) -> Result<i32> {
     let table = c.data().table.context("table")?;
     let f = table
@@ -131,7 +106,6 @@ fn write_i32s(d: &mut [u8], at: i32, values: &[i32]) -> Result<()> {
     Ok(())
 }
 
-/// 由 1970 年起的天数得到年月日。
 fn civil(days: i64) -> (i32, i32, i32) {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
@@ -168,7 +142,6 @@ fn link(linker: &mut Linker<Host>) -> Result<()> {
             invoke(&mut c, f, &[Val::I32(a), Val::I32(b)], true)
         },
     )?;
-    // fd_write：丢弃输出，只回报写入长度。
     linker.func_wrap(
         m,
         "g",
@@ -238,7 +211,6 @@ fn link(linker: &mut Linker<Host>) -> Result<()> {
             .context("na")?;
         f.typed::<i32, i32>(&c)?.call(&mut c, a)
     })?;
-    // localtime：按 UTC 填写 tm 结构。
     linker.func_wrap(
         m,
         "q",
@@ -312,7 +284,6 @@ fn link(linker: &mut Linker<Host>) -> Result<()> {
     Ok(())
 }
 
-/// 一个降噪实例。
 pub struct Denoiser {
     store: Store<Host>,
     memory: Memory,
@@ -335,8 +306,6 @@ impl Denoiser {
         f.typed(&self.store)
     }
 
-    /// 由已编译的模块创建实例，载入许可并设为低延迟。
-    ///
     /// # Errors
     ///
     /// 模块未编译、没有许可、版本不符或初始化失败时返回错误。
@@ -389,7 +358,6 @@ impl Denoiser {
             bail!("降噪许可无效：{status}");
         }
         let h = d.handle;
-        // 1 为低延迟模式。
         d.func::<(i32, i32), ()>("Z")?.call(&mut d.store, (h, 1))?;
         let b = d.buf;
         d.ptr = d.func::<(i32, i32), i32>("M")?.call(&mut d.store, (b, 0))? as usize;
@@ -410,8 +378,6 @@ impl Denoiser {
         Ok(s)
     }
 
-    /// 原地处理一块样本。
-    ///
     /// # Errors
     ///
     /// 模块陷入时返回错误，实例随后不可再用。
@@ -433,13 +399,10 @@ impl Denoiser {
     }
 }
 
-/// 降噪方式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Mode {
-    /// `RNNoise`，本地开源实现，不需要下载与许可。
     Rnnoise,
-    /// KOOK AI 降噪 2.0。无法识别的值也按此处理。
     #[default]
     #[serde(other)]
     Kook,
@@ -460,20 +423,14 @@ impl Mode {
 
 struct Inner {
     on: AtomicBool,
-    /// 降噪方式，与派生的成员降噪共享。
     mode: Arc<AtomicU8>,
-    /// 采集回调正持有可用实例。
     armed: AtomicBool,
-    /// 采集线程创建好、等待回调取走的实例。
     slot: Mutex<Option<Denoiser>>,
-    /// KOOK AI 降噪故障、改用 `RNNoise` 时的通知，参数为原因。
     on_fail: Arc<Mutex<Option<FailHook>>>,
 }
 
-/// KOOK AI 降噪故障时的回调。
 pub type FailHook = Box<dyn Fn(String) + Send + Sync>;
 
-/// 降噪开关，与命令层共享，修改立即作用于采集。
 #[derive(Clone)]
 pub struct Denoise(Arc<Inner>);
 
@@ -490,7 +447,6 @@ impl Default for Denoise {
 }
 
 impl Denoise {
-    /// 派生一路已开启的降噪，用于远端成员。方式与故障通知随本实例，实例单独创建。
     #[must_use]
     pub fn child(&self) -> Self {
         Self(Arc::new(Inner {
@@ -511,7 +467,6 @@ impl Denoise {
         self.0.on.store(on, Ordering::Relaxed);
     }
 
-    /// 设置 KOOK AI 降噪故障时的通知。
     pub fn on_fail(&self, hook: FailHook) {
         if let Ok(mut h) = self.0.on_fail.lock() {
             *h = Some(hook);
@@ -527,7 +482,6 @@ impl Denoise {
         self.0.mode.store(mode.as_u8(), Ordering::Relaxed);
     }
 
-    /// 标记 KOOK AI 降噪故障并通知。已标记时不重复通知。
     fn fail(&self, e: &wasmtime::Error) {
         if BROKEN.swap(true, Ordering::SeqCst) {
             return;
@@ -540,7 +494,6 @@ impl Denoise {
         }
     }
 
-    /// 在采集或播放线程中定期调用：需要时创建实例，交给处理阶段。
     pub fn maintain(&self) {
         if !self.on()
             || self.mode() != Mode::Kook
@@ -565,13 +518,13 @@ impl Denoise {
         }
     }
 
-    /// 采集回调中的处理阶段。
     #[must_use]
     pub fn stage(&self) -> Stage {
         Stage {
             shared: self.clone(),
             inst: None,
-            rnn: None,
+            rnn: Some(nnnoiseless::DenoiseState::new()),
+            rnn_used: false,
             active: None,
             pending: Vec::with_capacity(RNN_FRAME * 2),
             fallback: false,
@@ -581,19 +534,15 @@ impl Denoise {
     }
 }
 
-/// 采集回调持有的降噪阶段。样本按块处理，不足一块的部分留到下次处理。
 pub struct Stage {
     shared: Denoise,
     inst: Option<Denoiser>,
     rnn: Option<Box<nnnoiseless::DenoiseState<'static>>>,
-    /// 正在使用的方式，切换时先送出缓冲中的样本。
+    rnn_used: bool,
     active: Option<Mode>,
     pending: Vec<f32>,
-    /// 选择 KOOK AI 降噪但没有可用实例，正在用 `RNNoise` 处理。
     fallback: bool,
-    /// 输入有声而输出为零的连续样本数。
     muted: usize,
-    /// 本段静音是否已记录。
     muted_logged: bool,
 }
 
@@ -605,7 +554,6 @@ impl Stage {
         self.shared.0.armed.store(false, Ordering::SeqCst);
     }
 
-    /// 送出缓冲中尚未处理的样本，放在 `samples` 之前。
     fn flush(&mut self, samples: &mut Vec<f32>) {
         if !self.pending.is_empty() {
             let mut out = std::mem::take(&mut self.pending);
@@ -614,12 +562,17 @@ impl Stage {
         }
     }
 
-    /// 丢弃缓冲中尚未处理的样本。
     pub fn clear(&mut self) {
         self.pending.clear();
     }
 
-    /// 处理 48 kHz 单声道样本，结果写回 `samples`。
+    fn reset_rnn(&mut self) {
+        if self.rnn_used {
+            self.rnn = None;
+            self.rnn_used = false;
+        }
+    }
+
     pub fn process(&mut self, samples: &mut Vec<f32>) {
         let want = self.shared.on().then(|| self.shared.mode());
         if want != self.active {
@@ -627,7 +580,7 @@ impl Stage {
             if self.inst.is_some() {
                 self.drop_inst();
             }
-            self.rnn = None;
+            self.reset_rnn();
             self.fallback = false;
             self.active = want;
         }
@@ -639,13 +592,13 @@ impl Stage {
     }
 
     fn rnnoise(&mut self, samples: &mut Vec<f32>) {
+        self.rnn_used = true;
         let rnn = self.rnn.get_or_insert_with(nnnoiseless::DenoiseState::new);
         self.pending.append(samples);
         let full = self.pending.len() / RNN_FRAME * RNN_FRAME;
         let mut out = [0.0f32; RNN_FRAME];
         let mut input = [0.0f32; RNN_FRAME];
         for frame in self.pending[..full].as_chunks_mut::<RNN_FRAME>().0 {
-            // nnnoiseless 按 16 位整数幅度处理。
             for (i, s) in input.iter_mut().zip(frame.iter()) {
                 *i = s * 32768.0;
             }
@@ -657,11 +610,10 @@ impl Stage {
         samples.extend(self.pending.drain(..full));
     }
 
-    /// 切换 KOOK AI 降噪与 `RNNoise` 保底时，先送出缓冲中的样本。
     fn set_fallback(&mut self, on: bool, samples: &mut Vec<f32>) {
         if self.fallback != on {
             self.flush(samples);
-            self.rnn = None;
+            self.reset_rnn();
             self.fallback = on;
         }
     }
@@ -733,7 +685,6 @@ impl Drop for Stage {
 mod tests {
     use super::*;
 
-    /// 故障标记为全局状态，相关测试串行执行。
     static SERIAL: Mutex<()> = Mutex::new(());
 
     #[test]
@@ -752,12 +703,10 @@ mod tests {
         let mut s = d.stage();
         let mut x = vec![0.5f32; 300];
         s.process(&mut x);
-        // 关闭时原样通过。
         assert_eq!(x, vec![0.5f32; 300]);
         d.set(true);
         let mut x = vec![0.5f32; 300];
         s.process(&mut x);
-        // 没有实例时按 RNNoise 分帧，剩余样本留到下次。
         assert!(s.fallback);
         assert_eq!(x.len() + s.pending.len(), 300);
     }
@@ -783,6 +732,21 @@ mod tests {
     }
 
     #[test]
+    fn rnnoise_instance_is_prebuilt_outside_callback() {
+        let d = Denoise::default();
+        d.set(true);
+        d.set_mode(Mode::Rnnoise);
+        let mut s = d.stage();
+        assert!(s.rnn.is_some() && !s.rnn_used);
+        let first: *const _ = s.rnn.as_deref().unwrap();
+        let mut v = vec![0.1f32; RNN_FRAME];
+        s.process(&mut v);
+        assert_eq!(v.len(), RNN_FRAME);
+        let used: *const _ = s.rnn.as_deref().unwrap();
+        assert!(std::ptr::eq(first, used));
+    }
+
+    #[test]
     fn rnnoise_keeps_sample_count_and_mode_switch_flushes() {
         let d = Denoise::default();
         d.set(true);
@@ -795,7 +759,6 @@ mod tests {
             total += x.len();
         }
         assert_eq!(total, 3000 / RNN_FRAME * RNN_FRAME);
-        // 关闭时送出剩余样本。
         d.set(false);
         let mut x = vec![0.0f32; 10];
         s.process(&mut x);
@@ -814,11 +777,9 @@ mod tests {
         d.set(true);
         retry_kook();
         d.fail(&format_err!("陷入"));
-        // 降噪保持开启，改用 RNNoise。
         assert!(d.on() && broken());
         d.fail(&format_err!("再次"));
         assert_eq!(*hits.lock().unwrap(), vec!["陷入".to_owned()]);
-        // 重新尝试后再次故障仍会通知。
         retry_kook();
         d.fail(&format_err!("第三次"));
         assert_eq!(hits.lock().unwrap().len(), 2);
@@ -836,8 +797,6 @@ mod tests {
     }
 }
 
-/// 用真实模块与证书验证处理链路。资源不随仓库分发，按环境变量指定路径后手动运行：
-/// `DENOISE_WASM=… DENOISE_CERT=… cargo test --lib denoise::real -- --ignored`
 #[cfg(test)]
 mod real {
     use super::*;
@@ -855,7 +814,6 @@ mod real {
         let mut stage = d.stage();
         let mut seed = 1u32;
         let (mut rms_in, mut rms_out) = (0.0f64, 0.0f64);
-        // 3 秒白噪声，按 480 样本一段送入。
         for k in 0..300 {
             let mut x: Vec<f32> = (0..480)
                 .map(|_| {

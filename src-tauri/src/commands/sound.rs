@@ -1,5 +1,3 @@
-//! 提示音命令。前端按场景请求播放，开关与音量在此判断。
-
 use tauri::State;
 
 use super::VoiceState;
@@ -7,7 +5,6 @@ use crate::audio::effect;
 use crate::error::{AppError, AppResult};
 use crate::kook::sound;
 
-/// 提示音编号与文件，编号与官方 `audio_setting` 一致。
 const EFFECTS: &[(u8, &str)] = &[
     (1, "user-join.mp3"),
     (2, "user-leave.mp3"),
@@ -28,7 +25,6 @@ fn file_of(id: u8) -> Option<&'static str> {
     EFFECTS.iter().find(|x| x.0 == id).map(|x| x.1)
 }
 
-/// 按开关确定实际播放的编号。提及我的消息关闭时改用普通消息通知。
 #[must_use]
 pub fn resolve(id: u8, off: &[u8]) -> Option<u8> {
     if id == MENTION_SELF && off.contains(&MENTION_SELF) {
@@ -37,7 +33,6 @@ pub fn resolve(id: u8, off: &[u8]) -> Option<u8> {
     (file_of(id).is_some() && !off.contains(&id)).then_some(id)
 }
 
-/// 播放提示音。`preview` 为真时忽略开关，用于设置页试听。
 #[tauri::command]
 pub async fn effect_play(
     id: u8,
@@ -67,7 +62,6 @@ pub async fn effect_play(
     Ok(())
 }
 
-/// 播放成员的进场音效，失败时播放用户连接提示音。受用户连接开关控制。
 #[tauri::command]
 pub async fn effect_play_item(item: u64, voice: State<'_, VoiceState>) -> AppResult<()> {
     let (device, volume, off) = {
@@ -92,7 +86,6 @@ pub async fn effect_play_item(item: u64, voice: State<'_, VoiceState>) -> AppRes
     Ok(())
 }
 
-/// 设置提示音音量，上限 100。
 #[tauri::command]
 pub async fn set_effect_volume(percent: u16, voice: State<'_, VoiceState>) -> AppResult<()> {
     let mut slot = voice.0.lock().await;
@@ -101,7 +94,6 @@ pub async fn set_effect_volume(percent: u16, voice: State<'_, VoiceState>) -> Ap
     Ok(())
 }
 
-/// 开启或关闭一项提示音。
 #[tauri::command]
 pub async fn set_effect_enabled(id: u8, on: bool, voice: State<'_, VoiceState>) -> AppResult<()> {
     if file_of(id).is_none() {

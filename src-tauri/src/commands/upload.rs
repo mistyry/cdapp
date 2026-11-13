@@ -7,9 +7,6 @@ use crate::error::{AppError, AppResult};
 use crate::kook::api::check_upload;
 use crate::kook::model::Asset;
 
-/// 上传资源。原始字节作为请求体传入，不经 JSON 数组编码。上传 ID 与经 URI 编码的文件名放在请求头中。
-/// 进度以 `upload://progress` 事件发出 `{id, sent, total}`；`upload_cancel` 中止进行中的上传。
-/// 取消后服务端可能已收到完整内容，但上传不产生消息，重新上传同一内容得到相同地址。
 #[tauri::command]
 pub async fn upload(
     request: tauri::ipc::Request<'_>,
@@ -56,7 +53,6 @@ pub async fn upload(
     r
 }
 
-/// 取消上传。请求仍在途中、上传尚未登记时不生效，前端以本地状态丢弃迟到结果。
 #[tauri::command]
 pub async fn upload_cancel(id: String, state: State<'_, Mutex<AppState>>) -> AppResult<()> {
     if let Some(n) = lock(&state)?.uploads.remove(&id) {

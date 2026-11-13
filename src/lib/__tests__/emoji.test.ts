@@ -7,7 +7,7 @@ const other: Pick = { kind: "custom", id: "200/xyz", name: "哭", animated: true
 const mine: Pick = { kind: "custom", id: "1/22/pp", name: "我", animated: false, guildId: "" };
 const uni: Pick = { kind: "unicode", char: "👍🏽", name: "拇指向上: 中等肤色" };
 
-test("按用途区分可用范围，与实测一致", () => {
+test("按用途区分可用范围", () => {
   const ch = { use: "send", guildId: "100" } as const;
   expect(unavailable(uni, ch)).toBeNull();
   expect(unavailable(own, ch)).toBeNull();
@@ -81,14 +81,13 @@ test("最近使用去重、限量，损坏数据丢弃", () => {
 });
 
 test("方向键按分区网格移动", () => {
-  // 最近 3 个、个人 10 个、第三区 8 个，每行 8 列。
   const s = [{ start: 0, len: 3 }, { start: 3, len: 10 }, { start: 13, len: 8 }];
-  expect(gridMove(s, 0, 8, 8)).toBe(3);        // 最近首格向下到个人首格
-  expect(gridMove(s, 2, 8, 8)).toBe(5);        // 同列
-  expect(gridMove(s, 5, 8, 8)).toBe(12);       // 个人第二行只有 2 格，取最后一格
-  expect(gridMove(s, 11, 8, 8)).toBe(13 + 0);  // 个人末行第 0 列向下进入第三区
-  expect(gridMove(s, 13, -8, 8)).toBe(11);     // 回到个人末行同列
-  expect(gridMove(s, 20, -8, 8)).toBe(12);     // 末行较短时取最后一格
+  expect(gridMove(s, 0, 8, 8)).toBe(3);
+  expect(gridMove(s, 2, 8, 8)).toBe(5);
+  expect(gridMove(s, 5, 8, 8)).toBe(12);
+  expect(gridMove(s, 11, 8, 8)).toBe(13 + 0);
+  expect(gridMove(s, 13, -8, 8)).toBe(11);
+  expect(gridMove(s, 20, -8, 8)).toBe(12);
   expect(gridMove(s, 3, -8, 8)).toBe(0);
   expect(gridMove(s, 0, -8, 8)).toBe(0);
   expect(gridMove(s, 20, 8, 8)).toBe(20);

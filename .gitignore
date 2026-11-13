@@ -8,8 +8,6 @@ target/
 *.pem
 .DS_Store
 *.log
-
-# 本地资料与 AI 上下文
 docs/
 .codex/
 .claude/

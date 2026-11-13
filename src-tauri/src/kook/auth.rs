@@ -21,8 +21,6 @@ fn path() -> AppResult<PathBuf> {
     crate::storage::credentials().ok_or_else(|| AppError::Other("凭据存储未初始化".into()))
 }
 
-/// 读取保存的 token，不存在时返回 None。文件损坏视为没有凭据。
-///
 /// # Errors
 ///
 /// 文件读取失败时返回错误。
@@ -37,8 +35,6 @@ pub fn load_token() -> AppResult<Option<String>> {
     }
 }
 
-/// 保存在固定目录，原子写入，Unix 下权限为仅本人可读写。
-///
 /// # Errors
 ///
 /// 目录创建或文件写入失败时返回错误。
@@ -61,7 +57,6 @@ pub fn clear_token() -> AppResult<()> {
     }
 }
 
-/// 扫码状态。
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum QrStatus {
@@ -83,8 +78,6 @@ pub async fn qr_code(api: &Api) -> AppResult<String> {
         .map_or_else(|| str_field(&data, "content"), Ok)
 }
 
-/// 查询一次扫码状态。确认后返回 token。
-///
 /// # Errors
 ///
 /// 请求失败时返回错误。

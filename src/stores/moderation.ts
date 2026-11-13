@@ -5,10 +5,6 @@ import { permsOf, session } from "./session";
 import { channelById, guildOfAny } from "./session/state";
 import { setVoice, voice } from "./voice";
 
-// 语音成员管理。权限按当前语音频道的有效权限判断，服务端仍会校验。
-// 已用两个测试账号核对：闭麦需第 25 位，静音需第 24 位，踢出语音与移动需第 16 位，
-// 踢出服务器需第 6 位，黑名单需第 7 位。
-
 export type ModPerms = { voiceManage: boolean; mute: boolean; deafen: boolean; kick: boolean; ban: boolean };
 
 export function modPerms(channelId: string): ModPerms {
@@ -25,7 +21,6 @@ export function modPerms(channelId: string): ModPerms {
 
 export const anyMod = (m: ModPerms) => m.voiceManage || m.mute || m.deafen || m.kick || m.ban;
 
-// 可移入的其他语音频道：同一服务器、本人可见且可连接。
 export function moveTargets(channelId: string): Channel[] {
   const g = guildOfAny(channelId);
   if (!g) return [];
@@ -55,7 +50,6 @@ async function run(f: () => Promise<void>): Promise<string | null> {
   }
 }
 
-// 服务器闭麦或静音。成功后先更新本地，服务端随后经语音信令确认。
 export async function setServerMute(channelId: string, userId: string, kind: "mute" | "deafen", on: boolean) {
   const err = await run(() => api.guildMute(guildIdOf(channelId), userId, kind, on));
   if (!err) patchPeer(userId, kind === "mute" ? { serverMute: on } : { serverDeafen: on });

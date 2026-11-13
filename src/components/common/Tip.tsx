@@ -1,21 +1,11 @@
 import { Show, createSignal, onCleanup } from "solid-js";
 import { Portal } from "solid-js/web";
 
-// 悬停提示。全应用以 data-tip 声明，由此统一显示，不使用浏览器的 title 与 alt 弹出。
-// 事件委托：指针悬停或键盘导航聚焦时显示，全局只有一个提示层。
-// 提示只补充视觉说明，语义名称由元素自身的 aria-label 等提供。
-// data-focus-tip 在元素获得焦点时显示，单击聚焦也会显示，用于提示下一步操作。
-// 显示后不随指针移开消失，焦点离开或点击其他位置时隐藏。
-// 指向即时显示，箭头指向目标。
-// side 为 right 时显示在目标右侧并垂直居中（服务器栏），否则显示在上方，空间不足时在下方。
 type Tip = { text: string; x: number; y: number; side: "top" | "bottom" | "right" };
 const [tip, setTip] = createSignal<Tip | null>(null);
 
-// 最近一次输入是否为键盘。WebView 在单击带 tabindex 的元素、程序调用 focus() 与窗口重新激活时，
-// 也可能判定为 :focus-visible，单凭它会在指针操作后弹出提示且不消失。
 let keyboard = false;
 const NAV_KEYS = new Set(["Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"]);
-// 同步到根元素，样式据此只在键盘导航时绘制焦点框。
 const setKeyboard = (on: boolean) => {
   keyboard = on;
   document.documentElement.toggleAttribute("data-keyboard", on);
@@ -25,18 +15,14 @@ const onPointer = () => setKeyboard(false);
 document.addEventListener("keydown", onKey, true);
 document.addEventListener("pointerdown", onPointer, true);
 window.addEventListener("blur", onPointer);
-/** 当前焦点是否由键盘导航取得，聚焦时显示的提示以此为准。 */
 export const keyboardFocus = (el: Element) => keyboard && el.matches(":focus-visible, :has(:focus-visible)");
 const MARGIN = 8;
-// 目标与提示之间的距离，容纳箭头。
 const GAP = 8;
 
 export function TipLayer() {
   let anchor: HTMLElement | null = null;
   let box: HTMLDivElement | undefined;
-  // 当前提示由焦点触发，指针移动不影响。
   let sticky = false;
-  // 当前提示由键盘聚焦触发，指针移出目标时隐藏。
   let byFocus = false;
 
   const hide = () => {
@@ -61,7 +47,6 @@ export function TipLayer() {
     const below = r.top < 40;
     const cx = r.left + r.width / 2;
     setTip({ text, x: cx, y: below ? r.bottom + GAP : r.top - GAP, side: below ? "bottom" : "top" });
-    // 渲染后按实际宽度限制在窗口内，箭头仍指向目标中心。
     queueMicrotask(() => {
       if (!box) return;
       const w = box.offsetWidth;
@@ -83,7 +68,6 @@ export function TipLayer() {
     const to = (e as PointerEvent | FocusEvent).relatedTarget;
     if (anchor && !(to instanceof Node && anchor.contains(to))) hide();
   };
-  // data-tip 只响应键盘聚焦。程序调用 focus() 归还焦点时不弹出提示。
   const focusIn = (e: FocusEvent) => {
     const f = e.target instanceof HTMLElement && e.target.dataset.focusTip ? e.target : null;
     if (f) return show(f, "focusTip");
@@ -93,11 +77,9 @@ export function TipLayer() {
       byFocus = true;
     }
   };
-  // 键盘聚焦显示的提示，指针一旦在目标外移动即隐藏，不等待指针进入其他元素。
   const pointerMove = (e: PointerEvent) => {
     if (byFocus && anchor && !(e.target instanceof Node && anchor.contains(e.target))) hide();
   };
-  // 禁用的按钮不派发指针事件。指针停在其父元素上时检查一次命中目标，按帧节流。
   let frame = 0;
   const move = (e: MouseEvent) => {
     if (frame || !(e.target instanceof Element) || !e.target.querySelector("button:disabled[data-tip]")) return;
@@ -108,11 +90,9 @@ export function TipLayer() {
       if (el && (el as HTMLButtonElement).disabled) show(el);
     });
   };
-  // 只有包含提示目标的区域滚动时才隐藏，其他列表自动滚动不影响。
   const scroll = (e: Event) => {
     if (anchor && (e.target === document || (e.target instanceof Node && e.target.contains(anchor)))) hide();
   };
-  // 目标被移除或隐藏（弹层关闭、列表重绘、切换分区）时不会触发 pointerout。
   const mo = new MutationObserver(() => {
     if (anchor && (!anchor.isConnected || !anchor.checkVisibility())) hide();
   });

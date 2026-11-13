@@ -7,7 +7,6 @@ import Avatar from "../common/Avatar";
 const hex = (c: number) => (c ? `#${c.toString(16).padStart(6, "0")}` : undefined);
 
 function Row(p: { m: MemberDto }) {
-  // 显示服务器昵称；颜色取服务端计算的角色颜色。
   const user = () => ({ id: p.m.id, name: p.m.nickname || p.m.username || "未知用户", avatar: p.m.avatar || undefined, online: p.m.online });
   return (
     <div class={`member ${p.m.online ? "" : "offline"}`} data-tip={`${user().name}#${p.m.identifyNum}`}
@@ -21,10 +20,7 @@ function Row(p: { m: MemberDto }) {
 }
 
 export default function MemberPane() {
-  // 当前频道变化或面板打开时拉取；旧频道结果按 key 丢弃。
-  // 只跟踪当前会话；ensureMembers 读取的成员状态不作为依赖，失败不会触发自动重试循环。
   createEffect(on(() => ui.target, () => void ensureMembers()));
-  // 关闭成员栏时取消在线状态订阅。
   onCleanup(closeMembers);
   const list = () => session.members;
   const online = () => list()?.items.filter((m) => m.online) ?? [];

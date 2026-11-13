@@ -1,9 +1,3 @@
-//! 观看屏幕分享的真实环境测试，仅 Windows。需要观看者已在语音频道中，分享者在同一频道推流。
-//! `CDAPP_LIVE_TOKEN=<观看者令牌> CDAPP_LIVE_USER=<观看者 ID> CDAPP_LIVE_LIVER=<分享者 ID> CDAPP_LIVE_VOICE=<频道>
-//!  CDAPP_LIVE_SECS=20 cargo test --test live_watch -- --ignored --nocapture`
-//! 下载并加载 SDK，订阅后统计收到的帧：首帧须为关键帧、H.264、Annex B 起始码，帧数与时长相符。
-//! `CDAPP_LIVE_KEY_AT=<秒>` 在该时刻请求关键帧，检查之后收到新的关键帧。不输出令牌。
-//! 分享者分到 Agora 时同样适用，Agora 运行文件在开始观看时下载并加载；Agora 的请求关键帧为重新进房。
 #![cfg(windows)]
 
 use std::sync::{Arc, Mutex};
@@ -126,8 +120,14 @@ fn watches_live_share() {
             g.keys
         );
         assert_eq!(first[0], 1, "首帧不是关键帧");
-        assert_eq!(first[1], 1, "编码不是 H.264");
-        assert_eq!(&first[14..18], &[0, 0, 0, 1], "不是 Annex B 起始码");
+        let want: u8 = std::env::var("CDAPP_LIVE_CODEC")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1);
+        assert_eq!(first[1], want, "编码不符");
+        if want != 3 {
+            assert_eq!(&first[14..18], &[0, 0, 0, 1], "不是 Annex B 起始码");
+        }
         let start = g.keys[0];
         let fps = f64::from(g.frames) / t0.elapsed().saturating_sub(start).as_secs_f64();
         println!("平均 {fps:.1} 帧每秒");

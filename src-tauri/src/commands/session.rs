@@ -9,28 +9,20 @@ use crate::error::{AppError, AppResult};
 use crate::kook::api::Api;
 use crate::kook::auth::{self, QrStatus};
 
-/// 恢复结果。只有服务端确认凭据失效时才清除凭据文件，网络等错误以 `Err` 返回并保留凭据。
 #[derive(Debug, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum Restore {
-    /// 没有保存的凭据。
     None,
-    Ready {
-        me: Value,
-    },
-    Expired {
-        message: String,
-    },
+    Ready { me: Value },
+    Expired { message: String },
 }
 
-/// 尝试使用凭据文件中的 token 恢复登录。
 #[tauri::command]
 pub async fn restore_session(state: State<'_, Mutex<AppState>>) -> AppResult<Restore> {
     let Some(token) = auth::load_token()? else {
         return Ok(Restore::None);
     };
     let r = Api::new(Some(token.clone()))?.me().await;
-    // 等待期间可能已扫码登录了新凭据：此时不写回内存，也不删除凭据文件。凭据文件读写都在状态锁内进行。
     let mut s = lock(&state)?;
     let superseded = s.token.as_deref().is_some_and(|t| t != token)
         || auth::load_token()?.as_deref() != Some(token.as_str());
@@ -51,7 +43,6 @@ pub async fn restore_session(state: State<'_, Mutex<AppState>>) -> AppResult<Res
     }
 }
 
-/// 启动页一言。不需要登录，不使用凭据。
 #[tauri::command]
 pub async fn sayings() -> AppResult<Vec<crate::kook::saying::Saying>> {
     crate::kook::saying::list(Api::new(None)?).await
@@ -62,7 +53,6 @@ pub async fn login_qr_code() -> AppResult<String> {
     auth::qr_code(&Api::new(None)?).await
 }
 
-/// 查询一次扫码状态。确认后保存 token。
 #[tauri::command]
 pub async fn login_qr_poll(
     content: String,
@@ -70,7 +60,6 @@ pub async fn login_qr_poll(
 ) -> AppResult<QrStatus> {
     let (status, token) = auth::qr_poll(&Api::new(None)?, &content).await?;
     if let (QrStatus::Confirmed, Some(token)) = (&status, token) {
-        // 与退出、失效的凭据文件删除互斥。
         let mut s = lock(&state)?;
         auth::save_token(&token)?;
         s.token = Some(token);
@@ -83,8 +72,6 @@ pub async fn login_qr_cancel(content: String) -> AppResult<()> {
     auth::qr_cancel(&Api::new(None)?, &content).await
 }
 
-/// 退出登录：在状态锁内停止网关、清空内存并删除保存的凭据，再退出语音。
-/// 删除在任何 await 之前完成，退出期间并发完成的新登录不会被删掉。删除失败时内存状态仍已清空。
 #[tauri::command]
 pub async fn logout(
     app: tauri::AppHandle,
@@ -93,13 +80,7 @@ pub async fn logout(
 ) -> AppResult<()> {
     let cleared = {
         let mut s = lock(&state)?;
-        if let Some(stop) = s.gateway_stop.take() {
-            let _ = stop.send(true);
-        }
-        *s = AppState {
-            gateway_gen: s.gateway_gen,
-            ..AppState::default()
-        };
+        super::reset(&mut s);
         auth::clear_token()
     };
     super::stop_share(&app).await;
@@ -114,7 +95,6 @@ pub async fn logout(
     cleared
 }
 
-/// 检查音效索引并下载缺少的音效，进度经 `progress` 推送。不需要登录。
 #[tauri::command]
 pub async fn sound_sync(
     progress: tauri::ipc::Channel<crate::kook::sound::Progress>,
@@ -126,7 +106,6 @@ pub async fn sound_sync(
     .await
 }
 
-/// 检查 AI 降噪模块，缺失时下载并缓存。不需要登录。
 #[tauri::command]
 pub async fn denoise_sync() -> AppResult<()> {
     crate::kook::denoise_asset::sync(&Api::new(None)?).await

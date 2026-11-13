@@ -1,23 +1,10 @@
-//! 屏幕分享推流的真实环境测试，仅 Windows。需要会员账号已在语音频道中，例如先运行 poc 的 voice.py：
-//! `CDAPP_LIVE_TOKEN=... CDAPP_LIVE_USER=... CDAPP_LIVE_VOICE=... CDAPP_LIVE_SECS=60
-//!  cargo test --features test-media --test live_share -- --ignored --nocapture`
-//! 下载并加载 SDK，以 1080p30 推指定显示器，持续指定秒数后停止。不输出令牌。
-//!
-//! - `CDAPP_LIVE_SCREEN`：按名称选显示器，例如 `\\.\DISPLAY1`，省略时为主显示器。
-//! - `CDAPP_LIVE_AUDIO=1`：带屏幕声音，排除本进程。
-//! - `CDAPP_LIVE_SELF_TONE=<频率>`：本进程播放正弦波，并测量推出的声音中该频率与
-//!   `CDAPP_LIVE_OTHER_TONE` 频率的能量，检验是否排除本进程。
-//! - `CDAPP_LIVE_LIFECYCLE=1`：生命周期，需 `test-media`。推流中续期令牌，改为 720p30 再改回 1080p30，
-//!   最后模拟语音结束，确认推流随之结束。各步之间间隔 `CDAPP_LIVE_SECS` 的四分之一。
-//! - `CDAPP_LIVE_WINDOW`：按标题选窗口共享，优先于 `CDAPP_LIVE_SCREEN`。
-//! - `CDAPP_LIVE_EXPECT_GONE=1`：共享的窗口会在推流中途关闭，确认推流随之结束。
 #![cfg(windows)]
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use cdapp_lib::kook::api::Api;
-use cdapp_lib::kook::golive::Tier;
+use cdapp_lib::kook::golive::{Tier, Vendor};
 use cdapp_lib::share::bridge::{self, SourceKind};
 #[cfg(feature = "test-media")]
 use cdapp_lib::share::fit::fit;
@@ -36,7 +23,6 @@ fn freq(key: &str) -> Option<f32> {
     std::env::var(key).ok().and_then(|v| v.parse().ok())
 }
 
-/// 在默认扬声器播放正弦波，返回的流释放时停止。
 #[cfg(feature = "test-media")]
 fn play_tone(f: f32) -> cpal::Stream {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -59,7 +45,6 @@ fn play_tone(f: f32) -> cpal::Stream {
             move |d: &mut [f32], _| {
                 for frame in d.chunks_mut(ch) {
                     #[allow(clippy::cast_precision_loss)]
-                    // 振幅约 -24 dBFS，与 poc 的 tone.py 相同。
                     let v = (std::f32::consts::TAU * f * n as f32 / rate).sin() * 0.06;
                     frame.fill(v);
                     n += 1;
@@ -73,7 +58,6 @@ fn play_tone(f: f32) -> cpal::Stream {
     stream
 }
 
-/// 单频能量，dB，按 Goertzel 算法。
 #[cfg(feature = "test-media")]
 fn db(x: &[f32], f: f32) -> f32 {
     #[allow(clippy::cast_precision_loss)]
@@ -88,8 +72,6 @@ fn db(x: &[f32], f: f32) -> f32 {
     20.0 * ((re * re + im * im).sqrt() / len + 1e-9).log10()
 }
 
-/// 生命周期：续期、改档两次、模拟语音结束。每步打印时间点，供观看端日志对照。
-/// `source` 为显示器尺寸，预期编码尺寸按宽高比换算，不写死 16:9。
 #[cfg(feature = "test-media")]
 async fn lifecycle(
     session: &Session,
@@ -159,7 +141,6 @@ fn pushes_primary_screen() {
     let dir = std::env::temp_dir().join(format!("cdapp-live-share-{}", std::process::id()));
     cdapp_lib::storage::init(&dir.join("fixed"), &dir.join("data"), &dir.join("fixed"));
 
-    // 推出的声音最近 1 秒，左声道。
     #[cfg(feature = "test-media")]
     let pushed: Arc<Mutex<Vec<f32>>> = Arc::default();
     #[cfg(feature = "test-media")]
@@ -183,7 +164,6 @@ fn pushes_primary_screen() {
         let s = sdk::sync().await;
         assert!(matches!(s, Status::Ready { .. }), "{s:?}");
         bridge::set_log_dir(&dir.join("sdklog")).unwrap();
-        // CDAPP_LIVE_WINDOW 按标题选窗口，优先于 CDAPP_LIVE_SCREEN。
         let want_window = std::env::var("CDAPP_LIVE_WINDOW").ok();
         let want = std::env::var("CDAPP_LIVE_SCREEN").ok();
         let screen = bridge::sources()
@@ -210,13 +190,28 @@ fn pushes_primary_screen() {
             }
             l.lock().unwrap().push(e);
         });
-        // 测试进程没有 cdapp 的语音会话。语音实际由 voice.py 维持，这里用信号模拟其结束。
         let (end_voice, voice_end) = tokio::sync::oneshot::channel::<()>();
         let voice = Box::pin(async move {
             let _ = voice_end.await;
         });
+        let api = Api::new(Some(env("CDAPP_LIVE_TOKEN"))).unwrap();
+        let vendor = api
+            .golive_vendor(
+                &env("CDAPP_LIVE_GUILD"),
+                &env("CDAPP_LIVE_VOICE"),
+                &env("CDAPP_LIVE_USER"),
+            )
+            .await
+            .unwrap();
+        println!("分享厂商 {vendor}");
+        let vendor = Vendor::parse(&vendor).expect("未知分享厂商");
+        if vendor == Vendor::Agora {
+            cdapp_lib::share::agora_sdk::sync().await;
+            assert!(cdapp_lib::share::agora_sdk::ready(), "Agora 组件不可用");
+            bridge::agora_log(&dir.join("sdklog").join("agorasdk.log")).unwrap();
+        }
         let session = Session::start(
-            Api::new(Some(env("CDAPP_LIVE_TOKEN"))).unwrap(),
+            api,
             Request {
                 channel_id: env("CDAPP_LIVE_VOICE"),
                 user_id: env("CDAPP_LIVE_USER"),
@@ -229,6 +224,7 @@ fn pushes_primary_screen() {
                     mode: 0,
                 },
                 audio,
+                vendor,
             },
             1,
             sink,
@@ -246,7 +242,6 @@ fn pushes_primary_screen() {
             .await;
             return;
         }
-        // CDAPP_LIVE_EXPECT_GONE=1：共享目标窗口会在推流中途关闭，推流应随之结束。
         if std::env::var("CDAPP_LIVE_EXPECT_GONE").is_ok_and(|v| v == "1") {
             for _ in 0..secs * 10 {
                 if session.is_finished() {
@@ -301,7 +296,6 @@ fn pushes_primary_screen() {
         );
     });
     bridge::stop();
-    // SDK 日志中不得出现令牌。
     let token = env("CDAPP_LIVE_TOKEN");
     for f in std::fs::read_dir(dir.join("sdklog"))
         .into_iter()

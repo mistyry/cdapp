@@ -16,7 +16,6 @@ export default function ChatPane() {
     return session.guilds.find((g) => g.id === t.guildId)?.groups.flatMap((x) => x.channels).find((c) => c.id === t.channelId);
   };
   const sendable = () => canSend();
-  // 不能发送的原因。权限未知时不视为已获授权。
   const blocked = () => {
     if (ui.target.kind === "dm") return dmOf(ui.target.chatId)?.target.system ? "系统会话不能回复" : "私信会话不可用";
     switch (sendBlock()) {
@@ -38,7 +37,6 @@ export default function ChatPane() {
     return g.loaded ? "没有可用的文字频道" : "加载中";
   };
   const outbox = () => session.outbox[currentMsgKey()] ?? [];
-  // 提交即转入待发列表并清空输入，等待响应期间的新输入不受影响，也无法重复提交同一草稿。
   const submit = () => {
     const key = currentKey();
     if (submitAll(ui.target, text(), reply())) {
@@ -47,7 +45,6 @@ export default function ChatPane() {
     }
   };
   const staged = () => ui.staged[currentKey()] ?? [];
-  // 附件被拒绝的原因（空文件、超限），下次选择或切换会话时清除。
   const [rejects, setRejects] = createSignal<string[]>([]);
   createEffect(on(currentKey, () => setRejects([]), { defer: true }));
   const [dragging, setDragging] = createSignal(false);
@@ -75,7 +72,6 @@ export default function ChatPane() {
   let input: EmojiInputApi | undefined;
   const [picking, setPicking] = createSignal(false);
   let emojiBtn: HTMLButtonElement | undefined;
-  // 切换会话时关闭选择器，避免插入到另一会话的草稿。
   createEffect(on(currentKey, () => setPicking(false), { defer: true }));
   const onKey = (e: KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
@@ -85,7 +81,6 @@ export default function ChatPane() {
     if (e.key === "Escape") clearReply();
   };
 
-  // 待发消息（频道与私信共用，按当前会话的消息键）。
   const outboxView = () => (
     <>
               <For each={outbox()}>
@@ -128,7 +123,6 @@ export default function ChatPane() {
     </>
   );
 
-  // 输入区（频道与私信共用）。目标在提交时由 ui.target 固定。
   const composer = (placeholder: () => string) => (
     <div class="send-ctrl">
       <Show when={reply()}>
@@ -183,8 +177,6 @@ export default function ChatPane() {
     </div>
   );
 
-  // 私信会话。草稿、引用、附件与待发消息按 dm:chat_code 键存放，与频道互不影响；只经私信接口发送。
-  // 以 chat_code 为键挂载，会话资料刷新不重建消息列表。
   const dmView = (code: string) => {
     const d = () => dmOf(code)?.target;
     const name = () => (d() ? d()!.nickname || d()!.username || "未知用户" : "私信");

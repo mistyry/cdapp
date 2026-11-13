@@ -8,8 +8,6 @@ import { loadHistory } from "./history";
 import { channelById, guildOf, report, session, sessionUp, setSession, st } from "./state";
 import { readCurrent } from "./unread";
 
-// 读取服务器栏文件夹。失败时保留平铺列表，可重试；不发起任何修改分组的请求。
-// 重试与登录时的加载可能重叠，只采用最后一次请求的结果。
 let folderSeq = 0;
 export async function loadFolders() {
   const gen = st.account;
@@ -44,7 +42,6 @@ export async function loadGuilds() {
 
 export const activated = new Set<string>();
 
-// 进入私信入口：不沿用旧频道，未加载会话列表时加载第一页。
 export function openDm() {
   st.epoch++;
   setUi({ view: DM_VIEW, target: NONE });
@@ -56,9 +53,7 @@ export async function selectGuild(id: string) {
   setUi({ view: id, target: NONE });
   const idx = session.guilds.findIndex((g) => g.id === id);
   if (idx < 0) return;
-  // 已有依据时节流刷新，不阻塞进入；没有依据时等待。
   const access = session.access[id]?.status === "ready" ? void refreshAccess(id) : loadAccess(id);
-  // 已加载时在后台刷新：未激活期间的语音频道进出没有推送。
   if (session.guilds[idx].loaded) void reloadChannels(id);
   else {
     const gen = st.account;
@@ -72,7 +67,6 @@ export async function selectGuild(id: string) {
       if (my === st.epoch) report(e);
     }
   }
-  // 等待权限依据，避免先选中随后被判定不可见的频道。失败时不选中频道，界面显示重试。
   await access;
   if (my !== st.epoch) return;
   activate(id);
@@ -81,10 +75,8 @@ export async function selectGuild(id: string) {
   if (pick) await selectChannel(pick.id);
 }
 
-// 进入过的服务器。新会话须全部重新激活，否则其频道不再推送。
 export const visited = new Set<string>();
 
-// 返回是否已激活（或无需激活）。失败时移出已激活集合，下次进入服务器或补偿时重试。
 export function activate(id: string): Promise<boolean> {
   visited.add(id);
   if (!sessionUp() || activated.has(id)) return Promise.resolve(true);
@@ -112,7 +104,6 @@ export async function selectChannel(id: string) {
   if (my === st.epoch) readCurrent();
 }
 
-// 重新拉取频道列表（频道或覆盖变化），不改变当前会话。并发调用只采用最后一次请求的结果。
 const channelSeq = new Map<string, number>();
 export async function reloadChannels(guildId: string) {
   const gen = st.account;
@@ -126,11 +117,9 @@ export async function reloadChannels(guildId: string) {
       leaveHidden();
     }
   } catch {
-    // 保留旧列表，下次进入或补偿时再试。
   }
 }
 
-// 权限依据与频道覆盖一并刷新。短时间内的多次触发合并为一次。
 const pendingRefresh = new Map<string, ReturnType<typeof setTimeout>>();
 export const REFRESH_DELAY = 300;
 export function refreshGuild(guildId: string) {
@@ -149,7 +138,6 @@ export function resetNav() {
   pendingRefresh.clear();
 }
 
-// 重试读取权限依据。成功且仍停留在该服务器、尚未选中会话时，按常规规则选中频道。
 export async function retryAccess(guildId: string) {
   const my = st.epoch;
   if (!(await loadAccess(guildId, true))) return;

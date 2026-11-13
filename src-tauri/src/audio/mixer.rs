@@ -1,8 +1,3 @@
-//! 多路远端音频混音。
-//! 每路音轨有独立的抖动缓冲与 Opus 解码器，按成员音量与总音量混合后经限幅输出。
-//! 开启成员降噪时，该成员的音轨在解码后、混合前经过降噪。
-//! 同时统计说话状态与接收质量。
-
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use bytes::Bytes;
@@ -11,28 +6,20 @@ use super::denoise::{Denoise, Stage};
 use super::dsp::RATE;
 use super::jitter::{Jitter, Pull, Stats};
 
-/// 音量百分比上限。
 pub const MAX_VOLUME: u16 = 200;
-/// 判定为说话的 RMS 阈值。
 const SPEAK_RMS: f32 = 0.005;
-/// 说话状态的保持时长，300 ms。
 const SPEAK_HOLD: u64 = 48 * 300;
-/// 单包最大样本数，120 ms。
 const MAX_FRAME: usize = 5760;
 
 pub use super::dsp::soft_limit as limit;
 
-/// 音量百分比转换为增益。
 #[must_use]
 pub fn gain(percent: u16) -> f32 {
     f32::from(percent.min(MAX_VOLUME)) / 100.0
 }
 
-/// 音频解码器。
 pub trait Decode: Send {
-    /// 解码一个包，返回样本数。`fec` 为 true 时从该包恢复前一包。
     fn decode(&mut self, packet: &[u8], out: &mut [f32], fec: bool) -> usize;
-    /// 生成丢包补偿样本，返回样本数。
     fn conceal(&mut self, out: &mut [f32]) -> usize;
 }
 
@@ -54,8 +41,6 @@ impl Decode for Opus {
     }
 }
 
-/// 创建 48 kHz 单声道 Opus 解码器。
-///
 /// # Errors
 ///
 /// libopus 初始化失败时返回错误。
@@ -70,24 +55,19 @@ struct Track {
     peer: String,
     jitter: Jitter,
     decoder: Box<dyn Decode>,
-    /// 已解码、待混合的样本。
     pcm: VecDeque<f32>,
-    /// 最近一包的样本数，用于 FEC 与丢包补偿。
     frame: usize,
-    /// 最近一次说话结束时的混音时钟。
     spoke: Option<u64>,
-    /// 成员降噪，未开启时为 None。
     denoise: Option<Stage>,
+    buf: Vec<f32>,
 }
 
 impl Track {
-    /// 解码到至少 `n` 个样本。缓冲不足时返回 false。
     fn fill(&mut self, n: usize, scratch: &mut [f32]) -> bool {
         while self.pcm.len() < n {
             let got = match self.jitter.pull() {
                 Pull::Packet(p) => self.decoder.decode(&p, scratch, false),
                 Pull::Lost { next: Some(p) } => {
-                    // 用下一包的 FEC 数据恢复丢失的包。
                     let len = self.frame.min(scratch.len());
                     self.decoder.decode(&p, &mut scratch[..len], true)
                 }
@@ -102,9 +82,10 @@ impl Track {
             }
             self.frame = got;
             if let Some(d) = self.denoise.as_mut() {
-                let mut v = scratch[..got].to_vec();
-                d.process(&mut v);
-                self.pcm.extend(v);
+                self.buf.clear();
+                self.buf.extend_from_slice(&scratch[..got]);
+                d.process(&mut self.buf);
+                self.pcm.extend(self.buf.drain(..));
             } else {
                 self.pcm.extend(&scratch[..got]);
             }
@@ -113,24 +94,16 @@ impl Track {
     }
 }
 
-/// 多路音轨混音器。
 pub struct Mixer {
-    /// 按 SSRC 索引的音轨。
     tracks: HashMap<u32, Track>,
-    /// 成员音量，100 不记录。
     volumes: HashMap<String, u16>,
-    /// 开启降噪的成员及其降噪实例来源。
     denoised: HashMap<String, Denoise>,
-    /// 成员降噪的方式与故障通知来源。
     denoise_base: Denoise,
     master: u16,
-    /// 已输出的样本数。
     clock: u64,
     scratch: Vec<f32>,
     make: fn() -> Option<Box<dyn Decode>>,
-    /// 已移除音轨的累计统计。
     retired: Stats,
-    /// 混音输出的录制缓冲。
     #[cfg(any(test, feature = "test-media"))]
     pub tap: Option<std::sync::Arc<std::sync::Mutex<Vec<f32>>>>,
 }
@@ -165,7 +138,6 @@ impl Mixer {
         }
     }
 
-    /// 添加音轨。解码器创建失败时忽略。
     pub fn add_track(&mut self, ssrc: u32, peer: &str) {
         let Some(decoder) = (self.make)() else {
             return;
@@ -180,11 +152,11 @@ impl Mixer {
                 frame: 960,
                 spoke: None,
                 denoise: self.denoised.get(peer).map(Denoise::stage),
+                buf: Vec::with_capacity(MAX_FRAME * 2),
             },
         );
     }
 
-    /// 设置成员降噪的方式来源，通常为本机降噪设置。
     pub fn set_denoise_base(&mut self, base: Denoise) {
         self.denoise_base = base;
         let peers: HashSet<String> = self.denoised.keys().cloned().collect();
@@ -192,7 +164,6 @@ impl Mixer {
         self.set_denoised(&peers);
     }
 
-    /// 开启或关闭成员降噪，立即作用于该成员的音轨。
     pub fn set_peer_denoise(&mut self, peer: &str, on: bool) {
         if on == self.denoised.contains_key(peer) {
             return;
@@ -209,7 +180,6 @@ impl Mixer {
         }
     }
 
-    /// 按集合设置开启降噪的成员。
     pub fn set_denoised(&mut self, peers: &HashSet<String>) {
         let old: Vec<String> = self
             .denoised
@@ -225,20 +195,17 @@ impl Mixer {
         }
     }
 
-    /// 成员降噪实例来源，供播放线程在混音锁之外创建实例。
     #[must_use]
     pub fn denoisers(&self) -> Vec<Denoise> {
         self.denoised.values().cloned().collect()
     }
 
-    /// 移除音轨，统计计入累计。
     pub fn remove_track(&mut self, ssrc: u32) {
         if let Some(t) = self.tracks.remove(&ssrc) {
             self.retired.add(&t.jitter.stats);
         }
     }
 
-    /// 移除成员的全部音轨。
     pub fn remove_peer(&mut self, peer: &str) {
         let retired = &mut self.retired;
         self.tracks.retain(|_, t| {
@@ -250,7 +217,6 @@ impl Mixer {
         });
     }
 
-    /// 清空音轨的缓冲，保留音轨。
     pub fn clear_track(&mut self, ssrc: u32) {
         if let Some(t) = self.tracks.get_mut(&ssrc) {
             t.jitter.clear();
@@ -262,7 +228,6 @@ impl Mixer {
         }
     }
 
-    /// 清空全部音轨的缓冲。
     pub fn clear_all(&mut self) {
         for t in self.tracks.values_mut() {
             t.jitter.clear();
@@ -274,7 +239,6 @@ impl Mixer {
         }
     }
 
-    /// 移除全部音轨，统计计入累计。
     pub fn reset(&mut self) {
         for t in self.tracks.values() {
             self.retired.add(&t.jitter.stats);
@@ -282,7 +246,6 @@ impl Mixer {
         self.tracks.clear();
     }
 
-    /// 接收统计与最大缓冲深度，深度单位为毫秒。
     #[must_use]
     pub fn stats(&self) -> (Stats, u32) {
         let mut s = self.retired;
@@ -299,7 +262,6 @@ impl Mixer {
         self.tracks.len()
     }
 
-    /// 放入一个 RTP 包，未知 SSRC 忽略。
     pub fn push(&mut self, ssrc: u32, seq: u16, timestamp: u32, payload: Bytes) {
         if let Some(t) = self.tracks.get_mut(&ssrc) {
             t.jitter.push(seq, timestamp, payload);
@@ -324,7 +286,6 @@ impl Mixer {
         self.master = percent.min(MAX_VOLUME);
     }
 
-    /// 混合各音轨填满输出。缓冲不足的音轨输出已有样本，其余补静音。
     #[allow(clippy::cast_precision_loss)]
     pub fn render(&mut self, out: &mut [f32]) {
         out.fill(0.0);
@@ -340,7 +301,6 @@ impl Mixer {
                 energy += s * s;
                 *o += s * g;
             }
-            // 按整段输出长度计算 RMS。
             if take > 0 && (energy / n as f32).sqrt() >= SPEAK_RMS {
                 t.spoke = Some(clock + n as u64);
             }
@@ -357,7 +317,6 @@ impl Mixer {
         }
     }
 
-    /// 正在说话的成员 ID，已排序去重。
     #[must_use]
     pub fn speaking(&self) -> Vec<String> {
         let mut v: Vec<String> = self
@@ -372,7 +331,6 @@ impl Mixer {
     }
 }
 
-/// 说话状态上报节流。
 pub struct Throttle {
     interval: std::time::Duration,
     last: Option<std::time::Instant>,
@@ -389,13 +347,11 @@ impl Throttle {
         }
     }
 
-    /// 上次上报的列表为空。
     #[must_use]
     pub fn is_idle(&self) -> bool {
         self.sent.is_empty()
     }
 
-    /// 列表变化且距上次上报超过间隔时返回新列表。
     pub fn update(&mut self, now: std::time::Instant, current: Vec<String>) -> Option<Vec<String>> {
         if current == self.sent {
             return None;
@@ -417,7 +373,6 @@ mod tests {
     use super::*;
     use std::time::{Duration, Instant};
 
-    /// 按包首字节输出恒定值的解码器。
     struct Fake;
     impl Decode for Fake {
         fn decode(&mut self, p: &[u8], out: &mut [f32], fec: bool) -> usize {
@@ -435,7 +390,6 @@ mod tests {
         Mixer::with_decoder(|| Some(Box::new(Fake)))
     }
 
-    /// 按 20 ms 帧送入 `count` 个包。
     fn feed(m: &mut Mixer, ssrc: u32, amp: u8, from: u16, count: u16) {
         for s in from..from + count {
             m.push(ssrc, s, u32::from(s) * 960, Bytes::from(vec![amp]));
@@ -468,16 +422,13 @@ mod tests {
         feed(&mut m, 2, 20, 0, 5);
         feed(&mut m, 3, 30, 0, 5);
         let out = render(&mut m, 960);
-        // 0.1 + 0.2 + 0.3。
         assert!((out[0] - 0.6).abs() < 1e-5, "{}", out[0]);
         assert_eq!(m.speaking(), vec!["a", "b", "c"]);
-        // a 静音，c 超过上限按 200% 计，总音量 50%。
         m.set_volume("a", 0);
         m.set_volume("c", 250);
         m.set_master(50);
         let out = render(&mut m, 960);
         assert!((out[0] - 0.4).abs() < 1e-5, "{}", out[0]);
-        // 超出范围时由限幅器限制。
         m.set_master(200);
         let out = render(&mut m, 960);
         assert!(out[0] <= 1.0 && out[0] > 0.8);
@@ -491,11 +442,9 @@ mod tests {
         feed(&mut m, 1, 50, 0, 10);
         feed(&mut m, 2, 50, 0, 10);
         assert!(render(&mut m, 960)[0] > 0.9);
-        // 移除与清空后没有声音。
         m.remove_track(2);
         m.clear_track(1);
         assert!(render(&mut m, 4800).iter().all(|&x| x == 0.0));
-        // 成员离开后，迟到的包不再播放。
         m.remove_peer("a");
         assert_eq!(m.track_count(), 0);
         feed(&mut m, 1, 50, 20, 10);
@@ -510,12 +459,10 @@ mod tests {
         let out = render(&mut m, 960 * 6);
         let loud = out.iter().filter(|&&x| x != 0.0).count();
         assert_eq!(loud, 960 * 4, "只播放已到达的包，不重复");
-        // 超过保持时长后不再显示说话。
         render(&mut m, 48 * 400);
         assert_eq!(m.speaking(), Vec::<String>::new());
         let (s, depth) = m.stats();
         assert_eq!((s.packets, s.underruns, depth), (4, 1, 0));
-        // 移除音轨后统计仍保留。
         m.remove_peer("a");
         assert_eq!(m.stats().0.packets, 4);
     }
@@ -528,7 +475,6 @@ mod tests {
             m.push(1, s, u32::from(s) * 960, Bytes::from(vec![10]));
         }
         let out = render(&mut m, 960 * 6);
-        // 丢包由 FEC 补齐，样本位置不变。
         assert!(out.iter().all(|&x| (x - 0.1).abs() < 1e-5));
     }
 

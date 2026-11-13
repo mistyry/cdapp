@@ -4,8 +4,6 @@ import { api } from "../lib/api";
 import type { ShareEvent, ShareSource } from "../lib/api";
 import { voice } from "./voice";
 
-// 屏幕分享状态。idle 未分享；starting 已发出开播，等待发布；live 推流中。
-// 结束、开播失败与改档失败只回到对应状态，不显示文字，原因由后端写入日志。
 type Phase = "idle" | "starting" | "live";
 type State = {
   phase: Phase;
@@ -19,7 +17,6 @@ type State = {
   height: number;
   kbps: number;
   fps: number;
-  // 改档请求进行中。
   updating: boolean;
 };
 
@@ -32,13 +29,11 @@ const IDLE: State = {
 export const [share, setShare] = createStore<State>({ ...IDLE });
 export const sharing = () => share.phase !== "idle";
 
-// 标准版档位。只提供账号拥有的档位，服务端在改档时不校验。
 export const RESOLUTIONS = [{ v: 720, name: "720p" }, { v: 1080, name: "1080p" }];
 export const FRAME_RATES = [{ v: 30, name: "30 帧" }, { v: 60, name: "60 帧" }];
 
 type Payload = { generation: number; event: ShareEvent };
 
-// 开播命令返回代次之前到达的事件，确定代次后再处理。
 let early: Payload[] = [];
 let listening: Promise<UnlistenFn> | null = null;
 function ensureListener() {
@@ -72,10 +67,8 @@ function onShareEvent(p: Payload) {
   }
 }
 
-// 列出可共享的源。主显示器排在最前。
 export async function loadSources(): Promise<ShareSource[]> {
   const list = await api.shareSources();
-  // VirtualDesktop 为全部屏幕拼接，不提供。
   return list
     .filter((s) => s.kind === "window" || s.name.startsWith("\\\\.\\DISPLAY"))
     .sort((a, b) => Number(b.primary) - Number(a.primary));
@@ -107,7 +100,6 @@ export async function stopShare() {
   try {
     await api.shareStop();
   } finally {
-    // 结束事件可能先于命令返回到达，这里只在仍未回到空闲时复位。
     if (sharing()) setShare({ ...IDLE, resolution: share.resolution, frameRate: share.frameRate });
   }
 }

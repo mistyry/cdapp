@@ -1,10 +1,3 @@
-//! 语音媒体连接。
-//! 推流与拉流各用一个 PeerConnection，共用同一证书。推流连接发送 Opus 音频，并逐包附加 mid 与音量扩展。
-//! 拉流连接作为应答方使用 DTLS client 角色。
-//!
-//! 连接状态变化经事件通道上报，远端 RTP 包送入有界队列，队列满时丢弃。
-//! 媒体连接不处理信令，SDP 由会话通过信令交换。
-
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -34,26 +27,22 @@ use webrtc::peer_connection::{
 use super::sdp::{LEVEL_URI, LocalOffer, MID_URI, OPUS_PT};
 use crate::error::{AppError, AppResult};
 
-/// 推流或拉流连接。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Leg {
     Send,
     Recv,
 }
 
-/// 媒体连接事件。
 #[derive(Debug)]
 pub enum MediaEvent {
     State(Leg, PcState),
 }
 
-/// `PeerConnection` 连接状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PcState {
     New,
     Connecting,
     Connected,
-    /// 暂时断开，可能自行恢复。
     Disconnected,
     Failed,
     Closed,
@@ -72,13 +61,11 @@ impl From<RTCPeerConnectionState> for PcState {
     }
 }
 
-/// 远端 RTP 包。
 #[derive(Debug, Clone)]
 pub struct RemotePacket {
     pub ssrc: u32,
     pub sequence: u16,
     pub timestamp: u32,
-    /// Opus 数据。
     pub payload: Bytes,
 }
 
@@ -102,7 +89,6 @@ impl PeerConnectionEventHandler for Handler {
         let sink = self.remote.clone();
         log::info!("语音收到远端音轨 {:?}", self.leg);
         tauri::async_runtime::spawn(async move {
-            // 音轨结束前持续读取 RTP 包。
             while let Some(ev) = track.poll().await {
                 match ev {
                     TrackRemoteEvent::OnRtpPacket(p) => {
@@ -129,7 +115,6 @@ impl PeerConnectionEventHandler for Handler {
     }
 }
 
-/// sdes:mid 扩展的原始内容。
 struct MidExt(Bytes);
 
 impl MarshalSize for MidExt {
@@ -188,7 +173,6 @@ async fn build_pc(
     let reg = register_default_interceptors(Registry::new(), &mut me).map_err(rtc_err)?;
     let mut setting = SettingEngineBuilder::new();
     if leg == Leg::Recv {
-        // 服务端要求拉流连接使用 DTLS client 角色。
         setting = setting.with_answering_dtls_role(RTCDtlsRole::Client);
     }
     let pc = Box::pin(
@@ -214,7 +198,6 @@ async fn build_pc(
     Ok(Arc::new(pc))
 }
 
-/// 推流写入句柄。
 #[derive(Clone)]
 pub struct Uplink {
     track: Arc<TrackLocalStaticSample>,
@@ -223,9 +206,6 @@ pub struct Uplink {
 }
 
 impl Uplink {
-    /// 发送一帧 Opus 音频，附带音量与 mid 扩展。
-    /// `skipped` 为发送前丢弃的帧数，用于推进时间戳。
-    ///
     /// # Errors
     ///
     /// 推流连接关闭或写入失败时返回错误。
@@ -258,7 +238,6 @@ impl Uplink {
     }
 }
 
-/// 推流与拉流连接。
 pub struct Media {
     send: Arc<dyn PeerConnection>,
     recv: Arc<dyn PeerConnection>,
@@ -267,7 +246,6 @@ pub struct Media {
     uplink: Uplink,
 }
 
-/// 在丢弃时关闭尚未交给 [`Media`] 的连接。
 struct PcGuard(Vec<Arc<dyn PeerConnection>>);
 
 impl Drop for PcGuard {
@@ -281,8 +259,6 @@ impl Drop for PcGuard {
 }
 
 impl Media {
-    /// 创建证书与两个连接，生成本地推流 offer。
-    ///
     /// # Errors
     ///
     /// 创建证书或连接失败时返回错误，已创建的连接会关闭。
@@ -306,7 +282,6 @@ impl Media {
             .value
             .to_ascii_uppercase();
         let send = Box::pin(build_pc(cert.clone(), Leg::Send, events.clone(), None)).await?;
-        // 失败或被取消时关闭已建立的连接。
         let mut guard = PcGuard(vec![send.clone()]);
         let recv = Box::pin(build_pc(cert, Leg::Recv, events, remote)).await?;
         guard.0.push(recv.clone());
@@ -377,8 +352,6 @@ impl Media {
         self.uplink.clone()
     }
 
-    /// 设置推流连接的远端应答。
-    ///
     /// # Errors
     ///
     /// 应答无效时返回错误。
@@ -387,8 +360,6 @@ impl Media {
         self.send.set_remote_description(d).await.map_err(rtc_err)
     }
 
-    /// 设置拉流连接的远端 offer，返回本地应答。
-    ///
     /// # Errors
     ///
     /// offer 无效时返回错误。
@@ -401,7 +372,6 @@ impl Media {
         Ok(sdp)
     }
 
-    /// 关闭两个连接。
     pub async fn close(&self) {
         let _ = self.send.close().await;
         let _ = self.recv.close().await;

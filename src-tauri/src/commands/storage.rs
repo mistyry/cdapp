@@ -26,7 +26,6 @@ pub async fn storage_info() -> AppResult<StorageInfo> {
     .map_err(|e| crate::error::AppError::Other(e.to_string()))
 }
 
-/// 迁移数据到新位置。先停屏幕分享并断开语音，成功后需调用 restart。
 #[tauri::command]
 pub async fn storage_relocate(
     path: PathBuf,
@@ -43,7 +42,6 @@ pub async fn storage_relocate(
         .map_err(|e| crate::error::AppError::Other(e.to_string()))?
 }
 
-/// 数据目录丢失时切换位置。None 为默认位置。成功后需调用 restart。
 #[tauri::command]
 pub async fn storage_switch(path: Option<PathBuf>) -> AppResult<()> {
     storage::switch(path.as_deref())

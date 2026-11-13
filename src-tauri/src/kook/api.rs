@@ -11,7 +11,6 @@ use super::model::{
 use super::{BASE, CLIENT_VERSION, USER_AGENT};
 use crate::error::{AppError, AppResult};
 
-/// REST 客户端。v3 接口返回 `{code, message, data}`，v2 接口直接返回数据本体。
 #[derive(Clone)]
 pub struct Api {
     http: reqwest::Client,
@@ -68,7 +67,6 @@ impl Api {
     }
 
     async fn finish(resp: reqwest::Response) -> AppResult<Value> {
-        // 凭据无效时返回 HTTP 401，响应体为 {code: 401, message}。须在 error_for_status 之前识别。
         if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
             let body: Value = resp.json().await.unwrap_or(Value::Null);
             return Err(unauthorized(&body));
@@ -76,8 +74,6 @@ impl Api {
         if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
             return Err(AppError::RateLimited);
         }
-        // 业务错误可能以 HTTP 4xx 返回，响应体仍为 {code, message}，例如语音令牌的 40310 密码错误。
-        // 能识别业务码时按业务错误处理，否则保留 HTTP 错误。
         if resp.status().is_client_error() {
             let err = resp.error_for_status_ref().map(|_| ()).unwrap_err();
             let bytes = resp.bytes().await.unwrap_or_default();
@@ -91,8 +87,6 @@ impl Api {
         unwrap(body)
     }
 
-    /// 读取 KOOK 静态资源上的 JSON，不附带凭据。调用方负责限定地址。
-    ///
     /// # Errors
     ///
     /// 网络错误、HTTP 错误或响应不是 JSON 时返回错误。
@@ -105,7 +99,6 @@ impl Api {
             .error_for_status()?
             .bytes()
             .await?;
-        // 静态资源 CDN 无视 Accept-Encoding 始终返回 gzip，客户端未启用自动解压，这里按魔数判断。
         if bytes.starts_with(&[0x1f, 0x8b]) {
             let mut out = Vec::new();
             std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(&bytes[..]), &mut out)
@@ -115,8 +108,6 @@ impl Api {
         Ok(serde_json::from_slice(&bytes)?)
     }
 
-    /// 下载 KOOK 静态资源的原始内容，不附带凭据。调用方负责限定地址。
-    ///
     /// # Errors
     ///
     /// 网络错误或 HTTP 错误时返回错误。
@@ -152,13 +143,10 @@ impl Api {
         Self::send(self.request(Method::DELETE, path)).await
     }
 
-    /// 带 JSON 请求体的 DELETE。
     async fn delete_json<B: Serialize + ?Sized>(&self, path: &str, body: &B) -> AppResult<Value> {
         Self::send(self.request(Method::DELETE, path).json(body)).await
     }
 
-    /// 个人表情回应只能走 v2 接口：v3 对个人表情返回 500，v2 返回 204。
-    /// v2 重复添加与取消不存在的回应同样返回 204；v2 不接受 Unicode 表情。
     async fn reaction_v2(&self, path: &str, msg_id: &str, emoji: &str, add: bool) -> AppResult<()> {
         let body = json!({ "id": msg_id, "emoji": emoji });
         if add {
@@ -168,7 +156,6 @@ impl Api {
         }
     }
 
-    /// GET 并附带网关会话头，用于激活服务器推送。
     async fn get_with_session(
         &self,
         path: &str,
@@ -195,7 +182,6 @@ impl Api {
     }
 }
 
-/// 个人表情 ID 为三段（用户/日期/随机串），服务器表情为两段，Unicode 表情不含斜杠。
 fn is_personal_emoji(emoji: &str) -> bool {
     emoji.split('/').count() == 3
 }
@@ -223,7 +209,6 @@ fn unwrap(body: Value) -> AppResult<Value> {
     Ok(body)
 }
 
-/// 4xx 响应体中的业务错误。没有非零 code 时返回 `None`。
 fn client_error(bytes: &[u8]) -> Option<AppError> {
     let body: Value = serde_json::from_slice(bytes).ok()?;
     let code = body
@@ -250,7 +235,6 @@ fn unauthorized(body: &Value) -> AppError {
     )
 }
 
-/// 频道列表分页上限，防止异常 meta 导致无限请求。50 条每页，约 5000 个频道。
 const MAX_CHANNEL_PAGES: u32 = 100;
 
 fn merged(pages: impl IntoIterator<Item = Vec<Value>>) -> Vec<Channel> {
@@ -261,31 +245,22 @@ fn merged(pages: impl IntoIterator<Item = Vec<Value>>) -> Vec<Channel> {
     list
 }
 
-/// guild/view 中的频道。没有非空的 `channels` 数组时返回 `None`。
 fn channels_of_view(view: &Value) -> Option<Vec<Channel>> {
     let top = view.get("channels")?.as_array().filter(|a| !a.is_empty())?;
     Some(merged([flatten_view_channels(top)]))
 }
 
-/// 历史消息每页条数，即服务端上限。
 pub const HISTORY_PAGE: usize = 50;
-/// 私信会话每页数量（服务端默认值）。
 pub const DM_PAGE: usize = 50;
-/// 消息不存在或无权限查看。
 const MESSAGE_GONE: i64 = 40012;
 
-/// 消息类型：1 文本，2 图片，9 `KMarkdown`。
 pub mod msg_type {
     pub const TEXT: u8 = 1;
     pub const IMAGE: u8 = 2;
-    /// 文件。服务端转为卡片消息（类型 10，含 file 模块）。
     pub const FILE: u8 = 4;
     pub const KMARKDOWN: u8 = 9;
 }
 
-/// 回应请求被拒绝，但消息已处于目标状态：重复添加为“你已经点过该表情”，取消不存在的回应为“该reaction不存在”。
-/// 两者都是 code 40000，与无效表情相同，只能按提示区分。
-/// 私信删除的 HTTP 400 响应：code 40001 为已删除（重复删除），其余照常为错误。
 fn dm_delete_result(body: &Value) -> AppResult<()> {
     let code = body.get("code").and_then(Value::as_i64).unwrap_or(400);
     if code == DM_ALREADY_DELETED {
@@ -318,12 +293,9 @@ fn reaction_settled(add: bool, e: &AppError) -> bool {
     }
 }
 
-/// 上传大小上限。实测普通账号 5 MiB（含）可上传，多 1 字节为 code 40014；服务端收完全部内容才拒绝，故先在本地检查。
 pub const UPLOAD_LIMIT: u64 = 5 * 1024 * 1024;
 const UPLOAD_CHUNK: usize = 64 * 1024;
 
-/// 空文件会被服务端换成默认图片，超限文件会在传完后被拒绝，两者都在本地拦截。
-///
 /// # Errors
 ///
 /// 大小为 0 或超过 [`UPLOAD_LIMIT`] 时返回本地错误。
@@ -360,8 +332,6 @@ impl Api {
         .await
     }
 
-    /// 服务器栏文件夹。未归组的服务器以空 ID、单个成员的条目出现，条目顺序即服务器栏顺序。
-    ///
     /// # Errors
     ///
     /// 请求失败时返回错误。
@@ -376,8 +346,6 @@ impl Api {
     ///
     /// 请求失败时返回错误。
     pub async fn channels(&self, guild_id: &str) -> AppResult<Vec<Channel>> {
-        // guild/view 一次返回全部频道（分组嵌套子频道），内容与 channel/list 一致。
-        // 未带频道时退回分页读取。
         let view = self.get("/api/v2/guild/view", &[("id", guild_id)]).await?;
         if let Some(list) = channels_of_view(&view) {
             return Ok(list);
@@ -386,7 +354,6 @@ impl Api {
     }
 
     async fn channel_pages(&self, guild_id: &str) -> AppResult<Vec<Channel>> {
-        // 服务端每页最多 50 条，忽略更大的 page_size。按 meta.page_total 读完所有页。
         let mut pages = Vec::new();
         let mut page = 1u32;
         loop {
@@ -411,8 +378,6 @@ impl Api {
         Ok(merged(pages))
     }
 
-    /// 当前账号在服务器中的角色与权限依据。
-    ///
     /// # Errors
     ///
     /// 请求失败或响应格式异常时返回错误；无效服务器返回 HTTP 204，按格式错误处理。
@@ -421,8 +386,6 @@ impl Api {
         GuildAccess::from_raw(&data).map_err(AppError::Format)
     }
 
-    /// 服务器表情与个人表情。个人表情失败时仍返回服务器表情。
-    ///
     /// # Errors
     ///
     /// 服务器表情请求失败或格式异常时返回错误。
@@ -465,8 +428,6 @@ impl Api {
         })
     }
 
-    /// 一页服务器成员。传入频道时只返回可查看该频道的成员。页大小固定为 50。
-    ///
     /// # Errors
     ///
     /// 请求失败或响应格式异常时返回错误。
@@ -485,8 +446,6 @@ impl Api {
         MemberPage::from_raw(&data).map_err(AppError::Format)
     }
 
-    /// 订阅频道成员列表区间 `[start, end]` 的在线状态推送（`updated_user_list`），`-1, -1` 取消。须带网关会话。
-    ///
     /// # Errors
     ///
     /// 请求失败时返回错误。
@@ -509,8 +468,6 @@ impl Api {
         .await
     }
 
-    /// 激活服务器，使当前网关会话接收该服务器的频道消息。
-    ///
     /// # Errors
     ///
     /// 请求失败时返回错误。
@@ -527,14 +484,10 @@ impl Api {
     ///
     /// 请求失败时返回错误。
     pub async fn messages(&self, channel_id: &str, before: Option<&str>) -> AppResult<History> {
-        // 服务端每页最多 50 条。msgid 为空取最新一页，否则取严格早于该消息的一页（内部 id 或 rong_id 均可）。
         self.history_page(channel_id, "before", before.unwrap_or(""))
             .await
     }
 
-    /// 取严格晚于 `after` 的一页，按时间升序，不含游标本身；`end` 表示已到达最新。游标消息已删除时仍可用。
-    /// 不使用 `flag=around`：它忽略 `page_size`，会返回整个频道。
-    ///
     /// # Errors
     ///
     /// 请求失败时返回错误。
@@ -557,8 +510,6 @@ impl Api {
         History::from_raw(data, HISTORY_PAGE).map_err(AppError::Format)
     }
 
-    /// 按 `rong_id` 查找消息所在频道。消息已删除、ID 无效或无权限时服务端都返回 code 40012，无法区分，统一返回 `None`。
-    ///
     /// # Errors
     ///
     /// 其他请求失败时返回错误。
@@ -595,8 +546,6 @@ impl Api {
         self.post("/api/v3/message/create", &body).await
     }
 
-    /// 编辑本人消息。内容与原来相同时服务端同样返回成功。
-    ///
     /// # Errors
     ///
     /// 请求失败时返回错误。内容为空为 code 40000；他人消息、无效 ID、已删除统一为 code 40012。
@@ -609,10 +558,6 @@ impl Api {
         .map(drop)
     }
 
-    /// 删除消息。成功为 204；重复删除同样为 204；无权删除他人消息为 HTTP 403。
-    ///
-    /// 服务器闭麦或静音。`kind` 1 为闭麦，2 为静音，已用两个测试账号核对。
-    ///
     /// # Errors
     ///
     /// 请求失败或没有权限（HTTP 403）时返回错误。
@@ -633,8 +578,6 @@ impl Api {
         }
     }
 
-    /// 服务器中被闭麦与静音的用户 ID，依次为闭麦、静音。无人时接口返回 204。
-    ///
     /// # Errors
     ///
     /// 请求失败时返回错误。
@@ -659,8 +602,6 @@ impl Api {
         Ok((ids("1"), ids("2")))
     }
 
-    /// 把成员移出语音频道。`channel_id` 须为成员当前所在频道，否则返回成功但没有效果。
-    ///
     /// # Errors
     ///
     /// 请求失败或没有语音管理权限时返回错误。
@@ -673,8 +614,6 @@ impl Api {
         .map(drop)
     }
 
-    /// 移动成员到语音频道。服务端只通知被移动的客户端，由其自行切换。
-    ///
     /// # Errors
     ///
     /// 请求失败或没有语音管理权限时返回错误。
@@ -687,8 +626,6 @@ impl Api {
         .map(drop)
     }
 
-    /// 踢出服务器，需要第 6 位权限。v2 接口对无效目标也返回成功且权限判定不同，改用 v3。
-    ///
     /// # Errors
     ///
     /// 请求失败、没有踢出权限或目标为服务器主时返回错误。
@@ -701,8 +638,6 @@ impl Api {
         .map(drop)
     }
 
-    /// 踢出并加入服务器黑名单，不删除历史消息。
-    ///
     /// # Errors
     ///
     /// 请求失败、没有黑名单权限或目标无效时返回错误。
@@ -724,9 +659,6 @@ impl Api {
             .map(drop)
     }
 
-    /// 添加或取消回应。Unicode 表情直接传字符本身。
-    /// 重复添加与取消不存在的回应已是目标状态，视为成功。
-    ///
     /// # Errors
     ///
     /// 请求失败时返回错误，例如表情无效（code 40000）或消息已删除（HTTP 404）。
@@ -777,8 +709,6 @@ impl Api {
         self.get("/api/v3/conversation/list-v2", &()).await
     }
 
-    /// 私信会话列表，`page` 从 1 开始，每页 [`DM_PAGE`] 个，按最近消息时间降序。
-    ///
     /// # Errors
     ///
     /// 请求失败或响应格式异常时返回错误。
@@ -793,8 +723,6 @@ impl Api {
         DmPage::from_raw(&data).map_err(AppError::Format)
     }
 
-    /// 按用户 ID 打开私信会话。已有会话时返回同一个 `chat_code`，不新建，可重复调用。
-    ///
     /// # Errors
     ///
     /// 请求失败或响应缺少会话字段时返回错误。
@@ -805,8 +733,6 @@ impl Api {
         DmChat::from_raw(&data).ok_or_else(|| AppError::Format("私信会话格式异常".into()))
     }
 
-    /// 私信历史，按 `chat_code` 查询。`before` 为空取最新一页，否则取严格早于该消息（`id`）的一页。
-    ///
     /// # Errors
     ///
     /// 请求失败时返回错误；会话码无效为 code 40000。
@@ -820,8 +746,6 @@ impl Api {
         History::from_dm(&data, HISTORY_PAGE).map_err(AppError::Format)
     }
 
-    /// 标记私信已读到 `msg_id`（`time` 为其 `create_at`）。读取历史不会自动标记。
-    ///
     /// # Errors
     ///
     /// 请求失败时返回错误。
@@ -835,9 +759,6 @@ impl Api {
             .map(drop)
     }
 
-    /// 发送私信。`user_id` 为对方用户 ID（不是 `chat_code`），`quote` 为被引用消息的 `msg_id`。
-    /// 服务端不按 nonce 去重，结果不确定时不得直接重发。
-    ///
     /// # Errors
     ///
     /// 请求失败时返回错误；对方无效或无权限为 code 40000；响应缺少消息 ID 为格式错误。
@@ -857,8 +778,6 @@ impl Api {
         DmSent::from_raw(&data).map_err(AppError::Format)
     }
 
-    /// 编辑私信。服务端不校验作者（对方也能改本人消息），调用方只能对本人消息调用。
-    ///
     /// # Errors
     ///
     /// 请求失败时返回错误。内容为空为 code 40000；无效或已删除为 code 40012。
@@ -871,9 +790,6 @@ impl Api {
         .map(drop)
     }
 
-    /// 删除本人私信。频道删除接口对私信返回 204 但不删除，不能混用。
-    /// 重复删除为 HTTP 400 code 40001，视为已是目标状态；他人消息同为 40001，调用方只能对本人消息调用。
-    ///
     /// # Errors
     ///
     /// 其余请求失败时返回错误。
@@ -892,8 +808,6 @@ impl Api {
         Self::finish(resp).await.map(drop)
     }
 
-    /// 添加或取消私信回应。重复添加与取消不存在的回应视为成功（与频道相同）。
-    ///
     /// # Errors
     ///
     /// 请求失败时返回错误，例如消息已删除（HTTP 404）。
@@ -918,8 +832,6 @@ impl Api {
         }
     }
 
-    /// 上传资源（multipart 字段 `file`）。`progress(已交给连接的字节, 总字节)` 随发送调用。
-    ///
     /// # Errors
     ///
     /// 本地检查失败（空文件、超过 [`UPLOAD_LIMIT`]）时不发出请求；服务端拒绝为 code 40014（文件过大）
@@ -951,8 +863,6 @@ impl Api {
         Asset::from_raw(&data).map_err(AppError::Format)
     }
 
-    /// 主网关地址。每个地址只能建立一次新会话。
-    ///
     /// # Errors
     ///
     /// 请求失败或响应缺少 url 时返回错误。
@@ -963,8 +873,6 @@ impl Api {
         str_field(&data, "url")
     }
 
-    /// 语音信令地址。每个地址只能使用一次。密码频道需要密码，服务端记住后可传空串；错误返回 40310。
-    ///
     /// # Errors
     ///
     /// 请求失败或响应缺少 `gateway_url` 时返回错误。
@@ -979,8 +887,6 @@ impl Api {
         str_field(&data, "gateway_url")
     }
 
-    /// 本人是否拥有有效的屏幕分享会员。
-    ///
     /// # Errors
     ///
     /// 请求失败时返回错误。
@@ -993,10 +899,8 @@ impl Api {
     }
 }
 
-/// 屏幕分享标准版与专业版的商品 ID。
 const GOLIVE_ITEMS: [i64; 2] = [10015, 10016];
 
-/// 任一版本的到期时间晚于 `now` 即可开播。`expire` 为 Unix 秒，未购买为 0。
 fn golive_active(data: &Value, now: u64) -> bool {
     data.get("items")
         .and_then(Value::as_array)
@@ -1058,6 +962,36 @@ mod tests {
         ));
         assert!(client_error(b"<html>").is_none());
         assert!(client_error(br#"{"code":0}"#).is_none());
+    }
+
+    #[tokio::test]
+    async fn http_401_status_is_unauthorized() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        tokio::spawn(async move {
+            for body in [r#"{"code":0,"message":"token 失效"}"#, "<html>"] {
+                let (mut s, _) = l.accept().await.unwrap();
+                let mut buf = [0u8; 2048];
+                let _ = s.read(&mut buf).await;
+                let resp = format!(
+                    "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                s.write_all(resp.as_bytes()).await.unwrap();
+            }
+        });
+        let api = Api::new(None).unwrap();
+        for _ in 0..2 {
+            let resp = api
+                .http
+                .get(format!("http://{addr}/api/v3/gateway/index"))
+                .send()
+                .await
+                .unwrap();
+            let e = Api::finish(resp).await.unwrap_err();
+            assert!(matches!(e, AppError::Unauthorized(_)), "{e:?}");
+        }
     }
 
     #[test]

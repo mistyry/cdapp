@@ -10,7 +10,8 @@
     "core:window:allow-toggle-maximize",
     "core:window:allow-close",
     "core:window:allow-set-fullscreen",
-    "opener:default",
+    "opener:allow-open-url",
+    "opener:allow-default-urls",
     "dialog:allow-open"
   ]
 }

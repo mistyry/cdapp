@@ -2,13 +2,9 @@ import { api, type MemberDto, type Raw } from "../../lib/api";
 import { ui } from "../ui";
 import { session, sessionUp, setSession, st } from "./state";
 
-// 成员
-
 export const MEMBER_REFRESH_PAGES = 4;
 export const memberKey = (guildId: string, channelId: string) => `${guildId}/${channelId}`;
 
-// 在线状态订阅：服务端只对订阅区间推送 updated_user_list（无订阅时没有上下线推送）。
-// 记录当前订阅的频道，切换或关闭时以 -1,-1 取消，新网关会话后重新订阅。
 let subscribed: string | null = null;
 export function subscribeMembers() {
   const m = session.members;
@@ -26,14 +22,12 @@ export function subscribeMembers() {
   });
 }
 
-// 关闭成员栏：取消订阅并丢弃列表，下次打开重新拉取。
 export function closeMembers() {
   memberSeq++;
   setSession("members", null);
   subscribeMembers();
 }
 
-// 推送的成员资料（与 user-list 条目同形）转为局部更新。
 export function memberPatch(r: Raw): Partial<MemberDto> {
   const p: Partial<MemberDto> = {};
   if (typeof r.online === "boolean") p.online = r.online;
@@ -45,7 +39,6 @@ export function memberPatch(r: Raw): Partial<MemberDto> {
   return p;
 }
 
-// updated_user_list：订阅区间内成员的最新资料。按 ID 合并到已加载的列表；在线人数随之调整，按在线在前重排。
 export function onUserList(channelId: string, list: Raw[]) {
   const m = session.members;
   if (!m || m.channelId !== channelId || !list.length) return;
@@ -62,10 +55,8 @@ export function onUserList(channelId: string, list: Raw[]) {
   setSession("members", { items: sorted, online: Math.max(0, m.online + delta), offline: Math.max(0, m.offline - delta) });
 }
 
-// 成员请求代次：每次刷新递增，翻页与旧刷新的结果在代次变化后丢弃。
 let memberSeq = 0;
 
-// 打开或切换到当前频道的成员列表。与当前 key 相同时不重复拉取。
 export function ensureMembers(force = false): Promise<void> {
   const t = ui.target;
   if (t.kind !== "channel") {
@@ -74,16 +65,12 @@ export function ensureMembers(force = false): Promise<void> {
   }
   const key = memberKey(t.guildId, t.channelId);
   const cur = session.members;
-  // 同一列表已加载、加载中或已失败（失败由用户点重试或事件强制刷新，不自动重试）时不重复拉取。
   if (!force && cur?.key === key) return Promise.resolve();
-  // 切换频道：丢弃旧列表，旧请求的结果按 key 丢弃。
   if (cur?.key !== key) memberSeq++;
   if (cur?.key !== key) setSession("members", { key, guildId: t.guildId, channelId: t.channelId, items: [], page: 0, pageTotal: 1, total: 0, online: 0, offline: 0, loading: false, failed: false });
   return refreshMembers();
 }
 
-// 重新拉取已加载的前几页（在线状态无推送，靠此刷新），结果整体替换。
-// 新的刷新取代进行中的刷新与翻页。
 export async function refreshMembers(): Promise<void> {
   const cur = session.members;
   if (!cur) return;
@@ -120,7 +107,6 @@ export function dedupeMembers(list: MemberDto[]): MemberDto[] {
   return list.filter((m) => !seen.has(m.id) && (seen.add(m.id), true));
 }
 
-// 加载下一页成员（滚动到底部时）。
 export async function loadMoreMembers(): Promise<void> {
   const cur = session.members;
   if (!cur || cur.loading || cur.failed || cur.page >= cur.pageTotal) return;
@@ -143,7 +129,6 @@ export async function loadMoreMembers(): Promise<void> {
   }
 }
 
-// 成员资料局部更新（user_state_change）。只更新提供的字段。
 export function patchMember(guildId: string, userId: string, patch: Raw) {
   const m = session.members;
   if (!m || m.guildId !== guildId) return;
@@ -159,12 +144,10 @@ export function patchMember(guildId: string, userId: string, patch: Raw) {
   setSession("members", "items", i, p);
 }
 
-// 服务器的成员或角色发生变化：当前列表属于该服务器时重新拉取。
 export function invalidateMembers(guildId: string) {
   if (session.members?.guildId === guildId) void ensureMembers(true);
 }
 
-// 订阅属于网关会话，退出登录或新会话后视为未订阅。
 export function dropSubscription() {
   subscribed = null;
 }

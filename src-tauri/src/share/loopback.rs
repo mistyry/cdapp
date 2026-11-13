@@ -1,9 +1,3 @@
-//! 屏幕声音：WASAPI 进程环回采集，每 10 ms 推 480 个采样点给 SDK。
-//! 显示器共享排除本进程树，窗口共享只采目标进程树。48 kHz 立体声 S16。
-//!
-//! 没有成熟库同时提供排除模式与包含模式：`wasapi` crate 只封装包含模式，
-//! 因此直接用 `windows` crate 调用公开 API，做法与探测程序 `golive358.cpp` 一致。
-
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -32,19 +26,13 @@ use windows::core::Interface;
 
 const RATE: u32 = 48_000;
 const CHANNELS: usize = 2;
-/// 每次推送的每声道采样数，即 10 ms。
 pub const FRAMES: usize = 480;
-/// 缓冲上限 200 ms，超出丢弃最旧样本，避免延迟累积。
 const MAX_BUFFER: usize = RATE as usize / 5 * CHANNELS;
-/// 激活等待上限。
 const ACTIVATE_TIMEOUT_MS: u32 = 10_000;
 
-/// 采集范围。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scope {
-    /// 系统声音，排除该进程树。显示器共享时传本进程。
     Exclude(u32),
-    /// 只采该进程树。窗口共享时传窗口所属进程。
     Include(u32),
 }
 
@@ -57,7 +45,6 @@ impl Scope {
     }
 }
 
-/// 交错立体声样本缓冲。
 #[derive(Default)]
 struct Ring(VecDeque<i16>);
 
@@ -68,7 +55,6 @@ impl Ring {
         self.0.drain(..over);
     }
 
-    /// 取满一帧，不足补零。
     fn take(&mut self, out: &mut [i16]) {
         for s in out {
             *s = self.0.pop_front().unwrap_or(0);
@@ -76,47 +62,40 @@ impl Ring {
     }
 }
 
-/// 采集与推送两个线程。释放时停止并等待退出。
 pub struct Loopback {
     running: Arc<AtomicBool>,
-    /// 唤醒采集线程退出，采集线程平时等待系统的数据就绪事件。
     wake: Arc<Wake>,
     threads: Vec<JoinHandle<()>>,
 }
 
-/// 手动重置事件，释放时关闭。
 struct Wake(HANDLE);
 
-// SAFETY: 事件句柄可在线程间共享。
 unsafe impl Send for Wake {}
-// SAFETY: 同上，SetEvent 与等待均为线程安全操作。
 unsafe impl Sync for Wake {}
 
 impl Wake {
     fn new() -> windows::core::Result<Self> {
-        // SAFETY: 无名手动重置事件。
         Ok(Self(unsafe { CreateEventW(None, true, false, None)? }))
+    }
+
+    fn auto() -> windows::core::Result<Self> {
+        Ok(Self(unsafe { CreateEventW(None, false, false, None)? }))
     }
 }
 
 impl Drop for Wake {
     fn drop(&mut self) {
-        // SAFETY: 句柄由 CreateEventW 创建，此处唯一一次关闭。
         let _ = unsafe { CloseHandle(self.0) };
     }
 }
 
-/// 推送前的声音观察者。
 #[cfg(any(test, feature = "test-media"))]
 pub type Tap = Box<dyn Fn(&[i16]) + Send>;
 
-/// 推送前的声音观察者，用于测试测量推出的内容。
 #[cfg(any(test, feature = "test-media"))]
 pub static TAP: Mutex<Option<Tap>> = Mutex::new(None);
 
 impl Loopback {
-    /// 开始采集并推送。`push` 在推送线程中每 10 ms 调用一次，参数为 480 个交错立体声采样点。
-    /// 激活失败时推送线程照常推静音，不影响画面。
     pub fn start(scope: Scope, push: impl Fn(&[i16]) + Send + 'static) -> Self {
         let running = Arc::new(AtomicBool::new(true));
         let ring = Arc::new(Mutex::new(Ring::default()));
@@ -163,7 +142,6 @@ impl Drop for Loopback {
     fn drop(&mut self) {
         self.running.store(false, Ordering::SeqCst);
         if !self.wake.0.is_invalid() {
-            // SAFETY: 事件有效，唤醒采集线程退出。
             let _ = unsafe { SetEvent(self.wake.0) };
         }
         for t in self.threads.drain(..) {
@@ -172,7 +150,6 @@ impl Drop for Loopback {
     }
 }
 
-/// 按绝对时间每 10 ms 推一帧，避免累积漂移。
 fn pump(running: &AtomicBool, ring: &Mutex<Ring>, push: &impl Fn(&[i16])) {
     let mut frame = vec![0i16; FRAMES * CHANNELS];
     let start = Instant::now();
@@ -196,7 +173,6 @@ fn pump(running: &AtomicBool, ring: &Mutex<Ring>, push: &impl Fn(&[i16])) {
     }
 }
 
-// `implement` 宏在结构体之外生成代码，lint 只能在模块级关闭。
 #[allow(clippy::ref_as_ptr, clippy::inline_always)]
 mod handler {
     use windows::Win32::Foundation::HANDLE;
@@ -207,7 +183,6 @@ mod handler {
     use windows::Win32::System::Threading::SetEvent;
     use windows::core::implement;
 
-    /// 激活完成时置位事件。`implement` 宏自动提供 `IAgileObject`。
     #[implement(IActivateAudioInterfaceCompletionHandler)]
     pub(super) struct Activated {
         pub(super) done: HANDLE,
@@ -218,7 +193,6 @@ mod handler {
             &self,
             _op: windows::core::Ref<IActivateAudioInterfaceAsyncOperation>,
         ) -> windows::core::Result<()> {
-            // SAFETY: done 为激活线程创建的有效事件，激活完成前不会关闭。
             unsafe { SetEvent(self.done) }
         }
     }
@@ -238,7 +212,6 @@ fn format() -> WAVEFORMATEX {
     }
 }
 
-/// 激活进程环回设备。完成回调实现 `IAgileObject`，由 `implement` 宏自动提供。
 fn activate(scope: Scope) -> windows::core::Result<IAudioClient> {
     let (pid, mode) = scope.params();
     let mut params = AUDIOCLIENT_ACTIVATION_PARAMS {
@@ -250,8 +223,6 @@ fn activate(scope: Scope) -> windows::core::Result<IAudioClient> {
             },
         },
     };
-    // windows crate 的 PROPVARIANT 析构时调用 PropVariantClear，会用 CoTaskMemFree 释放 VT_BLOB 的数据。
-    // 这里的数据在栈上，因此不能析构。
     let pv = std::mem::ManuallyDrop::new(PROPVARIANT {
         Anonymous: PROPVARIANT_0 {
             Anonymous: std::mem::ManuallyDrop::new(PROPVARIANT_0_0 {
@@ -266,10 +237,8 @@ fn activate(scope: Scope) -> windows::core::Result<IAudioClient> {
             }),
         },
     });
-    // SAFETY: 无名手动重置事件。
     let done = unsafe { CreateEventW(None, true, false, None)? };
     let handler: IActivateAudioInterfaceCompletionHandler = Activated { done }.into();
-    // SAFETY: pv 与 params 在调用期间有效。pv 不析构，见上。
     let op = unsafe {
         ActivateAudioInterfaceAsync(
             VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK,
@@ -278,9 +247,7 @@ fn activate(scope: Scope) -> windows::core::Result<IAudioClient> {
             &handler,
         )?
     };
-    // SAFETY: done 有效。
     let waited = unsafe { WaitForSingleObject(done, ACTIVATE_TIMEOUT_MS) };
-    // SAFETY: done 不再使用。
     let _ = unsafe { CloseHandle(done) };
     if waited != WAIT_OBJECT_0 {
         return Err(windows::core::Error::from_hresult(
@@ -289,29 +256,24 @@ fn activate(scope: Scope) -> windows::core::Result<IAudioClient> {
     }
     let mut hr = windows::core::HRESULT(0);
     let mut unk = None;
-    // SAFETY: 激活已完成，输出指向本地变量。
     unsafe { op.GetActivateResult(&raw mut hr, &raw mut unk)? };
     hr.ok()?;
     unk.ok_or_else(|| windows::core::Error::from_hresult(windows::Win32::Foundation::E_FAIL))?
         .cast()
 }
 
-/// 采集线程。COM 须在 MTA 中初始化，激活回调在 MTA 线程触发。
 fn capture(
     scope: Scope,
     running: &AtomicBool,
     ring: &Mutex<Ring>,
     wake: &Wake,
 ) -> windows::core::Result<()> {
-    // SAFETY: 本线程首次初始化 COM，退出前对应调用 CoUninitialize。
     unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).ok()? };
     let r = capture_loop(scope, running, ring, wake);
-    // SAFETY: 与上面的 CoInitializeEx 配对。COM 对象已在 capture_loop 中释放。
     unsafe { CoUninitialize() };
     r
 }
 
-/// 事件模式：系统在有新数据时置位 `ready`，停止时由 `wake` 唤醒，不轮询。
 fn capture_loop(
     scope: Scope,
     running: &AtomicBool,
@@ -320,8 +282,6 @@ fn capture_loop(
 ) -> windows::core::Result<()> {
     let client = activate(scope)?;
     let wf = format();
-    // 进程环回设备不支持 GetMixFormat，自行指定格式。缓冲 200 ms，单位 100 ns。
-    // SAFETY: wf 在调用期间有效。
     unsafe {
         client.Initialize(
             AUDCLNT_SHAREMODE_SHARED,
@@ -332,23 +292,18 @@ fn capture_loop(
             None,
         )?;
     }
-    let ready = Wake::new()?;
-    // SAFETY: 已初始化，事件在客户端释放前有效。
+    let ready = Wake::auto()?;
     unsafe { client.SetEventHandle(ready.0)? };
-    // SAFETY: 已初始化。
     let cap: IAudioCaptureClient = unsafe { client.GetService()? };
-    // SAFETY: 已初始化。
     unsafe { client.Start()? };
     log::info!("屏幕声音采集已开始：{scope:?}");
     let silent = u32::try_from(AUDCLNT_BUFFERFLAGS_SILENT.0).unwrap_or(2);
     let handles = [ready.0, wake.0];
     while running.load(Ordering::SeqCst) {
-        // SAFETY: 两个事件均有效。
         let got = unsafe { WaitForMultipleObjects(&handles, false, INFINITE) };
         if got != WAIT_OBJECT_0 {
             break;
         }
-        // SAFETY: 采集客户端有效，GetBuffer 与 ReleaseBuffer 成对调用。
         unsafe {
             while cap.GetNextPacketSize()? > 0 {
                 let (mut data, mut frames, mut flags) = (std::ptr::null_mut(), 0u32, 0u32);
@@ -358,7 +313,6 @@ fn capture_loop(
                     if flags & silent != 0 || data.is_null() {
                         r.push(std::iter::repeat_n(0, n));
                     } else {
-                        // 按字节读取，不假设缓冲按 i16 对齐。
                         let bytes = std::slice::from_raw_parts(data, n * 2);
                         r.push(
                             bytes
@@ -373,7 +327,6 @@ fn capture_loop(
             }
         }
     }
-    // SAFETY: 已开始。
     let _ = unsafe { client.Stop() };
     Ok(())
 }
@@ -395,6 +348,23 @@ mod tests {
     }
 
     #[test]
+    fn ready_event_resets_after_wait() {
+        use windows::Win32::Foundation::WAIT_TIMEOUT;
+        let ready = Wake::auto().unwrap();
+        let wake = Wake::new().unwrap();
+        let handles = [ready.0, wake.0];
+        unsafe { SetEvent(ready.0).unwrap() };
+        assert_eq!(
+            unsafe { WaitForMultipleObjects(&handles, false, 0) },
+            WAIT_OBJECT_0
+        );
+        assert_eq!(
+            unsafe { WaitForMultipleObjects(&handles, false, 0) },
+            WAIT_TIMEOUT
+        );
+    }
+
+    #[test]
     fn format_is_48k_stereo_s16() {
         let f = format();
         assert_eq!(
@@ -408,7 +378,6 @@ mod tests {
         );
     }
 
-    /// 本机需有声音设备。排除本进程，采集 1 秒，确认有数据流入。
     #[test]
     #[ignore = "需要声音设备"]
     fn captures_system_audio() {
@@ -437,8 +406,6 @@ mod tests {
         20.0 * ((re * re + im * im).sqrt() / len + 1e-9).log10()
     }
 
-    /// 按环境变量指定的范围采集 2 秒，打印各频率能量。用于检验其他进程的排除与包含：
-    /// `CDAPP_LOOPBACK=exclude:<pid>` 或 `include:<pid>`，`CDAPP_LOOPBACK_FREQS=440,1000`。
     #[test]
     #[ignore = "需要声音设备与外部声源"]
     fn measures_scope() {
@@ -465,7 +432,6 @@ mod tests {
         std::thread::sleep(Duration::from_millis(2500));
         drop(lb);
         let x = buf.lock().unwrap();
-        // 取最后 1 秒，跳过激活前的静音。
         let tail = &x[x.len().saturating_sub(48_000)..];
         for f in freqs {
             println!("{scope:?} {f} Hz {:.1} dB", db(tail, f));

@@ -1,4 +1,3 @@
-// 会话状态入口。实现按领域拆分在 session/ 下，此处只转出公开接口。
 export { session, setSession, report, accountGen, dmKey, guildOfAny } from "./session/state";
 export { names, plainContent, toGroups } from "./session/convert";
 export { boot, enter, logout, expire, skipRestore } from "./session/auth";

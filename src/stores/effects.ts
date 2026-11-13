@@ -1,7 +1,6 @@
 import { createStore } from "solid-js/store";
 import { api } from "../lib/api";
 
-// 提示音编号，与官方 audio_setting 一致。
 export const Effect = {
   USER_JOIN: 1,
   USER_LEAVE: 2,
@@ -15,7 +14,6 @@ export const Effect = {
 } as const;
 export type EffectId = (typeof Effect)[keyof typeof Effect];
 
-// 设置页列出的提示音，名称沿用官方设置页。
 export const EFFECT_LIST: { id: EffectId; name: string }[] = [
   { id: Effect.USER_JOIN, name: "用户连接" },
   { id: Effect.USER_LEAVE, name: "用户离开" },
@@ -28,18 +26,15 @@ export const EFFECT_LIST: { id: EffectId; name: string }[] = [
   { id: Effect.MENTION, name: "提及我的消息通知" },
 ];
 
-// 播放进场音效。成员设有装扮时播放装扮音效，否则播放用户连接。
 export function playJoin(item?: number) {
   if (item) void api.effectPlayItem(item).catch(() => {});
   else playEffect(Effect.USER_JOIN);
 }
 
-// 开关与音量由后端判断，失败不影响调用方。
 export function playEffect(id: EffectId) {
   void api.effectPlay(id).catch(() => {});
 }
 
-// 本机提示音偏好，启动时由 loadAudioPrefs 填入。
 export const [effects, setEffects] = createStore({ volume: 30, off: [] as number[] });
 
 export function applyEffectPrefs(volume: number, off: number[]) {

@@ -89,7 +89,6 @@ test("所选设备不可用时显示为系统默认，保存的选择不变", as
   expect(shownSelection({ ...base, selected: "a" } as any)).toBe("a");
   expect(shownSelection({ ...base, selected: "gone" } as any)).toBeNull();
   expect(shownSelection({ ...base, selected: null } as any)).toBeNull();
-  // 列表未读取时不判断为不可用。
   expect(shownSelection({ ...base, loaded: false, selected: "gone" } as any)).toBe("gone");
 });
 

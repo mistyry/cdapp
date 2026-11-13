@@ -1,8 +1,3 @@
-//! 真实账号跳转加载验证（只读）。默认忽略：
-//! `CDAPP_LIVE_TOKEN=... cargo test --test live_jump -- --ignored`
-//! 在一个有多页历史的频道中取较早的一条消息，按客户端跳转流程定位并加载前后各一页，确认片段连续且包含目标；
-//! 无效 ID 查询结果为 None。只输出数量与布尔值。
-
 use cdapp_lib::kook::api::Api;
 use cdapp_lib::kook::model::ChannelKind;
 

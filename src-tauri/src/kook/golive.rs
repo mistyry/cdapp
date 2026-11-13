@@ -1,13 +1,9 @@
-//! 屏幕分享接口：check-join、go-live、go-live-update、go-live-refresh。
-//! 都要求本人已在该频道语音中。RTC 令牌与登录凭据同等保管，不写入日志。
-
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::api::Api;
 use crate::error::{AppError, AppResult};
 
-/// 火山 RTC 凭据。`token` 绑定房间名与本人用户 ID。
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VolcOptions {
@@ -25,22 +21,26 @@ impl std::fmt::Debug for VolcOptions {
     }
 }
 
-/// 开播结果。
 #[derive(Debug, Clone)]
 pub struct Live {
-    /// 分配的厂商，`volc` 或 `agora`。
     pub vendor: String,
-    /// H.264 码率上限，单位 bps。
     pub max_bitrate: u64,
-    pub volc: Option<VolcOptions>,
+    pub options: Option<VolcOptions>,
 }
 
-/// 档位。`resolution` 为 720、1080 等；`mode` 0 为标准模式，1 为文档模式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Tier {
     pub resolution: u32,
     pub frame_rate: u32,
     pub mode: u8,
+}
+
+fn options_key(vendor: &str) -> &'static str {
+    if vendor == "agora" {
+        "agora_options"
+    } else {
+        "volc_options"
+    }
 }
 
 fn parse_live(v: &Value) -> AppResult<Live> {
@@ -53,20 +53,14 @@ fn parse_live(v: &Value) -> AppResult<Live> {
         .get("max_bitrate")
         .and_then(Value::as_u64)
         .ok_or_else(|| AppError::Format("开播响应缺少码率".into()))?;
-    let volc = parse_volc(v)?;
+    let options = parse_options(v, options_key(&vendor))?;
     Ok(Live {
         vendor,
         max_bitrate,
-        volc,
+        options,
     })
 }
 
-/// `volc_options.enable` 为假或缺失时视为未分配火山。
-fn parse_volc(v: &Value) -> AppResult<Option<VolcOptions>> {
-    parse_options(v, "volc_options")
-}
-
-/// 指定厂商的凭据，`enable` 为假或缺失时为 None。两家字段名相同。
 fn parse_options(v: &Value, key: &str) -> AppResult<Option<VolcOptions>> {
     match v.get(key) {
         Some(o) if o.get("enable").and_then(Value::as_bool) == Some(true) => {
@@ -78,30 +72,36 @@ fn parse_options(v: &Value, key: &str) -> AppResult<Option<VolcOptions>> {
     }
 }
 
-/// 观看凭据：厂商与对应的 RTC 凭据。两家的 appId、房间名、令牌字段相同。
 #[derive(Debug, Clone)]
 pub struct Watch {
     pub vendor: Vendor,
     pub options: VolcOptions,
 }
 
-/// 屏幕分享的 RTC 厂商，跟随分享者。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Vendor {
+    #[default]
     Volc,
     Agora,
+}
+
+impl Vendor {
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "volc" => Some(Self::Volc),
+            "agora" => Some(Self::Agora),
+            _ => None,
+        }
+    }
 }
 
 fn parse_watch(v: &Value) -> AppResult<Watch> {
     let vendor = match v.get("vendor").and_then(Value::as_str) {
         Some("volc") => Vendor::Volc,
         Some("agora") => Vendor::Agora,
-        other => {
-            return Err(AppError::Other(format!(
-                "分享者使用的分享服务暂不支持：{}",
-                other.unwrap_or("未知")
-            )));
-        }
+        Some(_) => return Err(AppError::Other("暂不支持观看此分享服务".into())),
+        None => return Err(AppError::Format("观看响应缺少分享服务".into())),
     };
     let key = match vendor {
         Vendor::Volc => "volc_options",
@@ -113,8 +113,6 @@ fn parse_watch(v: &Value) -> AppResult<Watch> {
 }
 
 impl Api {
-    /// 分配给本人的屏幕分享厂商，`volc` 或 `agora`。没有会员时同样返回，不能用于判断能否开播。
-    ///
     /// # Errors
     ///
     /// 请求失败或响应缺少厂商时返回错误。
@@ -144,19 +142,22 @@ impl Api {
             .ok_or_else(|| AppError::Format("检查结果缺少厂商".into()))
     }
 
-    /// 开播，取 RTC 凭据与码率上限。只声明支持火山。
-    /// 推流后服务端才登记分享，只调用本接口不会出现在成员列表中。
-    ///
     /// # Errors
     ///
     /// 不在语音中为 40000，档位超出会员为 40300。
-    pub async fn go_live(&self, channel_id: &str, user_id: &str, tier: Tier) -> AppResult<Live> {
+    pub async fn go_live(
+        &self,
+        channel_id: &str,
+        user_id: &str,
+        tier: Tier,
+        vendor: Vendor,
+    ) -> AppResult<Live> {
         let v = self
             .post(
                 "/api/v3/gateway/go-live",
                 &json!({
-                    "support_agora": false,
-                    "support_volc": true,
+                    "support_agora": vendor == Vendor::Agora,
+                    "support_volc": vendor == Vendor::Volc,
                     "ip_discovery": [],
                     "role": "live",
                     "channel_id": channel_id,
@@ -170,10 +171,6 @@ impl Api {
         parse_live(&v)
     }
 
-    /// 观看他人的分享，取观众身份的 RTC 凭据与厂商。厂商跟随分享者：只声明火山时，分到 Agora 的分享者会被拒绝，
-    /// 返回 40000「屏幕分享技术升级中」，因此同时声明两家。分享者尚未推流时服务端返回 41904。
-    /// 档位为必填项，观众身份不影响画质，固定传 720p30。
-    ///
     /// # Errors
     ///
     /// 不在语音中为 40000，无连接权限为 HTTP 403，厂商未知或凭据缺失时返回错误。
@@ -196,8 +193,6 @@ impl Api {
         parse_watch(&v)
     }
 
-    /// 推流中改档，返回新的码率上限，单位 bps。服务端不校验会员，调用方只能传本人拥有的档位。
-    ///
     /// # Errors
     ///
     /// 不在语音中时返回错误。
@@ -224,25 +219,33 @@ impl Api {
             .ok_or_else(|| AppError::Format("改档响应缺少码率".into()))
     }
 
-    /// 推流中续期令牌。
-    ///
     /// # Errors
     ///
-    /// 未在推流中为 40000，或响应没有火山凭据。
-    pub async fn go_live_refresh(&self, channel_id: &str) -> AppResult<VolcOptions> {
+    /// 未在推流中为 40000，或响应没有对应厂商的凭据。
+    pub async fn go_live_refresh(
+        &self,
+        channel_id: &str,
+        vendor: Vendor,
+    ) -> AppResult<VolcOptions> {
         let v = self
             .post(
                 "/api/v3/gateway/go-live-refresh",
                 &json!({ "channel_id": channel_id }),
             )
             .await?;
-        // 续期响应的 volc_options 可能不带 enable，有令牌即可。
-        let o = v
-            .get("volc_options")
-            .ok_or_else(|| AppError::Format("续期响应缺少火山凭据".into()))?;
-        serde_json::from_value(o.clone())
-            .map_err(|e| AppError::Format(format!("火山凭据格式错误：{e}")))
+        parse_refresh(&v, vendor)
     }
+}
+
+fn parse_refresh(v: &Value, vendor: Vendor) -> AppResult<VolcOptions> {
+    let key = match vendor {
+        Vendor::Volc => "volc_options",
+        Vendor::Agora => "agora_options",
+    };
+    let o = v
+        .get(key)
+        .ok_or_else(|| AppError::Format(format!("续期响应缺少 {key}")))?;
+    serde_json::from_value(o.clone()).map_err(|e| AppError::Format(format!("{key} 格式错误：{e}")))
 }
 
 #[cfg(test)]
@@ -260,7 +263,7 @@ mod tests {
         let l = parse_live(&v).unwrap();
         assert_eq!(l.vendor, "volc");
         assert_eq!(l.max_bitrate, 2_850_000);
-        let o = l.volc.unwrap();
+        let o = l.options.unwrap();
         assert_eq!(
             (o.app_id.as_str(), o.channel_name.as_str(), o.token.as_str()),
             ("a", "live.1.2", "t")
@@ -268,15 +271,31 @@ mod tests {
     }
 
     #[test]
+    fn parses_agora_go_live_and_refresh() {
+        let v = json!({
+            "vendor": "agora", "gateway_url": "", "max_bitrate": 2_850_000, "max_bitrate_h265": 2_280_000,
+            "agora_options": {"enable": true, "appId": "a", "channelName": "live:1:2", "token": "t"},
+            "volc_options": {"enable": false}, "pull_sdk": 0,
+        });
+        let l = parse_live(&v).unwrap();
+        assert_eq!(l.vendor, "agora");
+        assert_eq!(l.options.unwrap().channel_name, "live:1:2");
+        let r = json!({"agora_options": {"enable": true, "appId": "a", "channelName": "live:1:2", "token": "n"}});
+        assert_eq!(parse_refresh(&r, Vendor::Agora).unwrap().token, "n");
+        assert!(parse_refresh(&r, Vendor::Volc).is_err());
+        let kook = json!({"vendor": "kook", "max_bitrate": 1, "agora_options": {"enable": false}, "volc_options": {"enable": false}});
+        assert!(parse_live(&kook).unwrap().options.is_none());
+    }
+
+    #[test]
     fn disabled_volc_is_none() {
         let v = json!({"vendor": "agora", "max_bitrate": 1, "volc_options": {"enable": false}});
-        assert!(parse_live(&v).unwrap().volc.is_none());
+        assert!(parse_live(&v).unwrap().options.is_none());
         assert!(parse_live(&json!({"vendor": "volc"})).is_err());
     }
 
     #[test]
     fn parses_watch_by_vendor() {
-        // 实测：分享者分到 Agora 时 volc_options 为空，agora_options 带凭据。
         let v = json!({"vendor": "agora", "pull_sdk": 0,
             "volc_options": {"enable": false},
             "agora_options": {"enable": true, "appId": "a", "channelName": "live.1.2", "token": "t"}});
@@ -289,7 +308,12 @@ mod tests {
         assert!(
             parse_watch(&json!({"vendor": "agora", "agora_options": {"enable": false}})).is_err()
         );
-        assert!(parse_watch(&json!({"vendor": "kook"})).is_err());
+        assert_eq!(
+            parse_watch(&json!({"vendor": "kook", "gateway_url": "x", "agora_options": {"enable": false}, "volc_options": {"enable": false}}))
+                .unwrap_err()
+                .to_string(),
+            "暂不支持观看此分享服务"
+        );
     }
 
     #[test]

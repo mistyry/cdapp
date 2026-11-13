@@ -1,8 +1,6 @@
-// 输入框 DOM 与草稿文本的互相转换。草稿是 KMarkdown 文本，自定义表情显示为带 ID 的图片单元。
 import { emojiMarkup, tokenize } from "./emoji";
 import { emojiUrl } from "./kmarkdown";
 
-// 把草稿渲染为 DOM 节点。
 export function render(el: HTMLElement, src: string, root = true) {
   el.replaceChildren();
   for (const t of tokenize(src)) {
@@ -15,7 +13,6 @@ export function render(el: HTMLElement, src: string, root = true) {
       });
     }
   }
-  // 末尾换行需要额外的 br 才能显示空行。
   if (root && src.endsWith("\n")) el.append(document.createElement("br"));
 }
 
@@ -29,7 +26,6 @@ export function emojiNode(name: string, id: string): HTMLImageElement {
   img.referrerPolicy = "no-referrer";
   img.dataset.id = id;
   img.dataset.name = name;
-  // 失效资源以名称图形替代，单元仍是同一图片并保留 ID，编辑行为不变。
   img.onerror = () => {
     img.onerror = null;
     img.src = nameImage(name);
@@ -38,7 +34,6 @@ export function emojiNode(name: string, id: string): HTMLImageElement {
   return img;
 }
 
-// 从 DOM 读出草稿。块级元素（浏览器回车可能生成 div/p）之间补换行。
 export function read(el: Node): string {
   let out = "";
   const walk = (n: Node) => {
@@ -54,13 +49,11 @@ export function read(el: Node): string {
     }
   };
   walk(el);
-  // 渲染时为显示空行追加的末尾 br 不计入内容。
   const last = el.lastChild;
   if (last instanceof HTMLBRElement && out.endsWith("\n")) out = out.slice(0, -1);
   return out;
 }
 
-// 以名称绘制的替代图形。
 function nameImage(name: string): string {
   const w = Math.max(20, [...name].length * 14 + 4);
   const esc = name.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);

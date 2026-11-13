@@ -1,9 +1,3 @@
-//! 开发构建的窗口截图，仅在 macOS 调试构建中编译。
-//!
-//! 设置环境变量 `CDAPP_CAPTURE_DIR` 后启用。在该目录写入 `名称.req`，应用截取主窗口并保存为 `名称.png`。
-//! 请求文件内容非空时，先在页面中执行其中的脚本，0.5 秒后截图。
-//! 截图以 `WKWebView` 快照为底，叠加系统绘制的红绿灯，并按窗口圆角裁去四角。
-
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -49,7 +43,6 @@ pub fn init(app: &AppHandle) {
     });
 }
 
-/// 取出并删除目录中的截图请求，按名称排序。
 fn take_requests(dir: &Path) -> Vec<(String, String)> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -72,14 +65,12 @@ fn take_requests(dir: &Path) -> Vec<(String, String)> {
 }
 
 fn capture(webview: *mut c_void, window: *mut c_void, out: PathBuf) {
-    // SAFETY: with_webview 在主线程回调，两个指针在回调期间有效，retain 后自行持有引用。
     let webview = unsafe { Retained::retain(webview.cast::<WKWebView>()) };
     let window = unsafe { Retained::retain(window.cast::<NSWindow>()) };
     let (Some(webview), Some(window)) = (webview, window) else {
         return;
     };
     let handler = RcBlock::new(move |image: *mut NSImage, error: *mut NSError| {
-        // SAFETY: 完成回调在主线程执行，参数在回调期间有效。
         let result = match unsafe { image.as_ref() } {
             Some(image) => compose(image, &window)
                 .and_then(|png| std::fs::write(&out, png).map_err(|e| e.to_string())),
@@ -93,24 +84,19 @@ fn capture(webview: *mut c_void, window: *mut c_void, out: PathBuf) {
             Err(e) => log::warn!("截图失败：{e}"),
         }
     });
-    // SAFETY: 在主线程调用，配置为空时截取整个可见区域。
     unsafe { webview.takeSnapshotWithConfiguration_completionHandler(None, &handler) };
 }
 
-/// 系统窗口圆角。读取私有方法 `_cornerRadius`，不存在时返回 0。
 fn corner_radius(window: &NSWindow) -> f64 {
     if !window.respondsToSelector(sel!(_cornerRadius)) {
         return 0.0;
     }
-    // SAFETY: 已确认对象响应该选择子，返回值为 CGFloat。
     unsafe { msg_send![window, _cornerRadius] }
 }
 
-/// 在网页快照上叠加红绿灯，编码为 PNG。网页铺满整个窗口，窗口坐标即图像坐标。
 fn compose(shot: &NSImage, window: &NSWindow) -> Result<Vec<u8>, String> {
     let tiff = shot.TIFFRepresentation().ok_or("无法读取图像数据")?;
     let rep = NSBitmapImageRep::imageRepWithData(&tiff).ok_or("无法解码图像数据")?;
-    // 按点绘制，位图保持原有像素密度。
     rep.setSize(shot.size());
     let ctx =
         NSGraphicsContext::graphicsContextWithBitmapImageRep(&rep).ok_or("无法创建绘图上下文")?;
@@ -129,14 +115,12 @@ fn compose(shot: &NSImage, window: &NSWindow) -> Result<Vec<u8>, String> {
             continue;
         };
         button.cacheDisplayInRect_toBitmapImageRep(bounds, &cache);
-        // 按钮缓存为方形，按圆形裁剪后再绘制。
         let rect = button.convertRect_toView(bounds, None);
         ctx.saveGraphicsState();
         NSBezierPath::bezierPathWithOvalInRect(rect).addClip();
         cache.drawInRect(rect);
         ctx.restoreGraphicsState();
     }
-    // 窗口圆角由系统在合成时裁切，快照中没有，按系统值清除四角。
     let radius = corner_radius(window);
     if radius > 0.0 {
         let size = shot.size();
@@ -152,7 +136,6 @@ fn compose(shot: &NSImage, window: &NSWindow) -> Result<Vec<u8>, String> {
     ctx.flushGraphics();
     NSGraphicsContext::restoreGraphicsState_class();
     let props = NSDictionary::<NSString, AnyObject>::new();
-    // SAFETY: 属性字典为空。
     let png = unsafe { rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &props) }
         .ok_or("无法编码 PNG")?;
     Ok(png.to_vec())

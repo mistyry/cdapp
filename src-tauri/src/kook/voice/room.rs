@@ -1,11 +1,8 @@
-//! 拉流音轨、成员事件与链路质量统计。
-
 use super::{
     AppResult, Arc, Consumer, DownStats, HashMap, JoinParams, Mixer, Mutex, Peer, PeerPatch, Sink,
     UpStats, Value, VoiceEvent, health, id_of, sdp,
 };
 
-/// 链路质量统计，按两次统计之间的增量计算接收丢包率。
 #[derive(Default)]
 pub(super) struct LinkMeter {
     pub(super) last: DownStats,
@@ -36,16 +33,12 @@ impl LinkMeter {
     }
 }
 
-/// 房间内的拉流音轨与成员状态。
 #[derive(Default)]
 pub(super) struct Room {
     pub(super) consumers: Vec<Consumer>,
     pub(super) version: u64,
-    /// 音轨 ID 到成员 ID 的映射。
     pub(super) owners: HashMap<String, String>,
-    /// 已暂停的音轨。
     pub(super) paused: std::collections::HashSet<String>,
-    /// 音轨的增删同步到混音器。
     pub(super) mixer: Option<Arc<Mutex<Mixer>>>,
 }
 
@@ -58,7 +51,6 @@ impl Room {
         }
     }
 
-    /// 是否有成员正在推流。
     pub(super) fn ssrc_of(&self, consumer: &str) -> Option<u32> {
         self.consumers
             .iter()
@@ -66,7 +58,12 @@ impl Room {
             .map(|c| c.ssrc)
     }
 
-    /// 未暂停且超过 `after` 未收到包的音轨。从未收到包的音轨自 `since`，即媒体连接建立时起算。
+    pub(super) fn has_active_tracks(&self) -> bool {
+        self.consumers
+            .iter()
+            .any(|c| !c.closed && !self.paused.contains(&c.id))
+    }
+
     pub(super) fn quiet_tracks(
         &self,
         tracks: &HashMap<u32, (std::time::Instant, u64)>,
@@ -85,7 +82,6 @@ impl Room {
             .collect()
     }
 
-    /// 诊断摘要：每条未关闭音轨的成员、暂停状态、累计包数与距最后一包时长。
     pub(super) fn describe(
         &self,
         tracks: &HashMap<u32, (std::time::Instant, u64)>,
@@ -119,7 +115,6 @@ impl Room {
         sdp::recv_offer(&params.recv, &self.consumers, self.version)
     }
 
-    /// 处理服务端请求，收到新音轨时返回新的拉流 offer。
     pub(super) fn on_request(
         &mut self,
         method: &str,
@@ -137,7 +132,6 @@ impl Room {
             return None;
         }
         self.owners.insert(c.id.clone(), c.peer_id.clone());
-        // 加入时对方麦克风可能已暂停。
         let b = |k: &str| data.get(k).and_then(Value::as_bool).unwrap_or(false);
         let paused = b("paused") || b("producerPaused");
         if paused {
@@ -149,7 +143,6 @@ impl Room {
         Some(self.offer(params))
     }
 
-    /// 处理服务端通知，音轨关闭时返回新的拉流 offer。
     pub(super) fn on_notification(
         &mut self,
         method: &str,
@@ -171,12 +164,10 @@ impl Room {
             }
             "peerClosed" => {
                 if let Some(id) = peer() {
-                    // 成员离开时移除其全部音轨。
                     self.mix(|m| m.remove_peer(&id));
                     sink(VoiceEvent::PeerLeft { id });
                 }
             }
-            // 服务器闭麦与静音经 peerPermissionChanged 下发。
             "peerInfoChanged" | "peerPermissionChanged" => {
                 if let Some(p) = PeerPatch::parse(data) {
                     sink(VoiceEvent::PeerChanged { patch: p });
@@ -254,7 +245,6 @@ mod tests {
         let (early, late) = (t0 + Duration::from_secs(9), t0 + Duration::from_secs(11));
         let mut tracks = HashMap::new();
         room.on_request("newConsumer", &new_consumer("c1", "u1", 11), &p);
-        // 从未收到包的音轨自连接建立起算。
         assert_eq!(
             room.quiet_tracks(&tracks, t0, early, after),
             Vec::<u32>::new()
@@ -275,7 +265,9 @@ mod tests {
         );
         room.on_notification("consumerResumed", &json!({"consumerId": "c1"}), &p, &sink);
         assert_eq!(room.quiet_tracks(&tracks, t0, late, after), vec![11]);
+        assert!(room.has_active_tracks());
         room.on_notification("consumerClosed", &json!({"consumerId": "c1"}), &p, &sink);
+        assert!(!room.has_active_tracks());
         assert_eq!(
             room.quiet_tracks(&tracks, t0, late, after),
             Vec::<u32>::new(),
@@ -289,6 +281,7 @@ mod tests {
             Vec::<u32>::new(),
             "以暂停状态加入的音轨不记录"
         );
+        assert!(!room.has_active_tracks());
     }
 
     #[test]
@@ -311,7 +304,6 @@ mod tests {
             q(m.event(Some(up), None, down(100, 50))),
             Some(Quality::Poor)
         );
-        // 增量没有丢包。
         assert_eq!(
             q(m.event(Some(up), None, down(200, 50))),
             Some(Quality::Good)
@@ -329,7 +321,6 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(o1.contains("a=mid:0") && o1.contains("o=- 2 1 "));
-        // 重复的 newConsumer 不生成新 offer。
         assert!(
             room.on_request("newConsumer", &new_consumer("c1", "u1", 1), &p)
                 .is_none()

@@ -1,7 +1,3 @@
-//! 麦克风测试：把将要推送的音频播放到扬声器，并上报电平。
-//! 处理与推流一致：混音、增益、重采样、降噪、分帧与 Opus 编码，再解码回放，听到的即对方收到的声音。
-//! 推流采集链路绑定发送任务，不能单独打开，因此另建一条只在本机回放的链路。
-
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, Ordering};
 use std::sync::{Arc, Mutex};
@@ -15,14 +11,10 @@ use super::dsp::{
     FRAME_SAMPLES, Framer, Gain, RATE, Resampler, audio_level, meter, mixdown, soft_limit,
 };
 
-/// 回放缓冲上限，200 ms。超过时丢弃最旧的样本，避免延迟累积。
 const MAX_BUFFER: usize = RATE as usize / 5;
-/// 输出侧每次从缓冲取出的样本数，10 ms。
 const PULL: usize = RATE as usize / 100;
-/// 电平上报间隔。
 const METER_INTERVAL: Duration = Duration::from_millis(60);
 
-/// 一次麦克风测试。丢弃时停止并释放设备。
 pub struct Loopback {
     stop: Arc<AtomicBool>,
     master: Arc<AtomicU16>,
@@ -30,7 +22,6 @@ pub struct Loopback {
 }
 
 impl Loopback {
-    /// 启动测试线程。`on_level` 收到 0 至 100 的电平，`on_fail` 收到失败原因，失败后线程退出。
     #[must_use]
     pub fn start(
         input: Option<String>,
@@ -67,12 +58,10 @@ impl Loopback {
         }
     }
 
-    /// 修改输出音量，立即生效。
     pub fn set_master(&self, percent: u16) {
         self.master.store(percent, Ordering::Relaxed);
     }
 
-    /// 测试线程是否已退出。
     #[must_use]
     pub fn finished(&self) -> bool {
         self.thread
@@ -103,7 +92,6 @@ fn pick(id: Option<&str>, input: bool) -> Option<Device> {
         })
 }
 
-/// 优先使用 48 kHz，保持设备默认的声道与样本格式。
 fn config_of(
     default: cpal::SupportedStreamConfig,
     ranges: Option<impl Iterator<Item = cpal::SupportedStreamConfigRange>>,
@@ -145,7 +133,6 @@ fn run(
 
     while !stop.load(Ordering::SeqCst) {
         std::thread::sleep(METER_INTERVAL);
-        // 降噪实例在此创建，不占用采集回调的时间。
         denoise.maintain();
         on_level(meter(level.swap(127, Ordering::Relaxed)));
         if let Ok((what, e)) = err_rx.try_recv() {
@@ -163,7 +150,6 @@ fn run(
     Ok(())
 }
 
-/// 输入：按推流链路处理后解码，放入缓冲。
 #[allow(clippy::cast_possible_truncation)]
 fn open_input(
     mic: &Device,
@@ -194,7 +180,6 @@ fn open_input(
         let mut out = rs.process(&mono);
         stage.process(&mut out);
         for pcm in framer.push(&out) {
-            // 取上报周期内的最大电平，即最小的 -dBov 值。
             lv.fetch_min(audio_level(&pcm), Ordering::Relaxed);
             let n = match enc
                 .encode(&pcm, &mut packet)
@@ -245,7 +230,6 @@ fn open_input(
     Ok(stream)
 }
 
-/// 输出：从缓冲取样本，乘以输出音量，重采样到设备采样率后写入各声道。
 fn open_output(
     spk: &Device,
     master: &Arc<AtomicU16>,

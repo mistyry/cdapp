@@ -4,10 +4,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { api, errorText, type DenoiseMode, type InputDevice } from "../lib/api";
 import { Effect, applyEffectPrefs, playEffect, playJoin } from "./effects";
 import { readAccount, writeAccount } from "../lib/accountState";
-
-// 语音会话状态。后端在后台完成连接与重建，经 voice://event 推送事件，事件按会话代次过滤。
-// 静音、耳机与成员音量在会话之间保留，退出登录时重置。
-// 设备、输入增益与总音量属于本机偏好，由后端保存，退出登录时保留。
+import { channelById } from "./session/state";
 
 export type VoicePeer = {
   id: string; name: string; avatar: string; device: string;
@@ -24,7 +21,6 @@ export type DownStats = { packets: number; lost: number; late: number; overflow:
 
 export type VoiceEvent =
   | { type: "state"; phase: "connecting" | "connected" | "reconnecting" | "disconnected"; reason?: EndReason; message?: string;
-      // 重连时附带当前次数、上限与等待时长。
       attempt?: number; max?: number; retry_in_ms?: number }
   | { type: "joined"; me: VoicePeer; peers: VoicePeer[] }
   | { type: "peer_joined"; peer: VoicePeer }
@@ -35,29 +31,21 @@ export type VoiceEvent =
   | { type: "output"; deafened: boolean; active: boolean; device?: string; message?: string }
   | { type: "speaking"; ids: string[] }
   | { type: "link"; quality?: LinkQuality; up?: UpStats; rtt?: number; down: DownStats };
-// 麦克风状态。denied、no_device、device_lost 与 error 为失败状态，
-// 取消静音即重试。
 export type MicStatus = "off" | "starting" | "active" | "muted" | "denied" | "no_device" | "device_lost" | "error";
 export type VoicePayload = { generation: number; channelId: string; event: VoiceEvent };
 
 type State = {
-  // 当前或最近一次加入的频道，断开后保留以便重新加入。
   channelId: string;
   generation: number;
   phase: VoicePhase;
   reason: EndReason | null;
-  // 重连或断开的原因。
   message: string | null;
   me: VoicePeer | null;
-  // 其他成员，不含本人。
   peers: VoicePeer[];
-  // 重连次数、上限与下次重试时间。
   attempt: number;
   maxAttempts: number;
   retryAt: number | null;
-  // 链路质量，未连接时为 null。
   quality: LinkQuality | null;
-  // 连接延迟，单位毫秒。
   rtt: number | null;
 };
 
@@ -65,31 +53,26 @@ const IDLE: State = { channelId: "", generation: 0, phase: "idle", reason: null,
 
 export const [voice, setVoice] = createStore<State>({ ...IDLE });
 
+export const latencyLevel = (rtt: number) => (rtt >= 200 ? 1 : rtt >= 100 ? 2 : 3);
+
 type Mic = {
-  // 用户选择的静音状态，加入前设置也会保留。
   muted: boolean;
   status: MicStatus;
   device: string | null;
-  // 麦克风失败或操作失败的说明。
   message: string | null;
-  // 输入电平，范围 0 至 100。
   level: number;
-  // 请求在途，按钮暂不可用。
   busy: boolean;
 };
 
 const MIC_IDLE = { status: "off" as MicStatus, device: null, message: null, level: 0, busy: false };
 export const [mic, setMic] = createStore<Mic>({ muted: false, ...MIC_IDLE });
 
-// 降噪开关与模型。开关只作用于本人麦克风，模型同时用于成员降噪，关闭时也保留。
-// 使用 KOOK AI 降噪 2.0 时后端先获取许可，失败则回到之前的状态。
 export const DENOISE_MODES: { id: DenoiseMode; name: string }[] = [
   { id: "kook", name: "KOOK AI 降噪 2.0" },
   { id: "rnnoise", name: "RNNoise" },
 ];
 export const [denoise, setDenoiseState] = createSignal(false);
 export const [denoiseMode, setDenoiseModeState] = createSignal<DenoiseMode>("kook");
-// KOOK AI 降噪出现故障，当前用 RNNoise 代替。修改设置或重新加入语音时重新尝试。
 export const [kookFallback, setKookFallback] = createSignal(false);
 let denoiseSeq = 0;
 export async function applyDenoise(on: boolean, mode: DenoiseMode) {
@@ -107,7 +90,6 @@ export async function applyDenoise(on: boolean, mode: DenoiseMode) {
     setMic("message", `降噪未开启：${errorText(e)}`);
   }
 }
-// KOOK AI 降噪故障，后端已改用 RNNoise。
 let denoiseFallbackListening: Promise<UnlistenFn> | null = null;
 export function watchDenoiseFallback() {
   denoiseFallbackListening ??= listen<string>("denoise://fallback", () => {
@@ -122,26 +104,19 @@ export const setDenoise = (on: boolean) => applyDenoise(on, denoiseMode());
 export const setDenoiseMode = (mode: DenoiseMode) => applyDenoise(denoise(), mode);
 
 type Out = {
-  // 用户选择的耳机关闭状态。
   deafened: boolean;
-  // 播放设备已打开。
   active: boolean;
   device: string | null;
   message: string | null;
   busy: boolean;
-  // 正在说话的成员 ID。
   speaking: string[];
-  // 成员音量百分比，100 不记录。
   volumes: Record<string, number>;
-  // 开启降噪的成员。
   denoised: Record<string, boolean>;
   master: number;
-  // 麦克风输入增益百分比。
   gain: number;
 };
 const OUT_IDLE = { active: false, device: null, message: null, busy: false, speaking: [] as string[] };
 export const [output, setOutput] = createStore<Out>({ deafened: false, ...OUT_IDLE, volumes: {}, denoised: {}, master: 100, gain: 100 });
-// 本人说话状态由麦克风电平判定，阈值与远端一致，约 -46 dBov。
 const SELF_SPEAK_LEVEL = 23;
 const SELF_SPEAK_HOLD_MS = 300;
 const [selfSpeaking, setSelfSpeaking] = createSignal(false);
@@ -159,17 +134,11 @@ function clearSelfSpeaking() {
 export const isSpeaking = (id: string) => (id === voice.me?.id ? selfSpeaking() : output.speaking.includes(id));
 export const volumeOf = (id: string) => output.volumes[id] ?? 100;
 
-// 请求序号。加入与退出各取一个，后端据此丢弃被取代的加入，前端据此丢弃迟到的结果。
-// 以时间为初值，重新加载页面后仍大于后端已处理的序号。
 let seq = Date.now();
-// 加入命令返回代次之前收到的事件，代次确定后按代次过滤再处理。
 let early: VoicePayload[] = [];
 let joining = false;
-// 加入期间修改的静音状态，加入完成后发送。
 let wanted: boolean | null = null;
-// 加入期间修改的耳机状态，加入完成后发送。
 let wantedDeaf: boolean | null = null;
-// 未连接时关闭耳机前的麦克风静音状态，打开耳机时恢复。
 let micBeforeDeaf: boolean | null = null;
 
 export const voiceActive = () => voice.phase === "connecting" || voice.phase === "connected" || voice.phase === "reconnecting";
@@ -205,11 +174,8 @@ function ensureListener() {
   return listening;
 }
 
-// 能否开启屏幕分享。加入语音时在后台查询，结果返回前与查询失败时视为不能。
 export const [canGoLive, setCanGoLive] = createSignal(false);
 
-// 加入语音频道。已在该频道时不重复加入，在其他频道时由后端先退出旧频道。
-// 权限由调用方（session/access.ts 的 enterVoice）先行判断；password 只用于本次请求。
 export async function joinVoice(channelId: string, password: string | null = null) {
   if (voiceActive() && voice.channelId === channelId) return;
   if (micTest.on) { ++testSeq; setMicTest({ on: false, level: 0 }); }
@@ -240,7 +206,6 @@ export async function joinVoice(channelId: string, password: string | null = nul
     const d = wantedDeaf;
     wanted = null;
     wantedDeaf = null;
-    // 加入时已发送的状态不重复发送。
     if (d !== null && d !== sentDeaf) await setDeafened(d);
     if (w !== null && w !== sent) await setMuted(w);
   } catch (e) {
@@ -251,7 +216,6 @@ export async function joinVoice(channelId: string, password: string | null = nul
   }
 }
 
-// 退出语音。界面立即复位，不等待后端释放完成。
 export async function leaveVoice() {
   const my = ++seq;
   setCanGoLive(false);
@@ -266,48 +230,38 @@ export async function leaveVoice() {
   await api.voiceLeave(my).catch(() => {});
 }
 
-// 用户主动断开语音，播放断开提示音。
 export async function disconnectVoice() {
   if (voiceActive()) playEffect(Effect.EXIT_CHANNEL);
   await leaveVoice();
 }
 
-// 成员进出提示音：连接后 1 秒内与重连期间不播放，人数较多时不播放。
 const PEER_QUIET_MS = 1000;
 const PEER_LIMIT = 30;
 let quietUntil = 0;
-// 首次连接成功时成员信息可能尚未到达，到达后再播放进入提示音。
 let selfJoinPending = false;
 const peerSoundOk = () => voice.phase === "connected" && Date.now() >= quietUntil;
+const inRadio = () => Boolean(channelById(voice.channelId)?.channel.radio);
 
-// 需要频道密码时的处理，由会话层注册。
 let onPassword: (channelId: string) => void = () => {};
 export const setPasswordHandler = (f: (channelId: string) => void) => (onPassword = f);
 
-// 权限撤销：结束当前会话并说明原因，不提供重新加入。
-// 先同步写入结束状态再等待后端，期间新的加入可以正常覆盖。
 export async function revokeVoice() {
   const p = leaveVoice();
   setVoice({ channelId: "", phase: "disconnected", reason: "revoked", message: null });
   await p;
 }
 
-// 连接中断、正常结束或加入失败后可以重新加入。被替换与登录失效时不提供。
 export const canRejoin = () =>
   voice.phase === "disconnected" && !!voice.channelId && (voice.reason === "lost" || voice.reason === "exited" || voice.reason === "join_failed");
 
-// 以当前的静音与耳机状态重新加入原频道。
 export function rejoinVoice() {
   if (canRejoin()) return joinVoice(voice.channelId);
 }
 
-// 系统唤醒或网络恢复时通知后端。已连接时也通知，媒体可能已断开而阶段仍为 connected。
-// 未加入、已断开或加入尚未返回时不通知。
 export function voiceNetworkBack() {
   if ((voice.phase === "reconnecting" || voice.phase === "connected") && voice.generation) api.voiceWake().catch(() => {});
 }
 
-// 设备摘要中的麦克风状态。
 const MIC_SHORT: Partial<Record<MicStatus, string>> = {
   muted: "已静音", off: "未开启", starting: "正在启动", denied: "无权限", no_device: "无设备", device_lost: "已断开", error: "出错",
 };
@@ -316,7 +270,6 @@ export function deviceSummary(): { text: string; title: string; ok: boolean } {
   const micPart = mic.status === "active" ? mic.device ?? "麦克风" : MIC_SHORT[mic.status] ?? "";
   const outOk = output.deafened || output.active;
   const outPart = output.deafened ? "已关闭" : output.active ? output.device ?? "扬声器" : "未开启";
-  // 麦克风失败的说明已单独显示，这里只附加设备切换等提示。
   const notes = [mic.status === "active" ? mic.message : null, output.message].filter(Boolean);
   return {
     text: `麦克风：${micPart} 扬声器：${outPart}`,
@@ -328,12 +281,10 @@ export function deviceSummary(): { text: string; title: string; ok: boolean } {
 const QUALITY_TEXT: Record<LinkQuality, string> = { good: "良好", fair: "一般", poor: "较差" };
 export const qualityText = () => (voice.quality ? QUALITY_TEXT[voice.quality] : null);
 
-// 关闭断开提示。
 export function dismissVoice() {
   if (voice.phase === "disconnected") setVoice({ ...IDLE });
 }
 
-// 退出登录时重置全部语音状态与偏好。
 export function resetVoice() {
   seq++;
   setCanGoLive(false);
@@ -350,7 +301,6 @@ export function resetVoice() {
   micBeforeDeaf = null;
 }
 
-// 麦克风处于失败状态，取消静音即重试。
 export const micFailed = () => ["denied", "no_device", "device_lost", "error"].includes(mic.status);
 
 const MIC_TEXT: Record<MicStatus, string> = {
@@ -368,7 +318,6 @@ export function micText(): string {
   return MIC_TEXT[mic.status];
 }
 
-// 麦克风失败时的处理建议。
 export function micHint(): string | null {
   switch (mic.status) {
     case "denied": return "请在系统设置的隐私与安全性中允许 cdapp 使用麦克风，然后点击重试";
@@ -379,7 +328,6 @@ export function micHint(): string | null {
   }
 }
 
-// 设置麦克风静音。未连接时只更新本地状态，加入时随请求发送。
 export async function setMuted(muted: boolean) {
   switchesTouched = true;
   const generation = voice.generation;
@@ -387,7 +335,6 @@ export async function setMuted(muted: boolean) {
     if (joining) wanted = muted;
     if (muted !== mic.muted) playEffect(muted ? Effect.MIC_MUTE : Effect.MIC_UNMUTE);
     setMic({ muted, status: muted ? "muted" : "off", message: null });
-    // 取消静音时同时打开耳机，与后端一致。
     if (!muted && output.deafened) setOutput("deafened", false);
     return;
   }
@@ -397,7 +344,6 @@ export async function setMuted(muted: boolean) {
     if (voice.generation === generation) playEffect(muted ? Effect.MIC_MUTE : Effect.MIC_UNMUTE);
   } catch (e) {
     if (voice.generation !== generation) return;
-    // 静音状态以后端随后的事件为准。
     setMic({ message: errorText(e) });
   } finally {
     if (voice.generation === generation) setMic("busy", false);
@@ -406,8 +352,6 @@ export async function setMuted(muted: boolean) {
 
 export const toggleMic = () => setMuted(micFailed() ? false : !mic.muted);
 
-// 设置耳机关闭。关闭时同时静音麦克风，打开时恢复之前的静音状态。
-// 未连接时只更新本地状态，加入时随请求发送。
 export async function setDeafened(deafened: boolean) {
   switchesTouched = true;
   const generation = voice.generation;
@@ -440,7 +384,6 @@ export async function setDeafened(deafened: boolean) {
 
 export const toggleDeafen = () => setDeafened(!output.deafened);
 
-// 成员音量按账号保存在 accounts/<id>/state.json 的 peerVolumes，键为用户 ID，100 不记录。
 let volumeOwner = "";
 export function parseVolumes(v: unknown): Record<string, number> {
   const out: Record<string, number> = {};
@@ -457,7 +400,6 @@ export function parseDenoised(v: unknown): string[] {
   return Array.isArray(v) ? [...new Set(v.filter((x): x is string => typeof x === "string" && x !== ""))] : [];
 }
 
-// 登录后读取本账号保存的成员音量与成员降噪并同步到后端。读取期间已修改的成员以修改为准。
 export async function loadPeerVolumes(me: string) {
   volumeOwner = me;
   const [rawVol, rawDn] = await Promise.all([readAccount(me, "peerVolumes"), readAccount(me, "peerDenoise")]);
@@ -475,7 +417,6 @@ export async function loadPeerVolumes(me: string) {
   }
 }
 
-// 静音前的音量，取消静音时恢复，只保存在内存中。
 const beforeMute: Record<string, number> = {};
 export async function togglePeerMute(id: string) {
   const v = volumeOf(id);
@@ -491,7 +432,6 @@ export async function togglePeerMute(id: string) {
 
 export const peerDenoised = (id: string) => output.denoised[id] === true;
 
-// 开启或关闭成员降噪，按账号保存。
 export async function setPeerDenoise(id: string, on: boolean) {
   setOutput("denoised", id, on);
   if (volumeOwner) writeAccount(volumeOwner, "peerDenoise", Object.keys(output.denoised).filter((k) => output.denoised[k]));
@@ -501,7 +441,6 @@ export async function setPeerDenoise(id: string, on: boolean) {
   });
 }
 
-// 设置成员音量，范围 0 至 200。
 export async function setPeerVolume(id: string, percent: number) {
   const v = Math.max(0, Math.min(200, Math.round(percent)));
   setOutput("volumes", id, v);
@@ -514,8 +453,6 @@ export async function setPeerVolume(id: string, percent: number) {
 
 export const clampVolume = (percent: number) => Math.max(0, Math.min(200, Math.round(Number.isFinite(percent) ? percent : 100)));
 
-// 总音量与输入增益：连续拖动只采用最新一次的结果，失败时恢复后端最后确认的值。
-// 后端确认的值只由更新的成功请求覆盖：较早请求成功后被较新请求的失败回滚时，恢复到该较早值。
 let masterSeq = 0, masterOkSeq = 0;
 let masterOk = 100;
 export async function setMasterVolume(percent: number) {
@@ -548,15 +485,12 @@ export async function setMicGain(percent: number) {
   }
 }
 
-// 启动时读取后端保存的本机音频偏好。读取失败时保持默认值。
-// 麦克风与耳机开关在本机保存，下次启动沿用。读取完成前的变化不写入，避免覆盖保存值。
 let switchesLoaded = false;
 let switchesTouched = false;
 let savedSwitches = "";
 createRoot(() => createEffect(() => {
   const muted = mic.muted;
   const deafened = output.deafened;
-  // 关闭耳机时保存关闭前的麦克风状态，恢复耳机后回到该状态。
   const keepMuted = deafened ? (micBeforeDeaf ?? muted) : muted;
   if (!switchesLoaded) return;
   const key = `${keepMuted}:${deafened}`;
@@ -565,7 +499,6 @@ createRoot(() => createEffect(() => {
   void api.setVoiceSwitches(keepMuted, deafened).catch(() => {});
 }));
 
-// 设备增减或默认设备变化时由后端通知，刷新已加载过的列表。
 let devicesListening: Promise<UnlistenFn> | null = null;
 export function watchDevices() {
   devicesListening ??= listen<{ input: boolean; output: boolean }>("audio://devices", ({ payload }) => {
@@ -585,7 +518,6 @@ export async function loadAudioPrefs() {
   try {
     const p = await api.audioPrefs();
     if (!p) return;
-    // 读取期间用户已修改的项以用户为准。
     if (my[0] === masterSeq) { masterOk = clampVolume(p.master); setOutput("master", masterOk); }
     if (my[1] === gainSeq) { gainOk = clampVolume(p.gain); setOutput("gain", gainOk); }
     if (my[2] === inSeq) { inOk = p.input; setInputs("selected", p.input); }
@@ -595,7 +527,6 @@ export async function loadAudioPrefs() {
       setDenoiseModeState(p.denoiseMode === "rnnoise" ? "rnnoise" : "kook");
     }
     if (typeof p.effectVolume === "number") applyEffectPrefs(p.effectVolume, p.effectsOff ?? []);
-    // 开关只在启动后尚未操作、未进入语音时恢复。
     if (!switchesTouched && !voiceActive() && !joining) {
       const deaf = Boolean(p.deafened);
       setOutput("deafened", deaf);
@@ -604,13 +535,11 @@ export async function loadAudioPrefs() {
     }
     switchesLoaded = true;
   } catch {
-    // 使用默认值。
   }
 }
 
 export function onVoiceEvent(p: VoicePayload) {
   if (joining) {
-    // 代次确定前暂存本频道的事件。
     if (p.channelId === voice.channelId) early.push(p);
     return;
   }
@@ -619,7 +548,6 @@ export function onVoiceEvent(p: VoicePayload) {
   switch (ev.type) {
     case "state":
       if (ev.phase === "disconnected") {
-        // 会话结束时清除设备状态，静音与耳机偏好保留。
         setMic(MIC_IDLE);
         setOutput(OUT_IDLE);
         clearSelfSpeaking();
@@ -639,7 +567,6 @@ export function onVoiceEvent(p: VoicePayload) {
         });
         return;
       }
-      // 首次连接成功时播放进入提示音，重连恢复不播放。
       if (ev.phase === "connected" && voice.phase === "connecting") {
         quietUntil = Date.now() + PEER_QUIET_MS;
         selfJoinPending = true;
@@ -647,24 +574,25 @@ export function onVoiceEvent(p: VoicePayload) {
       } else if (ev.phase === "connected") {
         quietUntil = Date.now() + PEER_QUIET_MS;
       }
-      // 连接成功后重置重连次数。
       setVoice({ phase: ev.phase, reason: null, message: null, retryAt: null, ...(ev.phase === "connected" ? { attempt: 0 } : {}) });
       return;
     case "link":
       setVoice({ quality: ev.quality ?? null, rtt: ev.rtt ?? null });
       return;
     case "joined":
-      // 成员列表不含本人。
       setVoice({ me: ev.me, peers: ev.peers.filter((x) => x.id !== ev.me.id) });
       if (selfJoinPending) { selfJoinPending = false; playJoin(ev.me.joinVoice); }
       return;
     case "peer_joined":
       if (ev.peer.id === voice.me?.id) return;
-      if (peerSoundOk() && !voice.peers.some((x) => x.id === ev.peer.id) && voice.peers.length + 2 <= PEER_LIMIT) playJoin(ev.peer.joinVoice);
+      if (peerSoundOk() && !voice.peers.some((x) => x.id === ev.peer.id)) {
+        const crowded = voice.peers.length + 2 > PEER_LIMIT;
+        if (!crowded || (inRadio() && ev.peer.joinVoice)) playJoin(ev.peer.joinVoice);
+      }
       setVoice("peers", (list) => [...list.filter((x) => x.id !== ev.peer.id), ev.peer]);
       return;
     case "peer_left":
-      if (peerSoundOk() && voice.peers.some((x) => x.id === ev.id) && voice.peers.length + 1 < PEER_LIMIT) playEffect(Effect.USER_LEAVE);
+      if (peerSoundOk() && voice.peers.some((x) => x.id === ev.id) && voice.peers.length + 1 < PEER_LIMIT && !inRadio()) playEffect(Effect.USER_LEAVE);
       setVoice("peers", (list) => list.filter((x) => x.id !== ev.id));
       setOutput("speaking", (s) => s.filter((x) => x !== ev.id));
       return;
@@ -696,21 +624,16 @@ export function onVoiceEvent(p: VoicePayload) {
 
 type DeviceList = {
   devices: InputDevice[];
-  // 期望的选择，null 为跟随系统默认。
   selected: string | null;
   loading: boolean;
-  // 已读取过一次列表。
   loaded: boolean;
   error: string | null;
 };
 const LIST0: DeviceList = { devices: [], selected: null, loading: false, loaded: false, error: null };
 
-// 输入设备列表。
 export const [inputs, setInputs] = createStore<DeviceList>({ ...LIST0 });
-// 输出设备列表。
 export const [outputs, setOutputs] = createStore<DeviceList>({ ...LIST0 });
 
-// 列表请求与选择各自按序号只采用最新结果。
 let inLoad = 0, outLoad = 0, inSeq = 0, outSeq = 0;
 
 export async function loadInputs() {
@@ -720,7 +643,6 @@ export async function loadInputs() {
   try {
     const r = await api.audioInputs();
     if (my !== inLoad) return;
-    // 列表在途期间用户已重新选择时，保留新的选择。
     if (sel === inSeq) inOk = r.selected;
     setInputs({ devices: r.devices, loading: false, loaded: true, ...(sel === inSeq ? { selected: r.selected } : {}) });
   } catch (e) {
@@ -742,7 +664,6 @@ export async function loadOutputs() {
   }
 }
 
-// 后端最后确认的选择，失败时恢复。
 let inOk: string | null | undefined;
 let outOk: string | null | undefined;
 let inOkSeq = 0, outOkSeq = 0;
@@ -775,7 +696,6 @@ export async function selectOutput(id: string | null) {
 
 export type DeviceOption = { id: string; label: string; title: string; isDefault: boolean };
 
-// 设备选项。同名设备追加序号区分；选择以设备 ID 为准。
 export function deviceOptions(list: DeviceList): DeviceOption[] {
   const count: Record<string, number> = {};
   for (const d of list.devices) count[d.name] = (count[d.name] ?? 0) + 1;
@@ -787,19 +707,15 @@ export function deviceOptions(list: DeviceList): DeviceOption[] {
   });
 }
 
-// 所选设备已不在列表中。只在列表读取成功后判断。
 export const selectionMissing = (list: DeviceList) =>
   list.loaded && !list.error && list.selected !== null && !list.devices.some((d) => d.id === list.selected);
 
-// 当前系统默认设备的名称，作为系统默认项的提示。
-// 界面显示的选中项。所选设备不可用时实际使用系统默认设备，显示为系统默认；保存的选择不变，设备恢复后自动切回。
 export const shownSelection = (list: DeviceList) => (selectionMissing(list) ? null : list.selected);
 
 export function defaultName(list: DeviceList): string {
   return list.devices.find((x) => x.default)?.name ?? "系统默认";
 }
 
-// 麦克风测试：输入按当前增益与总音量直接播放到扬声器。切换设备时重新开始，离开设置页时停止。
 export const [micTest, setMicTest] = createStore({ on: false, level: 0, error: null as string | null });
 let testUnlisten: UnlistenFn | null = null;
 let testSeq = 0;

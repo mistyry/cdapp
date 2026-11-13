@@ -1,7 +1,3 @@
-//! 语音信令连接。
-//! 信令为 mediasoup 风格的 JSON 请求与响应。请求按 ID 等待响应，超时或连接关闭时返回错误。
-//! 服务端发起的请求立即回复确认，再转交会话处理。
-
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -16,19 +12,15 @@ use tokio_tungstenite::tungstenite::http::HeaderValue;
 use crate::error::{AppError, AppResult};
 use crate::kook::{BASE, USER_AGENT};
 
-/// 信令请求的超时时长。
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// 一帧信令。
 #[derive(Debug, Clone, PartialEq)]
 pub enum Frame {
     Response {
         id: u64,
         ok: bool,
         data: Value,
-        /// 失败原因。
         error: Option<String>,
-        /// 失败时的错误码，成功时为 0。
         code: i64,
     },
     Request {
@@ -43,7 +35,6 @@ pub enum Frame {
 }
 
 impl Frame {
-    /// 解析一帧信令，格式不符时返回 None。
     #[must_use]
     pub fn parse(text: &str) -> Option<Self> {
         let msg: Value = serde_json::from_str(text).ok()?;
@@ -92,18 +83,12 @@ impl Frame {
     }
 }
 
-/// disconnect 通知的错误码分类。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DisconnectKind {
-    /// 41100，加入失败。
     JoinFailed,
-    /// 41101，被同账号的新会话替换。
     Replaced,
-    /// 41106，被管理员移出语音频道。
     Kicked,
-    /// 41110，正常退出。
     Exited,
-    /// 其他错误码。
     Other(i64),
 }
 
@@ -119,42 +104,29 @@ impl DisconnectKind {
         }
     }
 
-    /// 是否可以重建连接。
     #[must_use]
     pub fn may_retry(self) -> bool {
         matches!(self, Self::Other(_))
     }
 }
 
-/// 转交会话的信令。
 #[derive(Debug, Clone, PartialEq)]
 pub enum Inbound {
-    Request {
-        method: String,
-        data: Value,
-    },
-    Notification {
-        method: String,
-        data: Value,
-    },
-    /// 连接已关闭。
+    Request { method: String, data: Value },
+    Notification { method: String, data: Value },
     Closed,
 }
 
 type Reply = oneshot::Sender<AppResult<Value>>;
 
-/// 等待响应的请求。
 #[derive(Default)]
 pub struct Pending {
     map: HashMap<u64, Reply>,
     closed: bool,
-    /// 最后收到的 disconnect 错误码。
     disconnect: Option<i64>,
 }
 
 impl Pending {
-    /// 登记请求，返回请求 ID。
-    ///
     /// # Errors
     ///
     /// 连接已关闭时返回错误。
@@ -170,17 +142,14 @@ impl Pending {
         Ok(id)
     }
 
-    /// 以结果答复请求，请求不存在时返回 false。
     pub fn resolve(&mut self, id: u64, r: AppResult<Value>) -> bool {
         self.map.remove(&id).is_some_and(|tx| tx.send(r).is_ok())
     }
 
-    /// 移除请求，不答复。
     pub fn remove(&mut self, id: u64) {
         self.map.remove(&id);
     }
 
-    /// 关闭连接，所有等待中的请求返回错误。
     pub fn close(&mut self) {
         self.closed = true;
         for (_, tx) in self.map.drain() {
@@ -203,7 +172,6 @@ fn closed_error() -> AppError {
     AppError::Other("语音信令连接已关闭".into())
 }
 
-/// 信令连接句柄，可以复制。
 #[derive(Clone)]
 pub struct Signal {
     out: mpsc::UnboundedSender<Message>,
@@ -212,8 +180,6 @@ pub struct Signal {
 }
 
 impl Signal {
-    /// 连接信令服务器。
-    ///
     /// # Errors
     ///
     /// 连接失败或超时时返回错误。
@@ -221,9 +187,6 @@ impl Signal {
         Self::connect_within(url, REQUEST_TIMEOUT).await
     }
 
-    /// 在 `limit` 内连接信令服务器。
-    /// 请求头使用桌面端 User-Agent，服务端据此判定设备类型。
-    ///
     /// # Errors
     ///
     /// 连接失败或超时时返回错误。
@@ -241,7 +204,6 @@ impl Signal {
         Ok(Self::spawn(ws, REQUEST_TIMEOUT))
     }
 
-    /// 在已建立的 WebSocket 上启动收发任务。
     pub fn spawn<S>(ws: S, timeout: Duration) -> (Self, mpsc::UnboundedReceiver<Inbound>)
     where
         S: futures_util::Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>>
@@ -264,8 +226,6 @@ impl Signal {
         )
     }
 
-    /// 发送请求并等待响应。
-    ///
     /// # Errors
     ///
     /// 连接关闭、超时或服务端拒绝时返回错误。
@@ -285,7 +245,6 @@ impl Signal {
         }
     }
 
-    /// 发送 exit 后关闭连接，不等待响应。服务端以 disconnect 通知后关闭。
     pub fn exit(&self) {
         let id = rand::random_range(1_000_000..10_000_000u64);
         let frame = json!({ "request": true, "id": id, "method": "exit", "data": {} });
@@ -293,7 +252,6 @@ impl Signal {
         let _ = self.out.send(Message::Close(None));
     }
 
-    /// 关闭连接，不发送 exit。
     pub fn close(&self) {
         let _ = self.out.send(Message::Close(None));
     }
@@ -303,13 +261,11 @@ impl Signal {
         lock(&self.pending).len()
     }
 
-    /// 最后收到的 disconnect 错误码。
     #[must_use]
     pub fn disconnect_code(&self) -> Option<i64> {
         lock(&self.pending).disconnect
     }
 
-    /// 连接是否已关闭。
     #[must_use]
     pub fn is_closed(&self) -> bool {
         lock(&self.pending).closed
@@ -349,7 +305,6 @@ async fn pump<S>(
                 };
                 match Frame::parse(&text) {
                     Some(Frame::Response { id, ok, data, error, code }) => {
-                        // 服务端拒绝时返回 API 错误，保留错误码。
                         let r = if ok {
                             Ok(data)
                         } else {
@@ -386,7 +341,6 @@ mod tests {
     async fn connect_times_out_when_server_never_handshakes() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        // 接受 TCP 连接但不完成握手。
         let hold = tokio::spawn(async move {
             let (sock, _) = listener.accept().await.unwrap();
             tokio::time::sleep(Duration::from_secs(30)).await;
@@ -475,7 +429,6 @@ mod tests {
         assert!(p.insert(c).is_err());
     }
 
-    /// 建立本地 WebSocket 连接，返回服务端与客户端两端。
     async fn pair() -> (
         tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
         Signal,
@@ -520,7 +473,6 @@ mod tests {
         let req = tokio::spawn(async move { s2.request("pauseProducer", json!({})).await });
         let sent = next_text(&mut server).await;
         assert_eq!(sent["method"], "pauseProducer");
-        // 服务端请求立即确认。
         server
             .send(Message::text(
                 json!({"request":true,"id":7,"method":"newConsumer","data":{"id":"c"}}).to_string(),
@@ -536,7 +488,6 @@ mod tests {
                 data: json!({"id":"c"})
             })
         );
-        // 连接关闭时等待中的请求失败。
         server.close(None).await.unwrap();
         let e = req.await.unwrap().unwrap_err();
         assert!(e.to_string().contains("已关闭"));

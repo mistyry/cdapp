@@ -1,7 +1,32 @@
 import { expect, test } from "bun:test";
-import { inline, parse, safeUrl, toPlain, MAX_PARSE, type Names } from "../kmarkdown";
+import { closeParens, inline, parse, safeUrl, toPlain, MAX_PARSE, type Names } from "../kmarkdown";
 
 const names: Names = { user: (id) => ({ u1: "小明", u2: "小明" } as Record<string, string>)[id], role: (id) => (id === "7" ? "管理" : undefined), channel: (id) => (id === "c1" ? "闲聊" : undefined) };
+
+test("链接右括号匹配跳过嵌套、转义与换行", () => {
+  const s = "a(b(c)d)e \\) f)\ng)";
+  const c = closeParens(s);
+  expect(c[2]).toBe(7);
+  expect(c[4]).toBe(5);
+  expect(c[8]).toBe(14);
+  expect(c[16]).toBe(17);
+  expect(closeParens("(x\n)")[1]).toBe(-1);
+  expect(inline("[a](https://x/(1))")).toEqual([{ t: "link", href: "https://x/(1)", c: [{ t: "text", v: "a" }] }]);
+  expect(inline("[a](b\n)")).toEqual([{ t: "text", v: "[a](b" }, { t: "br" }, { t: "text", v: ")" }]);
+});
+
+test("大量未闭合链接解析耗时线性", () => {
+  const time = (n: number) => {
+    const s = "[a](".repeat(n);
+    const t = performance.now();
+    for (let k = 0; k < 3; k++) inline(s);
+    return performance.now() - t;
+  };
+  time(1000);
+  const small = time(4000);
+  const big = time(16000);
+  expect(big / Math.max(small, 0.5)).toBeLessThan(8);
+});
 
 test("多行中文保留换行", () => {
   expect(parse("第一行\n第二行")).toEqual([{ t: "p", c: [{ t: "text", v: "第一行" }, { t: "br" }, { t: "text", v: "第二行" }] }]);
@@ -11,7 +36,6 @@ test("同名用户按 ID 区分", () => {
   const n = inline("(met)u1(met)(met)u2(met)(met)nobody(met)");
   expect(n).toEqual([{ t: "met", id: "u1" }, { t: "met", id: "u2" }, { t: "met", id: "nobody" }]);
   expect(toPlain(parse("(met)nobody(met)"), names)).toBe("@未知用户");
-  // 普通 @文字不是提及。
   expect(inline("@小明 a@b.com")).toEqual([{ t: "text", v: "@小明 a@b.com" }]);
 });
 
@@ -73,7 +97,7 @@ test("链接地址支持转义与配对括号", () => {
   expect(inline("[x](https://a.com/wiki/Foo_(bar))")).toEqual([{ t: "link", href: "https://a.com/wiki/Foo_(bar)", c: [{ t: "text", v: "x" }] }]);
 });
 
-test("大量无效裸链接线性处理", () => {
+test("大量无效裸链接在限时内处理", () => {
   const s = "http://%".repeat(2500);
   const t = performance.now();
   const b = parse(s);

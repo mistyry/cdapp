@@ -1,7 +1,3 @@
-//! 真实账号历史翻页验证（只读）。默认忽略：
-//! `CDAPP_LIVE_TOKEN=... cargo test --test live_history -- --ignored`
-//! 在第一个有满页历史的文字频道连续上翻，确认无重复、无断层、时间单调，并能读到结束。只输出数量。
-
 use std::collections::HashSet;
 
 use cdapp_lib::error::ErrorKind;

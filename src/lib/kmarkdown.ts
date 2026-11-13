@@ -1,7 +1,3 @@
-// KMarkdown 解析为语法树。只产出数据，不生成 HTML；渲染端用文本节点输出，原始 HTML 一律按文字显示。
-// 服务端按原样保存内容（含 HTML、实体与 javascript: 链接），安全处理全部在客户端完成。
-// 解析对任意输入不抛异常，复杂度近似线性：未闭合的标记按字面输出，并缓存“其后不存在闭合”的结论。
-
 export type Inline =
   | { t: "text"; v: string }
   | { t: "br" }
@@ -18,15 +14,12 @@ export type Block =
   | { t: "pre"; lang: string; v: string }
   | { t: "quote"; c: Block[] };
 
-// 超长内容只解析前段，其余按纯文本附加，避免极端输入拖慢渲染。
 export const MAX_PARSE = 20_000;
 const MAX_DEPTH = 6;
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
-// 服务器表情为两段（服务器ID/随机串），个人表情为三段。
 const EMOJI_ID = /^[A-Za-z0-9_-]{1,64}(\/[A-Za-z0-9_-]{1,64}){1,2}$/;
 const ESCAPABLE = "\\`*_~()[]>-#+.!|{}<";
 
-// 只允许 http / https 链接，其余（javascript:、data:、相对路径等）返回 null。
 export function safeUrl(raw: string): string | null {
   const s = raw.trim();
   if (!/^https?:\/\//i.test(s)) return null;
@@ -38,8 +31,6 @@ export function safeUrl(raw: string): string | null {
   }
 }
 
-// 表情图片经 emoji:// 协议读取，先读本地缓存，缺失时由后端下载并缓存。
-// WebView2 与 Android 的自定义协议形如 http://emoji.localhost/。
 const EMOJI_BASE = typeof navigator !== "undefined" && /Windows|Android/.test(navigator.userAgent) ? "http://emoji.localhost/" : "emoji://localhost/";
 export const emojiUrl = (id: string) => `${EMOJI_BASE}${id}.png`;
 
@@ -66,7 +57,6 @@ function parseBlocks(lines: string[], depth: number): Block[] {
     if (para.length) out.push({ t: "p", c: inline(para.join("\n")) });
     para = [];
   };
-  // 可作为结束围栏的行号（升序），查找下一个时不重复扫描。
   const fences: number[] = [];
   lines.forEach((l, j) => /^\s*```\s*$/.test(l) && fences.push(j));
   let fi = 0;
@@ -75,13 +65,11 @@ function parseBlocks(lines: string[], depth: number): Block[] {
     const fence = /^\s*```(.*)$/.exec(line);
     if (fence) {
       const after = fence[1];
-      // 单行代码块 ```code```。
       if (after.length > 3 && after.endsWith("```")) {
         flush();
         out.push({ t: "pre", lang: "", v: after.slice(0, -3) });
         continue;
       }
-      // 多行代码块：寻找结束围栏，没有则按普通文字处理。围栏后若不是语言名，视为第一行代码。
       while (fi < fences.length && fences[fi] <= i) fi++;
       const close = fi < fences.length ? fences[fi] : -1;
       if (close > i) {
@@ -97,7 +85,6 @@ function parseBlocks(lines: string[], depth: number): Block[] {
     if (depth < MAX_DEPTH && /^>\s?/.test(line)) {
       flush();
       const q: string[] = [];
-      // 引用从 "> " 开始，跨单个换行延续，遇到空行结束。
       while (i < lines.length && lines[i].trim() !== "") q.push(lines[i++].replace(/^>\s?/, ""));
       i--;
       out.push({ t: "quote", c: parseBlocks(q, depth + 1) });
@@ -123,7 +110,6 @@ export function inline(s: string, depth = 0): Inline[] {
     buf = "";
     out.push(n);
   };
-  // 记录某个闭合标记从哪里开始不再出现，未闭合的标记不重复向后搜索。
   const none = new Map<string, number>();
   const find = (tok: string, from: number) => {
     const miss = none.get(tok);
@@ -131,6 +117,16 @@ export function inline(s: string, depth = 0): Inline[] {
     const j = closeAt(s, tok, from);
     if (j < 0) none.set(tok, Math.min(miss ?? Infinity, from));
     return j;
+  };
+  let closes: Int32Array | null = null;
+  let nlAt = -2;
+  const ctx: LinkCtx = {
+    find,
+    closes: () => (closes ??= closeParens(s)),
+    newline: (from) => {
+      if (nlAt === -2 || (nlAt >= 0 && nlAt < from)) nlAt = s.indexOf("\n", from);
+      return nlAt;
+    },
   };
 
   let i = 0;
@@ -182,13 +178,12 @@ export function inline(s: string, depth = 0): Inline[] {
       }
     }
     if (ch === "[") {
-      const link = parseLink(s, i, find);
+      const link = parseLink(s, i, ctx);
       if (link) {
         const inner = depth < MAX_DEPTH ? inline(link.text, depth + 1) : [{ t: "text" as const, v: link.text }];
         const href = safeUrl(link.url);
         if (href) push({ t: "link", href, c: inner.length ? inner : [{ t: "text", v: href }] });
         else {
-          // 不安全或无效的链接只显示文字与原地址，不可点击。
           for (const n of inner) push(n);
           buf += ` (${link.url})`;
         }
@@ -198,7 +193,6 @@ export function inline(s: string, depth = 0): Inline[] {
     }
     if ((ch === "h" || ch === "H") && /^https?:\/\//i.test(s.slice(i, i + 8)) && !/[\w/]/.test(s[i - 1] ?? "")) {
       let j = i;
-      // 限制裸链接长度，避免长串无效地址反复扫描。
       while (j < s.length && j - i < MAX_URL && !/[\s<>"'`\]()（）【】，。！？；：、]/.test(s[j])) j++;
       const scanned = j;
       while (j > i && /[.,;:!?*~]/.test(s[j - 1])) j--;
@@ -209,7 +203,6 @@ export function inline(s: string, depth = 0): Inline[] {
         i = j;
         continue;
       }
-      // 无效地址整体按文字处理，不逐字符重试。
       buf += s.slice(i, scanned);
       i = scanned;
       continue;
@@ -218,7 +211,6 @@ export function inline(s: string, depth = 0): Inline[] {
     for (const [tok, t] of PAIRS) {
       if (!s.startsWith(tok, i)) continue;
       const from = i + tok.length;
-      // 强调内容不能为空，也不能以空白开头（例如 "a * b * c" 中的乘号）。
       if (from >= s.length || /\s/.test(s[from]) || s.startsWith(tok, from)) break;
       const j = find(tok, from);
       if (j > from && !/\s/.test(s[j - 1])) {
@@ -237,7 +229,6 @@ export function inline(s: string, depth = 0): Inline[] {
   return out;
 }
 
-// 查找未被反斜杠转义的闭合标记。
 function closeAt(s: string, tok: string, from: number): number {
   let j = s.indexOf(tok, from);
   while (j >= 0) {
@@ -250,29 +241,44 @@ function closeAt(s: string, tok: string, from: number): number {
   return -1;
 }
 
-function parseLink(s: string, i: number, find: (tok: string, from: number) => number) {
-  const mid = find("](", i + 1);
-  if (mid < 0 || mid - i > 2000 || s.slice(i + 1, mid).includes("\n")) return null;
-  // 结束括号须未被转义，并与地址中的括号配对。
-  let close = -1;
-  let open = 0;
-  for (let k = mid + 2; k < s.length && k - mid <= 4000; k++) {
+export function closeParens(s: string): Int32Array {
+  const n = s.length;
+  const esc = new Uint8Array(n + 1);
+  const match = new Int32Array(n).fill(-1);
+  const stack: number[] = [];
+  for (let k = 0; k < n; k++) {
     const c = s[k];
-    if (c === "\\") { k++; continue; }
-    if (c === "\n") break;
-    if (c === "(") open++;
-    else if (c === ")") {
-      if (open === 0) { close = k; break; }
-      open--;
-    }
+    if (c === "\\") { esc[k + 1] = 1; k++; continue; }
+    if (c === "\n") stack.length = 0;
+    else if (c === "(") stack.push(k);
+    else if (c === ")" && stack.length) match[stack.pop()!] = k;
   }
-  if (close < 0) return null;
+  const out = new Int32Array(n + 1).fill(-1);
+  for (let p = n - 1; p >= 0; p--) {
+    const c = s[p];
+    if (esc[p] || (c === "\\" && p + 1 < n)) out[p] = out[p + 1];
+    else if (c === "\n") out[p] = -1;
+    else if (c === ")") out[p] = p;
+    else if (c === "(") out[p] = match[p] < 0 ? -1 : out[match[p] + 1];
+    else out[p] = out[p + 1];
+  }
+  return out;
+}
+
+type LinkCtx = { find: (tok: string, from: number) => number; closes: () => Int32Array; newline: (from: number) => number };
+
+function parseLink(s: string, i: number, ctx: LinkCtx) {
+  const mid = ctx.find("](", i + 1);
+  if (mid < 0 || mid - i > 2000) return null;
+  const nl = ctx.newline(i + 1);
+  if (nl >= 0 && nl < mid) return null;
+  const close = ctx.closes()[mid + 2] ?? -1;
+  if (close < 0 || close - mid > 4000) return null;
   const url = s.slice(mid + 2, close).replace(/\\(.)/g, (m, c: string) => (ESCAPABLE.includes(c) ? c : m));
   if (/\s/.test(url.trim()) || !url.trim()) return null;
   return { text: s.slice(i + 1, mid), url, end: close + 1 };
 }
 
-// 名称解析：按 ID 查找，查不到时显示 ID 的占位，不按显示名称匹配。
 export type Names = {
   user: (id: string) => string | undefined;
   role: (id: string) => string | undefined;
@@ -289,7 +295,6 @@ export function mentionLabel(n: Inline & { t: "met" | "rol" | "chn" }, names: Na
   return `#${names.channel(n.id) ?? "未知频道"}`;
 }
 
-// 转为单行纯文本，用于引用摘要与回复预览。
 export function toPlain(blocks: Block[], names: Names): string {
   const parts: string[] = [];
   const walk = (ns: Inline[]) => {

@@ -1,7 +1,3 @@
-//! 麦克风采集与发送。
-//! 采集线程把设备样本混为单声道、重采样到 48 kHz 并切分为 60 ms 帧，放入有界队列。
-//! 发送任务从队列取帧，编码为 Opus 后经推流连接发出。停止时等待采集线程退出并释放设备。
-
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -21,25 +17,18 @@ use super::dsp::{
 use super::mic::MicStatus;
 use crate::kook::voice::peer::Uplink;
 
-/// 采集队列的最大帧数，满时丢弃最旧的帧。
 pub const QUEUE_FRAMES: usize = 5;
-/// 判定输入全零的样本窗口，1.5 秒。
 const ZERO_WINDOW: usize = RATE as usize * 3 / 2;
-/// 每隔若干帧上报一次输入电平。
 const METER_EVERY: u32 = 4;
-/// 打开设备的时限。
 const OPEN_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// 存活的采集线程数。
 static LIVE_THREADS: AtomicUsize = AtomicUsize::new(0);
 
-/// 存活的采集线程数，用于检查资源释放。
 #[must_use]
 pub fn live_captures() -> usize {
     LIVE_THREADS.load(Ordering::SeqCst)
 }
 
-/// 输入设备。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InputDevice {
@@ -48,8 +37,6 @@ pub struct InputDevice {
     pub default: bool,
 }
 
-/// 列出输入设备，不打开设备。
-///
 /// # Errors
 ///
 /// 系统无法枚举设备时返回错误。
@@ -75,30 +62,33 @@ pub fn input_devices() -> Result<Vec<InputDevice>, String> {
         .collect())
 }
 
-/// 采集来源。
 #[derive(Debug, Clone, PartialEq)]
 pub enum Source {
-    /// 麦克风设备，None 为系统默认。
     Device(Option<String>),
-    /// 固定频率的合成正弦音。
     #[cfg(any(test, feature = "test-media"))]
     Tone(f32),
-    /// 带标记音的合成音。按 `MARK_PERIOD_MS` 周期在每个周期开头切换为标记频率，持续 `MARK_MS`。
-    /// 周期按系统时间对齐，接收端可据此测量端到端延迟。
     #[cfg(any(test, feature = "test-media"))]
     Marked(f32, f32),
-    /// 白噪声叠加正弦音，幅度分别为 0.1 与 0.05，经与设备相同的降噪链路。
     #[cfg(any(test, feature = "test-media"))]
     Noisy(f32),
 }
 
-/// 标记音的周期与时长，单位毫秒。
 #[cfg(any(test, feature = "test-media"))]
 pub const MARK_PERIOD_MS: u64 = 2000;
 #[cfg(any(test, feature = "test-media"))]
 pub const MARK_MS: u64 = 120;
+#[cfg(any(test, feature = "test-media"))]
+pub const MARK_STEPS: u64 = 4;
+#[cfg(any(test, feature = "test-media"))]
+pub const MARK_STEP_HZ: f32 = 150.0;
 
-/// 采集线程发出的事件，`epoch` 用于区分采集轮次。
+#[cfg(any(test, feature = "test-media"))]
+#[must_use]
+#[allow(clippy::cast_precision_loss)]
+pub fn mark_freq(mark: f32, wall_ms: u64) -> f32 {
+    mark + (wall_ms / MARK_PERIOD_MS % MARK_STEPS) as f32 * MARK_STEP_HZ
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum CaptureEvent {
     Started {
@@ -116,7 +106,6 @@ pub enum CaptureEvent {
     },
 }
 
-/// 采集线程与发送任务之间的帧队列。
 #[derive(Clone)]
 struct Frames {
     queue: Arc<Mutex<Bounded<Vec<i16>>>>,
@@ -143,7 +132,6 @@ impl Frames {
         self.ready.notify_one();
     }
 
-    /// 取出一帧，并返回上次取帧以来丢弃的帧数。
     fn pop(&self, reported: &mut u64) -> Option<(Vec<i16>, u64)> {
         let mut q = self.queue.lock().ok()?;
         let f = q.pop()?;
@@ -153,7 +141,6 @@ impl Frames {
     }
 }
 
-/// 一次采集。持有采集线程与发送任务。
 pub struct Capture {
     stop: Arc<AtomicBool>,
     wake: std::sync::mpsc::Sender<()>,
@@ -164,7 +151,6 @@ pub struct Capture {
 }
 
 impl Capture {
-    /// 启动采集线程与发送任务。
     #[must_use]
     pub fn start(
         source: Source,
@@ -232,7 +218,22 @@ impl Capture {
         }
     }
 
-    /// 停止采集并等待设备释放，最多 2 秒。返回累计丢弃的帧数。
+    #[cfg(test)]
+    #[must_use]
+    pub fn stuck() -> Self {
+        let (wake, wait) = std::sync::mpsc::channel();
+        let (released_tx, released) = oneshot::channel::<()>();
+        std::mem::forget((wait, released_tx));
+        Self {
+            stop: Arc::new(AtomicBool::new(false)),
+            wake,
+            released,
+            sender: tauri::async_runtime::spawn(async { 0 }),
+            frames: Frames::new(),
+            epoch: 0,
+        }
+    }
+
     pub async fn stop(self) -> u64 {
         self.stop.store(true, Ordering::SeqCst);
         let _ = self.wake.send(());
@@ -251,7 +252,6 @@ impl Capture {
     }
 }
 
-/// 发送任务：编码队列中的帧并发出。
 async fn pump(
     frames: Frames,
     uplink: Uplink,
@@ -286,7 +286,6 @@ async fn pump(
             };
             let level = audio_level(&pcm);
             let skipped = u16::try_from(dropped).unwrap_or(u16::MAX);
-            // 丢弃的帧数随包传入，用于推进时间戳。
             if let Err(e) = uplink
                 .write_opus(
                     Bytes::copy_from_slice(&out[..len]),
@@ -311,8 +310,6 @@ async fn pump(
     }
 }
 
-/// 创建与推流参数一致的 Opus 编码器：64 kbps、带内 FEC、DTX。
-///
 /// # Errors
 ///
 /// libopus 拒绝参数时返回错误。
@@ -325,7 +322,6 @@ pub fn encoder() -> Result<opus::Encoder, opus::Error> {
     Ok(enc)
 }
 
-/// 按实时节奏生成合成正弦音。
 #[cfg(any(test, feature = "test-media"))]
 #[allow(
     clippy::cast_precision_loss,
@@ -350,7 +346,6 @@ fn run_tone(
     let mut splitter = Framer::default();
     let mut i: u64 = 0;
     let start = std::time::Instant::now();
-    // 标记音按系统时间定位。
     let wall0 = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0.0, |d| d.as_secs_f64() * 1000.0);
@@ -362,10 +357,9 @@ fn run_tone(
                 let ms = wall0 + i as f64 * 1000.0 / f64::from(RATE);
                 i += 1;
                 let f = match mark {
-                    Some(m) if (ms as u64) % MARK_PERIOD_MS < MARK_MS => m,
+                    Some(m) if (ms as u64) % MARK_PERIOD_MS < MARK_MS => mark_freq(m, ms as u64),
                     _ => freq,
                 };
-                // 相位连续累加，切换频率时不产生跳变。
                 phase += 2.0 * std::f64::consts::PI * f64::from(f) / f64::from(RATE);
                 (0.3 * phase.sin()) as f32
             })
@@ -386,7 +380,6 @@ fn run_tone(
     }
 }
 
-/// 按实时节奏生成噪声加正弦音，经完整采集链路。
 #[cfg(any(test, feature = "test-media"))]
 #[allow(clippy::too_many_arguments, clippy::cast_possible_truncation)]
 fn run_noisy(
@@ -408,7 +401,6 @@ fn run_noisy(
     let (mut seed, mut phase, mut k) = (1u32, 0.0f64, 0u32);
     while !stop.load(Ordering::SeqCst) {
         denoise.maintain();
-        // 10 ms 一段，与设备回调粒度相近。
         let chunk: Vec<f32> = (0..RATE as usize / 100)
             .map(|_| {
                 seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
@@ -432,8 +424,6 @@ fn run_noisy(
     }
 }
 
-/// 采集处理链：混音、全零检测、增益、重采样、降噪与分帧。
-/// 全零检测在增益之前，增益为 0% 时不误判为没有权限。
 struct Chain {
     channels: usize,
     gain: Gain,
@@ -457,7 +447,6 @@ impl Chain {
         }
     }
 
-    /// 处理一段样本。首次判定为全零时返回 true，之后不再重复。
     fn feed(&mut self, data: &[f32], frames: &Frames) -> bool {
         let mut mono = mixdown(data, self.channels);
         let zero = self.probe.feed(&mono) == Some(true) && !self.reported;
@@ -472,7 +461,6 @@ impl Chain {
     }
 }
 
-/// 采集回调发往采集线程的信号。
 enum Signal {
     Error(cpal::Error),
     Silent,
@@ -486,7 +474,6 @@ fn status_of(kind: ErrorKind) -> MicStatus {
     }
 }
 
-/// 选择设备。所选设备不可用时改用系统默认设备，返回值第二项表示是否已改用。
 fn pick_device<D>(
     id: Option<&str>,
     by_id: impl FnOnce(&str) -> Option<D>,
@@ -500,11 +487,8 @@ fn pick_device<D>(
         .ok_or((MicStatus::NoDevice, "没有可用的麦克风".into()))
 }
 
-/// 采集流信号的处理结果。
 enum Next {
-    /// 设备断开，需要重新打开。
     Lost(cpal::Error),
-    /// 结束采集。
     Fail(MicStatus, String),
 }
 
@@ -516,7 +500,6 @@ fn classify(sig: Signal) -> Option<Next> {
         )),
         Signal::Error(e) => match e.kind() {
             ErrorKind::DeviceNotAvailable | ErrorKind::StreamInvalidated => Some(Next::Lost(e)),
-            // 设备切换与缓冲欠载由系统处理。
             ErrorKind::DeviceChanged | ErrorKind::Xrun => None,
             ErrorKind::PermissionDenied => Some(Next::Fail(
                 MicStatus::Denied,
@@ -530,12 +513,10 @@ fn classify(sig: Signal) -> Option<Next> {
     }
 }
 
-/// 所选设备已重新可用。未选择具体设备时为 false。
 fn chosen_back(chosen: Option<&str>) -> bool {
     chosen.is_some_and(|c| find_device(Some(c)).is_ok_and(|(_, fell_back)| !fell_back))
 }
 
-/// 回退到系统默认设备期间，检查所选设备是否恢复的间隔。
 pub(crate) const RESTORE_PROBE: Duration = Duration::from_secs(2);
 
 fn find_device(id: Option<&str>) -> Result<(Device, bool), (MicStatus, String)> {
@@ -556,7 +537,6 @@ fn device_name(d: &Device) -> String {
         .map_or_else(|_| d.to_string(), |x| x.name().to_owned())
 }
 
-/// 打开并启动输入流。设备支持 48 kHz 时优先使用，避免重采样。
 fn open(
     device: &Device,
     gain: &Gain,
@@ -566,7 +546,6 @@ fn open(
 ) -> Result<cpal::Stream, (MicStatus, String)> {
     let fail = |e: cpal::Error| (status_of(e.kind()), format!("无法打开麦克风：{e}"));
     let cfg = device.default_input_config().map_err(fail)?;
-    // 保持声道与样本格式，只调整采样率。
     let cfg = device
         .supported_input_configs()
         .ok()
@@ -624,7 +603,6 @@ fn open(
     Ok(stream)
 }
 
-/// 采集线程：打开设备并监视错误，设备丢失时改用系统默认设备。
 #[allow(clippy::too_many_arguments)]
 fn run_device(
     id: Option<&str>,
@@ -643,7 +621,6 @@ fn run_device(
             message,
         });
     };
-    // 所选设备不可用时改用系统默认设备，并定期检查，所选设备恢复后自动切回。
     let chosen = id.map(str::to_owned);
     let mut target = chosen.clone();
     let mut restored = false;
@@ -672,7 +649,6 @@ fn run_device(
             restored = false;
         }
         let mut last_probe = std::time::Instant::now();
-        // 等待停止信号，同时处理流错误与全零检测。
         let lost = loop {
             if stop.load(Ordering::SeqCst) {
                 return;
@@ -685,7 +661,6 @@ fn run_device(
                     break None;
                 }
             }
-            // 降噪实例在此创建，不占用采集回调的时间。
             denoise.maintain();
             if !matches!(
                 wait.recv_timeout(Duration::from_millis(100)),
@@ -707,7 +682,6 @@ fn run_device(
             continue;
         };
         log::warn!("麦克风 {} 断开：{lost}", device_name(&device));
-        // 正在使用系统默认设备时：所选设备已恢复则切回，否则重新查找当前的默认设备。
         if target.is_none() {
             if chosen_back(chosen.as_deref()) {
                 target.clone_from(&chosen);
@@ -736,7 +710,6 @@ mod tests {
             pick_device(Some("usb"), by_id, || Some("默认设备")),
             Ok(("usb", false))
         );
-        // 所选设备不存在时改用默认设备。
         assert_eq!(
             pick_device(Some("gone"), by_id, || Some("默认设备")),
             Ok(("默认设备", true))
@@ -780,7 +753,6 @@ mod tests {
             }
         }
         assert_eq!(zero, 1);
-        // 全零输入仍按帧送入队列，超出容量的帧被丢弃。
         let q = frames.queue.lock().unwrap();
         assert_eq!(q.len(), QUEUE_FRAMES);
         assert!(q.dropped() >= 30, "{}", q.dropped());
@@ -799,7 +771,6 @@ mod tests {
             }
         }
         assert_eq!(hits, 0);
-        // 输出为静音，修改增益后立即生效。
         let q = frames.queue.lock().unwrap().pop().unwrap();
         assert!(q.iter().all(|&s| s == 0));
         gain.set(100);

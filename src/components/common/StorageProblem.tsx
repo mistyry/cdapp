@@ -1,7 +1,6 @@
 import { Show } from "solid-js";
 import { locate, restartApp, storage, useDefault } from "../../stores/storage";
 
-// 数据目录不可用时的启动页。不自动新建空目录，由用户决定。
 export default function StorageProblem() {
   const info = () => storage.info!;
   const title = () => {

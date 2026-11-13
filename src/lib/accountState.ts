@@ -1,7 +1,5 @@
 import { api } from "./api";
 
-// 按账号保存的本地状态，存于数据目录 accounts/<id>/state.json。
-// 旧版保存在 localStorage，首次读取时导入并删除。
 export type AccountKey = "emojiRecent" | "openFolders" | "peerVolumes" | "peerDenoise";
 
 const legacyKey: Partial<Record<AccountKey, (me: string) => string>> = {
@@ -51,7 +49,6 @@ export async function readAccount(me: string, key: AccountKey): Promise<unknown>
   return (await p)[key];
 }
 
-// 写入失败只保留在内存中。
 export function writeAccount(me: string, key: AccountKey, value: unknown) {
   const p = cache.get(me);
   if (p) void p.then((s) => (s[key] = value));

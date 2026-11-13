@@ -1,7 +1,3 @@
-//! 扬声器输出。
-//! 播放线程打开输出设备，在设备回调中从混音器取样本，按设备采样率重采样并复制到各声道。
-//! 设备丢失时改用系统默认设备，停止时等待线程退出并释放设备。
-
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -15,20 +11,16 @@ use tokio::sync::{mpsc, oneshot};
 use super::dsp::{RATE, Resampler};
 use super::mixer::Mixer;
 
-/// 打开设备的时限。
 const OPEN_TIMEOUT: Duration = Duration::from_secs(5);
-/// 每次从混音器取出的样本数，10 ms。
 const CHUNK: usize = 480;
 
 static LIVE_THREADS: AtomicUsize = AtomicUsize::new(0);
 
-/// 存活的播放线程数，用于检查资源释放。
 #[must_use]
 pub fn live_outputs() -> usize {
     LIVE_THREADS.load(Ordering::SeqCst)
 }
 
-/// 输出设备。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OutputDevice {
@@ -37,8 +29,6 @@ pub struct OutputDevice {
     pub default: bool,
 }
 
-/// 列出输出设备，不打开设备。
-///
 /// # Errors
 ///
 /// 系统无法枚举设备时返回错误。
@@ -61,24 +51,19 @@ pub fn output_devices() -> Result<Vec<OutputDevice>, String> {
         .collect())
 }
 
-/// 播放目标。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Sink {
-    /// 扬声器设备，None 为系统默认。
     Device(Option<String>),
-    /// 不打开设备，只消耗混音输出。
     #[cfg(any(test, feature = "test-media"))]
     Null,
 }
 
-/// 播放线程发出的事件，`epoch` 用于区分播放轮次。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OutputEvent {
     Started { epoch: u64, device: String },
     Failed { epoch: u64, message: String },
 }
 
-/// 一次播放。持有播放线程。
 pub struct Playback {
     stop: Arc<AtomicBool>,
     wake: std::sync::mpsc::Sender<()>,
@@ -125,7 +110,6 @@ impl Playback {
         }
     }
 
-    /// 线程永不退出的句柄，用于测试停止超时。
     #[cfg(test)]
     #[must_use]
     pub fn stuck() -> Self {
@@ -140,7 +124,6 @@ impl Playback {
         }
     }
 
-    /// 停止播放并等待设备释放，最多 2 秒。
     pub async fn stop(self) {
         self.stop.store(true, Ordering::SeqCst);
         let _ = self.wake.send(());
@@ -153,7 +136,6 @@ impl Playback {
     }
 }
 
-/// 从混音器取样本，转换为设备的采样率与声道数。
 pub struct Render {
     mixer: Arc<Mutex<Mixer>>,
     resampler: Resampler,
@@ -174,7 +156,6 @@ impl Render {
         }
     }
 
-    /// 填满一段交错输出缓冲。
     pub fn fill(&mut self, out: &mut [f32]) {
         let frames = out.len() / self.channels;
         while self.pending.len() < frames {
@@ -195,7 +176,6 @@ impl Render {
     }
 }
 
-/// 不打开设备，按实时节奏消耗混音输出。
 #[cfg(any(test, feature = "test-media"))]
 fn run_null(
     mixer: &Arc<Mutex<Mixer>>,
@@ -229,7 +209,6 @@ fn run_null(
     }
 }
 
-/// 为开启降噪的成员创建 KOOK AI 降噪实例。只在取列表时持有混音锁。
 fn maintain(mixer: &Arc<Mutex<Mixer>>) {
     let list = mixer.lock().map(|m| m.denoisers()).unwrap_or_default();
     for d in list {
@@ -242,7 +221,6 @@ fn device_name(d: &Device) -> String {
         .map_or_else(|_| d.to_string(), |x| x.name().to_owned())
 }
 
-/// 查找设备。所选设备不可用时改用系统默认设备，返回值第二项表示是否已改用。
 fn find_device(id: Option<&str>) -> Option<(Device, bool)> {
     let host = cpal::default_host();
     if let Some(d) = id
@@ -254,7 +232,6 @@ fn find_device(id: Option<&str>) -> Option<(Device, bool)> {
     host.default_output_device().map(|d| (d, id.is_some()))
 }
 
-/// 打开并启动输出流。设备支持 48 kHz 时优先使用。
 fn open(
     device: &Device,
     mixer: &Arc<Mutex<Mixer>>,
@@ -314,7 +291,6 @@ fn open(
     Ok(stream)
 }
 
-/// 播放线程：打开设备并监视错误，设备丢失时改用系统默认设备。
 fn run_device(
     id: Option<&str>,
     mixer: &Arc<Mutex<Mixer>>,
@@ -326,7 +302,6 @@ fn run_device(
     let failed = |message| {
         let _ = events.send(OutputEvent::Failed { epoch, message });
     };
-    // 所选设备不可用时改用系统默认设备，并定期检查，所选设备恢复后自动切回。
     let chosen = id.map(str::to_owned);
     let mut target = chosen.clone();
     loop {
@@ -345,7 +320,6 @@ fn run_device(
             Ok(s) => s,
             Err(m) => return failed(m),
         };
-        // 清空积压的音频。
         if let Ok(mut m) = mixer.lock() {
             m.clear_all();
         }
@@ -355,7 +329,6 @@ fn run_device(
         });
         let mut last_probe = std::time::Instant::now();
         let lost = loop {
-            // 成员降噪实例在此创建，不占用设备回调的时间。
             maintain(mixer);
             if target.is_none()
                 && let Some(c) = chosen.as_deref()
@@ -389,7 +362,6 @@ fn run_device(
             continue;
         };
         log::warn!("扬声器 {} 断开：{lost}", device_name(&device));
-        // 正在使用系统默认设备时：所选设备已恢复则切回，否则重新查找当前的默认设备。
         if target.is_none() {
             if let Some(c) = chosen.as_deref()
                 && find_device(Some(c)).is_some_and(|(_, fell_back)| !fell_back)
@@ -408,8 +380,6 @@ fn run_device(
     }
 }
 
-/// 耳机关闭状态。
-/// 关闭耳机时同时静音麦克风，重新打开时恢复之前的麦克风状态。
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Deafen {
     on: bool,
@@ -425,7 +395,6 @@ impl Deafen {
         }
     }
 
-    /// 指定关闭耳机前的麦克风静音状态。未知时视为未静音。
     #[must_use]
     pub fn with_mic_before(on: bool, mic_before: Option<bool>) -> Self {
         Self {
@@ -439,7 +408,6 @@ impl Deafen {
         self.on
     }
 
-    /// 设置耳机关闭，返回需要同步的麦克风静音状态。
     pub fn set(&mut self, on: bool, mic_muted: bool) -> Option<bool> {
         if on == self.on {
             return None;
@@ -454,7 +422,6 @@ impl Deafen {
         }
     }
 
-    /// 麦克风取消静音时同时打开耳机，返回耳机是否因此打开。
     pub fn on_mic(&mut self, muted: bool) -> bool {
         if self.on && !muted {
             self.on = false;
@@ -471,7 +438,6 @@ mod tests {
 
     #[test]
     fn deafened_join_keeps_muted_mic_on_undeafen() {
-        // 离线时先静音再关闭耳机，加入后打开耳机不应打开麦克风。
         let mut d = Deafen::with_mic_before(true, Some(true));
         assert_eq!(d.set(false, true), None);
         let mut d = Deafen::with_mic_before(true, Some(false));
@@ -484,20 +450,16 @@ mod tests {
     #[test]
     fn deafen_mutes_mic_and_restores_previous_state() {
         let mut d = Deafen::default();
-        // 关闭耳机时静音麦克风，打开后恢复。
         assert_eq!(d.set(true, false), Some(true));
         assert!(d.on());
         assert_eq!(d.set(true, true), None, "重复设置");
         assert_eq!(d.set(false, true), Some(false));
-        // 关闭前已静音，打开后保持静音。
         assert_eq!(d.set(true, true), None);
         assert_eq!(d.set(false, true), None);
-        // 关闭期间取消静音会同时打开耳机。
         assert_eq!(d.set(true, false), Some(true));
         assert!(d.on_mic(false));
         assert!(!d.on());
         assert_eq!(d.set(false, false), None);
-        // 静音麦克风不影响耳机。
         assert_eq!(d.set(true, true), None);
         assert!(!d.on_mic(true));
         assert!(d.on());
@@ -509,7 +471,6 @@ mod tests {
         let mut r = Render::new(mixer, 44_100, 2);
         let mut out = vec![1.0; 882];
         r.fill(&mut out);
-        // 没有音轨时输出静音。
         assert!(out.iter().all(|&x| x == 0.0));
         let mut r = Render::new(Arc::new(Mutex::new(Mixer::default())), RATE, 6);
         let mut out = vec![1.0; 6 * 100];
@@ -519,7 +480,6 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn null_playback_thread_exits_on_stop() {
-        // 线程计数为全进程共享，并发测试会同时增减，这里以本线程的退出信号为准。
         let (tx, mut rx) = mpsc::unbounded_channel();
         let p = Playback::start(Sink::Null, Arc::default(), 7, tx);
         assert!(matches!(
@@ -540,7 +500,6 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn dropped_playback_handle_ends_thread() {
-        // 会话任务被中止时句柄直接丢弃，线程也应退出，而不是空转。
         let (tx, mut rx) = mpsc::unbounded_channel();
         let p = Playback::start(Sink::Null, Arc::default(), 8, tx);
         assert!(matches!(

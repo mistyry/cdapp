@@ -1,7 +1,3 @@
-//! 真实账号频道分页验证（只读）。默认忽略：
-//! `CDAPP_LIVE_TOKEN=... cargo test --test live_channels -- --ignored`
-//! 对每个服务器读取全部频道，确认无重复且数量等于 meta.total。只输出数量。
-
 use cdapp_lib::error::ErrorKind;
 use cdapp_lib::kook::api::Api;
 use serde_json::Value;

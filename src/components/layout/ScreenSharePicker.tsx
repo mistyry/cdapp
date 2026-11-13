@@ -9,7 +9,6 @@ type Tab = "screen" | "window";
 const [open, setOpen] = createSignal(false);
 export const openSharePicker = () => setOpen(true);
 
-// 缩略图按需取，同一次打开内缓存。源句柄只在本次运行中有效，关闭对话框即丢弃。
 function Thumb(props: { source: ShareSource }) {
   const [src] = createResource(() => api.shareThumbnail(props.source.kind, props.source.id).catch(() => null));
   return (
@@ -22,16 +21,13 @@ function Thumb(props: { source: ShareSource }) {
 }
 
 const label = (s: ShareSource) => (s.kind === "screen" ? screenName(s) : s.name || s.application);
-// 显示器名为 \\.\DISPLAY1 这类系统名，转为「屏幕 1」。主屏幕另在可访问名称中标明。
 function screenName(s: ShareSource) {
   return `屏幕 ${s.name.replace(/^\\\\\.\\DISPLAY/, "")}`;
 }
 
-// 屏幕共享对话框。未分享时选源、声音与档位；分享中只改档。
 export default function ScreenSharePicker() {
   const Dialog = () => {
     const live = sharing();
-    // 对话框打开期间保留预览引擎，列源与缩略图复用。开播时后端自动释放，关闭时释放。
     const [sources] = createResource(() =>
       live ? Promise.resolve([] as ShareSource[]) : api.sharePreviewOpen().catch(() => {}).then(loadSources),
     );
@@ -43,7 +39,6 @@ export default function ScreenSharePicker() {
     const [res, setRes] = createSignal(share.resolution);
     const [fps, setFps] = createSignal(share.frameRate);
     const list = () => (sources() ?? []).filter((s) => s.kind === tab());
-    // 默认选中主屏幕。
     const chosen = (t: Tab) => {
       const id = picked()[t];
       const all = (sources() ?? []).filter((s) => s.kind === t);

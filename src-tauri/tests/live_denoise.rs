@@ -1,9 +1,3 @@
-//! 降噪的真实环境测试：
-//! `CDAPP_LIVE_TOKEN=... CDAPP_LIVE_TOKEN2=... CDAPP_LIVE_VOICE=...
-//!  cargo test --features test-media --test live_denoise -- --ignored --nocapture`
-//! 主号推送白噪声加 440 Hz 正弦音，依次关闭降噪、使用 RNNoise、使用 KOOK AI 降噪 2.0，
-//! 小号录制混音输出，比较各阶段的能量。不打开麦克风与扬声器。
-
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -65,7 +59,6 @@ fn rms(x: &[f32]) -> f64 {
     (x.iter().map(|&v| f64::from(v).powi(2)).sum::<f64>() / x.len() as f64).sqrt()
 }
 
-/// 指定频率处的幅度，取中间 1 秒。
 #[allow(clippy::many_single_char_names)]
 #[allow(clippy::cast_precision_loss)]
 fn tone(x: &[f32], f: f64) -> f64 {
@@ -91,7 +84,6 @@ fn levels(log: &Log) -> Vec<u8> {
         .collect()
 }
 
-/// 录制 `secs` 秒内上报的推流电平，返回平均值。电平取自编码前的最终帧，0 至 100。
 #[allow(clippy::cast_precision_loss)]
 async fn level_over(log: &Log, secs: u64) -> f64 {
     let n0 = levels(log).len();
@@ -104,7 +96,6 @@ async fn level_over(log: &Log, secs: u64) -> f64 {
     v.iter().map(|&x| f64::from(x)).sum::<f64>() / v.len() as f64
 }
 
-/// 单账号：只用 `CDAPP_LIVE_TOKEN` 加入，比较推流电平。
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "需要真实账号与语音频道"]
 async fn denoise_on_uplink() {
@@ -137,7 +128,6 @@ async fn denoise_on_uplink() {
     denoise.set_mode(Mode::Kook);
     tokio::time::sleep(Duration::from_secs(2)).await;
     let kook = level_over(&la, 4).await;
-    // 持续 12 秒以上，确认许可实时有效。
     tokio::time::sleep(Duration::from_secs(6)).await;
     let late = level_over(&la, 4).await;
     denoise.set(false);
@@ -214,7 +204,6 @@ async fn denoise_reaches_remote() {
     denoise.set_mode(Mode::Kook);
     tokio::time::sleep(Duration::from_secs(2)).await;
     let kook = record(&tap, 4).await;
-    // 持续 12 秒以上，确认许可在实时运行中有效，未在约 9 秒后静音。
     tokio::time::sleep(Duration::from_secs(6)).await;
     let kook_late = record(&tap, 4).await;
 

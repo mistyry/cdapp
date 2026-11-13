@@ -1,6 +1,3 @@
-//! Agora RTC SDK 运行文件，只用于观看分到 Agora 的分享者。启动时校验缓存，缺失或不符时从 Agora CDN 下载压缩包，
-//! 只取观看所需的文件，就绪后加载。下载或加载失败时观看 Agora 分享不可用，其余功能照常。
-
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -11,12 +8,10 @@ use sha2::{Digest, Sha256};
 use crate::error::{AppError, AppResult};
 
 const VERSION: &str = "4.6.2.70";
-/// Agora 原生 Windows SDK，`agora-electron-sdk` 4.6.2 的 `native_sdk_win` 指向此地址，不需登录。
 const CDN_ZIP: &str = "https://download.agora.io/sdk/release/Agora_Native_SDK_for_Windows_rel.v4.6.2.70_31618_FULL_20260211_1724_1009714.zip";
 const ZIP_PREFIX: &str = "Agora_Native_SDK_for_Windows_FULL/sdk/x86_64/";
 const TIMEOUT: Duration = Duration::from_secs(900);
 
-/// 下载地址。启用 `test-media` 特性时，`CDAPP_AGORA_CDN` 可替换，用于验收下载失败。
 fn source() -> String {
     #[cfg(feature = "test-media")]
     if let Ok(v) = std::env::var("CDAPP_AGORA_CDN") {
@@ -31,8 +26,6 @@ struct Entry {
     sha256: &'static str,
 }
 
-/// 观看所需的运行文件：`agora_rtc_sdk.dll` 及其依赖的 Agora DLL，实测只放这些即可进房、取编码帧与播放声音。
-/// 扩展类 DLL 用于降噪、美颜、编码等，观看不需要。
 const FILES: &[Entry] = &[
     Entry {
         path: "agora_rtc_sdk.dll",
@@ -64,12 +57,20 @@ const FILES: &[Entry] = &[
         size: 1_305_080,
         sha256: "cc62296cbef0f8b3d29027a460f6f36fd54336d44996fd03edf992c66320f89f",
     },
+    Entry {
+        path: "libagora_screen_capture_extension.dll",
+        size: 1_382_392,
+        sha256: "fe3528ff71e89ad95d59b742f6ff7592560ec4363ee0c3cc20a4f41296a8bbf7",
+    },
+    Entry {
+        path: "libagora-wgc.dll",
+        size: 215_032,
+        sha256: "ab31628d4b7363cd9dffa62c078e20fc418952d9d1489675dc542dc8f31c2778",
+    },
 ];
 
-/// 加载结果，未同步时为 None。只执行一次。
 static STATUS: OnceLock<Result<String, String>> = OnceLock::new();
 
-/// 已加载时返回版本。
 #[must_use]
 pub fn ready() -> bool {
     matches!(STATUS.get(), Some(Ok(_)))
@@ -131,7 +132,7 @@ async fn prepare() -> AppResult<PathBuf> {
     if want.is_empty() {
         return Ok(dir);
     }
-    log::info!("Agora 观看组件缺少 {} 个文件，开始下载", want.len());
+    log::info!("Agora 分享组件缺少 {} 个文件，开始下载", want.len());
     let http = reqwest::Client::builder().timeout(TIMEOUT).build()?;
     let zip = http
         .get(source())
@@ -152,7 +153,6 @@ fn load(dir: &Path) -> AppResult<String> {
     Ok(super::bridge::agora_version())
 }
 
-/// 准备并加载 SDK，只执行一次。须在火山 SDK 加载之后调用，二者都设置进程的 DLL 搜索目录。
 pub async fn sync() {
     if STATUS.get().is_some() {
         return;
@@ -165,8 +165,8 @@ pub async fn sync() {
         Err(e) => Err(e),
     };
     match &result {
-        Ok(v) => log::info!("Agora 观看组件已加载：{v}"),
-        Err(e) => log::warn!("Agora 观看组件不可用：{e}"),
+        Ok(v) => log::info!("Agora 分享组件已加载：{v}"),
+        Err(e) => log::warn!("Agora 分享组件不可用：{e}"),
     }
     let _ = STATUS.set(result.map_err(|e| e.to_string()));
 }
@@ -177,7 +177,7 @@ mod tests {
 
     #[test]
     fn manifest_is_well_formed() {
-        assert_eq!(FILES.len(), 6);
+        assert_eq!(FILES.len(), 8);
         for e in FILES {
             assert_eq!(e.sha256.len(), 64, "{}", e.path);
             assert!(
@@ -188,7 +188,6 @@ mod tests {
         }
     }
 
-    /// 需要本机 SDK 压缩包，用环境变量 `CDAPP_AGORA_ZIP` 指定。取出清单内文件、校验并加载。
     #[test]
     #[ignore = "需要 SDK 压缩包"]
     fn extracts_and_loads_zip() {

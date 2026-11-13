@@ -1,5 +1,3 @@
-//! 启动页一言读取验证，只读，不需要凭据。默认忽略：
-//! `cargo test --test live_saying -- --ignored --nocapture`
 #[tokio::test]
 #[ignore = "访问 KOOK"]
 async fn live_saying() {

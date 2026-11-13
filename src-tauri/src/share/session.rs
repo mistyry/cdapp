@@ -1,35 +1,25 @@
-//! 一次推流会话：取凭据、进房采集、首帧后按源宽高比提交编码配置并发布，之后处理续期与尺寸变化。
-//! 会话在后台任务中运行，结束原因经事件上报。令牌只在内存中传递，不写入日志。
-
 use std::time::Duration;
 
 use serde::Serialize;
 use tokio::sync::{mpsc, oneshot};
 
-use super::bridge::{self, BridgeError, Event, Live, LiveParams, SourceKind};
+use super::bridge::{self, BridgeError, Event, Live, LiveParams, SourceKind, Vendor};
 use super::fit;
 use super::loopback::{Loopback, Scope};
 use crate::error::{AppError, AppResult};
 use crate::kook::api::Api;
 use crate::kook::golive::Tier;
 
-/// 进房与首帧的等待上限。
 const READY_TIMEOUT: Duration = Duration::from_secs(15);
-/// 令牌续期兜底间隔。令牌 24 小时有效，SDK 在到期前提示。
 const REFRESH_EVERY: Duration = Duration::from_secs(12 * 3600);
-/// 本地视频流状态：采集失败。
+const VIDEO_CAPTURING: i32 = 1;
 const VIDEO_FAILED: i32 = 3;
-/// 房间状态中可通过更换令牌恢复的错误：令牌无效、更新令牌时令牌无效。
-const TOKEN_ERRORS: [i32; 2] = [-1000, -1010];
+const TOKEN_ERRORS: [i32; 4] = [-1000, -1010, -10008, -10009];
 
-/// 房间状态码的处理方式。见 `bytertc_media_defines.h` 的 `ErrorCode`。
 #[derive(Debug, PartialEq, Eq)]
 enum RoomAction {
-    /// 0 为已进房，正值为警告，都不处理。
     Ignore,
-    /// 更换令牌后继续。
     Renew,
-    /// 结束推流。
     End,
 }
 
@@ -43,30 +33,25 @@ fn room_action(code: i32) -> RoomAction {
     }
 }
 
-/// 推流中的控制命令。
 enum Control {
-    /// 改档，回传结果。
     Update(Tier, oneshot::Sender<AppResult<()>>),
-    /// 立即续期令牌，用于测试。
     #[cfg(any(test, feature = "test-media"))]
     Renew(oneshot::Sender<AppResult<()>>),
 }
 
-/// 开播请求。
 #[derive(Debug, Clone)]
 pub struct Request {
     pub channel_id: String,
     pub user_id: String,
     pub source_kind: SourceKind,
     pub source_id: u64,
-    /// 窗口所属进程，窗口共享带声音时只采该进程树。显示器共享不使用。
     pub source_pid: u32,
     pub tier: Tier,
     pub audio: bool,
+    pub vendor: Vendor,
 }
 
 impl Request {
-    /// 声音采集范围：显示器排除本进程树，窗口只采目标进程树。
     fn audio_scope(&self) -> Scope {
         match self.source_kind {
             SourceKind::Screen => Scope::Exclude(std::process::id()),
@@ -75,7 +60,6 @@ impl Request {
     }
 }
 
-/// 上报给前端的事件。
 #[derive(Debug, Clone, Serialize)]
 #[serde(
     tag = "kind",
@@ -83,32 +67,41 @@ impl Request {
     rename_all_fields = "camelCase"
 )]
 pub enum ShareEvent {
-    /// 已发布，附实际编码尺寸。
-    Live { width: u32, height: u32 },
-    /// 改档生效，附新的档位与编码尺寸。
+    Live {
+        width: u32,
+        height: u32,
+    },
     Tier {
         resolution: u32,
         frame_rate: u32,
         width: u32,
         height: u32,
     },
-    /// 发送统计。
     Stats {
         kbps: i32,
         fps: i32,
         width: i32,
         height: i32,
     },
-    /// 已结束。`message` 为空表示主动停止。
-    Ended { message: Option<String> },
+    Ended {
+        message: Option<String>,
+    },
 }
 
 pub type Sink = std::sync::Arc<dyn Fn(ShareEvent) + Send + Sync>;
 
-/// 语音会话结束时完成。分享依附语音，完成即结束推流。
 pub type VoiceEnded = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
 
-/// 会话句柄。
+pub(super) async fn until_voice_ends<T>(
+    voice: &mut VoiceEnded,
+    fut: impl std::future::Future<Output = AppResult<T>>,
+) -> AppResult<T> {
+    tokio::select! {
+        r = fut => r,
+        () = voice.as_mut() => Err(AppError::Other("已退出语音频道".into())),
+    }
+}
+
 pub struct Session {
     stop: Option<oneshot::Sender<()>>,
     control: mpsc::UnboundedSender<Control>,
@@ -126,7 +119,6 @@ impl Session {
         let done = tauri::async_runtime::spawn(async move {
             let mut push = Push::default();
             let r = run(&api, req, stop_rx, control_rx, &sink, voice, &mut push).await;
-            // 无论从哪条路径结束，先停声音推送，再在阻塞线程中销毁引擎。
             let (sound, live) = (push.sound.take(), push.live.take());
             let _ = tauri::async_runtime::spawn_blocking(move || {
                 drop(sound);
@@ -148,8 +140,6 @@ impl Session {
         }
     }
 
-    /// 改档。调用方只能传本人拥有的档位，服务端不校验。
-    ///
     /// # Errors
     ///
     /// 推流已结束、接口失败或编码配置失败。
@@ -161,8 +151,6 @@ impl Session {
         rx.await.map_err(|_| AppError::Other("推流已结束".into()))?
     }
 
-    /// 立即续期令牌。
-    ///
     /// # Errors
     ///
     /// 推流已结束或续期失败。
@@ -175,7 +163,6 @@ impl Session {
         rx.await.map_err(|_| AppError::Other("推流已结束".into()))?
     }
 
-    /// 停止并等待引擎销毁。
     pub async fn stop(mut self) {
         if let Some(s) = self.stop.take() {
             let _ = s.send(());
@@ -189,21 +176,17 @@ impl Session {
     }
 }
 
-/// 推流状态，由会话任务持有。
 #[derive(Default)]
 struct Push {
     live: Option<Live>,
-    /// 屏幕声音采集与推送，须先于 `live` 释放。
     sound: Option<Loopback>,
-    /// 当前编码尺寸。
     size: (u32, u32),
-    /// 最近读到的源实际尺寸。源已关闭、读不到时沿用。
     source: (u32, u32),
     kbps: u32,
+    vendor: Vendor,
 }
 
 impl Push {
-    /// 向系统读取源的实际尺寸。
     fn read_source(&mut self, req: &Request) -> (u32, u32) {
         if let Some(s) = super::source::size(req.source_kind, req.source_id) {
             self.source = s;
@@ -211,7 +194,6 @@ impl Push {
         self.source
     }
 
-    /// 在阻塞线程中调用推流句柄。
     async fn call<T: Send + 'static>(
         &mut self,
         f: impl FnOnce(&Live) -> Result<T, BridgeError> + Send + 'static,
@@ -240,7 +222,6 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> 
         .map_err(|e| AppError::Other(e.to_string()))
 }
 
-/// 主动停止返回 `Ok`，其余结束原因返回错误。
 async fn run(
     api: &Api,
     mut req: Request,
@@ -250,7 +231,8 @@ async fn run(
     mut voice: VoiceEnded,
     push: &mut Push,
 ) -> AppResult<()> {
-    let Some(mut events) = begin(api, &req, &mut stop, push).await? else {
+    let Some(mut events) = until_voice_ends(&mut voice, begin(api, &req, &mut stop, push)).await?
+    else {
         return Ok(());
     };
     let (width, height) = push.size;
@@ -288,7 +270,6 @@ async fn run(
                     let _ = reply.send(renew(api, &req, push).await);
                     false
                 }
-                // 句柄已释放，等待停止信号。
                 None => std::future::pending().await,
             },
             e = events.recv() => on_event(e, &req, sink, push).await?,
@@ -299,15 +280,14 @@ async fn run(
     }
 }
 
-/// 取新令牌并交给 SDK。
 async fn renew(api: &Api, req: &Request, push: &mut Push) -> AppResult<()> {
-    let token = api.go_live_refresh(&req.channel_id).await?.token;
+    let vendor = push.vendor;
+    let token = api.go_live_refresh(&req.channel_id, vendor).await?.token;
     push.call(move |l| l.token(&token)).await?;
     log::info!("屏幕分享令牌已续期");
     Ok(())
 }
 
-/// 改档：go-live-update 取新码率，按新档位与源的实际尺寸重新提交编码配置。
 async fn update(api: &Api, req: &mut Request, tier: Tier, push: &mut Push) -> AppResult<()> {
     let bitrate = api
         .go_live_update(&req.channel_id, &req.user_id, tier)
@@ -330,7 +310,6 @@ async fn update(api: &Api, req: &mut Request, tier: Tier, push: &mut Push) -> Ap
     Ok(())
 }
 
-/// 处理发布后的事件，返回是否需要续期令牌。
 async fn on_event(
     e: Option<Event>,
     req: &Request,
@@ -339,7 +318,6 @@ async fn on_event(
 ) -> AppResult<bool> {
     match e {
         Some(Event::TokenWillExpire) => return Ok(true),
-        // 回调中的尺寸是编码后的，不能作为源尺寸。窗口大小变化也会触发，此时重读源的实际尺寸。
         Some(Event::SizeChanged { .. }) => {
             let next = fit::fit(req.tier.resolution, push.read_source(req));
             if next != push.size {
@@ -377,28 +355,40 @@ async fn on_event(
     Ok(false)
 }
 
-/// 取凭据、进房采集，等进房与首帧后按源宽高比提交编码配置并发布。主动停止时返回 `None`。
 async fn begin(
     api: &Api,
     req: &Request,
     stop: &mut oneshot::Receiver<()>,
     push: &mut Push,
 ) -> AppResult<Option<mpsc::UnboundedReceiver<Event>>> {
-    let got = api.go_live(&req.channel_id, &req.user_id, req.tier).await?;
-    let volc = got
-        .volc
+    let got = api
+        .go_live(&req.channel_id, &req.user_id, req.tier, req.vendor)
+        .await?;
+    let vendor = Vendor::parse(&got.vendor)
         .ok_or_else(|| AppError::Other("当前账号分配的分享服务暂不支持".into()))?;
+    let cred = got
+        .options
+        .ok_or_else(|| AppError::Other("当前账号分配的分享服务暂不支持".into()))?;
+    if vendor == Vendor::Agora {
+        super::agora_sdk::sync().await;
+        if !super::agora_sdk::ready() {
+            return Err(AppError::Other("Agora 分享组件不可用".into()));
+        }
+    }
+    push.vendor = vendor;
+    log::info!("推流厂商：{vendor:?}");
     push.kbps = fit::kbps(got.max_bitrate);
     push.size = fit::tier_box(req.tier.resolution);
     let (tx, mut events) = mpsc::unbounded_channel();
     let (r, kbps, (width, height)) = (req.clone(), push.kbps, push.size);
     let live = blocking(move || {
         Live::start(
+            vendor,
             &LiveParams {
-                app_id: &volc.app_id,
-                room: &volc.channel_name,
+                app_id: &cred.app_id,
+                room: &cred.channel_name,
                 uid: &r.user_id,
-                token: &volc.token,
+                token: &cred.token,
                 source_kind: r.source_kind,
                 source_id: r.source_id,
                 width,
@@ -428,6 +418,9 @@ async fn begin(
                     return Err(AppError::Other(format!("进入分享房间失败：{code}")));
                 }
                 Some(Event::FirstFrame { width, height }) => frame = Some((width, height)),
+                Some(Event::VideoState { state: VIDEO_CAPTURING, .. }) if vendor == Vendor::Agora => {
+                    frame.get_or_insert((0, 0));
+                }
                 Some(Event::VideoState { state: VIDEO_FAILED, error }) => {
                     return Err(AppError::Other(format!("屏幕采集失败：{error}")));
                 }
@@ -436,16 +429,14 @@ async fn begin(
             }
         }
     }
-    // 首帧尺寸在设置编码前等于源尺寸，只在系统读不到时作为初值。
     push.source = frame.unwrap_or_default();
     let source = push.read_source(req);
     push.encode(fit::fit(req.tier.resolution, source), req.tier.frame_rate)
         .await?;
     push.call(Live::publish).await?;
     if req.audio {
-        push.sound = Some(Loopback::start(req.audio_scope(), |pcm| {
-            // 推流停止后桥接返回状态不符，忽略。
-            if let Err(e) = bridge::push_audio(pcm)
+        push.sound = Some(Loopback::start(req.audio_scope(), move |pcm| {
+            if let Err(e) = bridge::push_audio(vendor, pcm)
                 && e != BridgeError::State
             {
                 log::debug!("屏幕声音推送失败：{e}");
@@ -472,13 +463,30 @@ mod tests {
         assert_eq!(v["frameRate"], 60);
     }
 
+    #[tokio::test]
+    async fn startup_ends_when_voice_ends() {
+        let mut voice: VoiceEnded =
+            Box::pin(tokio::time::sleep(std::time::Duration::from_millis(20)));
+        let t = std::time::Instant::now();
+        let r = until_voice_ends(&mut voice, std::future::pending::<AppResult<()>>()).await;
+        assert!(t.elapsed() < std::time::Duration::from_secs(1));
+        assert_eq!(r.unwrap_err().to_string(), "已退出语音频道");
+        let mut voice: VoiceEnded = Box::pin(std::future::pending());
+        assert_eq!(
+            until_voice_ends(&mut voice, async { Ok(7) }).await.unwrap(),
+            7
+        );
+    }
+
     #[test]
     fn classifies_room_codes() {
         assert_eq!(room_action(0), RoomAction::Ignore);
         assert_eq!(room_action(1), RoomAction::Ignore);
         assert_eq!(room_action(-1000), RoomAction::Renew);
         assert_eq!(room_action(-1010), RoomAction::Renew);
-        for code in [-1004, -1006, -1009, -1011, -1084] {
+        assert_eq!(room_action(-10008), RoomAction::Renew);
+        assert_eq!(room_action(-10009), RoomAction::Renew);
+        for code in [-1004, -1006, -1009, -1011, -1084, -10003] {
             assert_eq!(room_action(code), RoomAction::End, "{code}");
         }
     }

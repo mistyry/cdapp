@@ -4,8 +4,6 @@ import { loadUnicode, parseRecent, pushRecent, type CustomEmoji, type Pick, type
 import { readAccount, writeAccount } from "../lib/accountState";
 import { accountGen, session } from "./session";
 
-// 表情库。服务器与个人表情按账号读取一次，可手动重试；Unicode 数据首次打开选择器时加载。
-// 迟到的结果按账号代次丢弃，不会写入后来登录的账号。
 type GuildSet = { guildId: string; name: string; icon: string; items: CustomEmoji[] };
 
 const initial = () => ({
@@ -14,7 +12,6 @@ const initial = () => ({
   guilds: [] as GuildSet[],
   personal: [] as CustomEmoji[],
   personalFailed: false,
-  // 已添加的服务器表情组，按用户排序；null 表示读取失败。
   joined: null as string[] | null,
   unicode: [] as UnicodeEmoji[],
   unicodeStatus: "idle" as "idle" | "loading" | "ready" | "failed",
@@ -36,7 +33,6 @@ function syncAccount() {
   const me = session.me?.id ?? "";
   setEmoji({ recent: [], recentOwner: me });
   if (!me) return;
-  // 读取完成前已有新的使用记录时，合并到读取结果之前。
   void readAccount(me, "emojiRecent").then((v) => {
     if (gen !== accountGen()) return;
     const stored = parseRecent(v == null ? null : JSON.stringify(v));
@@ -46,7 +42,6 @@ function syncAccount() {
   });
 }
 
-// 打开选择器时调用。已加载或正在加载时不重复请求；force 用于失败后的重试。
 export function ensureEmojis(force = false): Promise<void> {
   syncAccount();
   if (emoji.unicodeStatus === "idle" || (force && emoji.unicodeStatus === "failed")) {
@@ -79,7 +74,6 @@ export function ensureEmojis(force = false): Promise<void> {
   return inflight;
 }
 
-// 记录最近使用，按账号保存在数据目录，最多 24 个。
 export function noteRecent(p: Pick) {
   syncAccount();
   const me = session.me?.id;
@@ -89,7 +83,6 @@ export function noteRecent(p: Pick) {
   writeAccount(me, "emojiRecent", next);
 }
 
-// 查找自定义表情所属服务器；不在当前列表中的视为失效。
 export function customOf(id: string): (CustomEmoji & { guildId: string }) | null {
   const p = emoji.personal.find((x) => x.id === id);
   if (p) return { ...p, guildId: "" };
@@ -103,8 +96,6 @@ export function allCustom(): Array<CustomEmoji & { guildId: string }> {
   return [...emoji.personal.map((x) => ({ ...x, guildId: "" })), ...emoji.guilds.flatMap((g) => g.items.map((x) => ({ ...x, guildId: g.guildId })))];
 }
 
-// 选择器中的服务器表情组：用户已添加的组按其顺序；当前服务器始终可用，未添加时排在最前。
-// 已添加列表读取失败时退回为全部有表情的服务器。
 export function shownGuilds(current: string | null): GuildSet[] {
   const byId = new Map(emoji.guilds.filter((g) => g.items.length).map((g) => [g.guildId, g]));
   const ids = emoji.joined ? emoji.joined.filter((id) => byId.has(id)) : [...byId.keys()];

@@ -1,9 +1,7 @@
-// 消息类型与非文本内容的可读降级。只读取已验证的字段，结构异常时退回占位文字，不抛异常。
 import { safeUrl } from "./kmarkdown";
 
 export const Kind = { TEXT: 1, IMAGE: 2, VIDEO: 3, FILE: 4, AUDIO: 8, KMARKDOWN: 9, CARD: 10, ITEM: 12 } as const;
 
-// 视频、文件、音频的附件。服务端给出单个对象（不是数组）。
 export type Attachment = { name: string; url: string | null; size: number };
 
 export function toAttachment(a: unknown): Attachment | undefined {
@@ -13,7 +11,6 @@ export function toAttachment(a: unknown): Attachment | undefined {
   return { name: typeof r.name === "string" ? r.name : "", url: typeof r.url === "string" ? safeUrl(r.url) : null, size: Number(r.size) || 0 };
 }
 
-// 卡片中可显示的部分：标题与正文（KMarkdown 或纯文本）、图片。其余模块计入 other，用占位提示。
 export type CardPart = { t: "header" | "text"; v: string; kmd: boolean } | { t: "image"; src: string; alt: string } | { t: "file"; name: string; url: string | null; size: number };
 export type Card = { parts: CardPart[]; other: boolean };
 
@@ -57,7 +54,6 @@ export function parseCards(content: string): Card[] | null {
       else if (m.type === "context" && Array.isArray(m.elements)) for (const e of m.elements) ok = text(e, "text") || ok;
       else if ((m.type === "container" || m.type === "image-group") && Array.isArray(m.elements)) for (const e of m.elements) ok = image(e) || ok;
       else if (m.type === "divider") ok = true;
-      // 发送文件（类型 4）后服务端转成的卡片：{type:"file", title, src, size}。
       else if (m.type === "file" && typeof m.src === "string") {
         add({ t: "file", name: typeof m.title === "string" ? m.title : "", url: safeUrl(m.src), size: Number(m.size) || 0 });
         ok = true;
@@ -72,7 +68,6 @@ const LABEL: Record<number, string> = { [Kind.IMAGE]: "[图片]", [Kind.VIDEO]: 
 
 export const isText = (type: number) => type === Kind.TEXT || type === Kind.KMARKDOWN || type === Kind.ITEM;
 
-// 非文本消息的摘要，文本类型返回 null。
 export function label(type: number, attachment?: Attachment): string | null {
   if (isText(type)) return null;
   const base = LABEL[type] ?? `[不支持的消息类型 ${type}]`;

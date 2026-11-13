@@ -1,5 +1,3 @@
-//! 提示音播放。解码缓存的音频文件，在所选输出设备上单独播放，与语音混音互不影响。
-
 use std::fs::File;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -16,15 +14,11 @@ use symphonia::core::probe::Hint;
 
 use super::dsp::Resampler;
 
-/// 单个提示音的最长时长，超出部分截断。
 const MAX_SECONDS: u32 = 10;
-/// 同时播放的提示音上限。
 const MAX_PLAYING: usize = 4;
 
 static PLAYING: AtomicUsize = AtomicUsize::new(0);
 
-/// 解码为单声道样本，返回样本与采样率。
-///
 /// # Errors
 ///
 /// 文件无法读取或格式不受支持时返回错误。
@@ -80,7 +74,6 @@ pub fn decode(path: &Path) -> Result<(Vec<f32>, u32), String> {
     Ok((out, rate))
 }
 
-/// 在输出设备上播放文件。`device` 为 None 时使用系统默认设备，`volume` 为 0 至 1。
 pub fn play(path: &Path, device: Option<String>, volume: f32) {
     if volume <= 0.0 || PLAYING.load(Ordering::SeqCst) >= MAX_PLAYING {
         return;
@@ -150,7 +143,6 @@ fn run(path: &Path, device: Option<&str>, volume: f32) -> Result<(), String> {
     }
     .map_err(|e| e.to_string())?;
     stream.play().map_err(|e| e.to_string())?;
-    // 多留一段时间，确保设备缓冲中的尾音播完。
     std::thread::sleep(Duration::from_millis(millis + 200));
     drop(stream);
     Ok(())
@@ -165,7 +157,6 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("cdapp-effect-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("t.wav");
-        // 8 kHz 单声道 16 位，100 个样本。
         let n: u32 = 100;
         let mut b = Vec::new();
         b.extend_from_slice(b"RIFF");

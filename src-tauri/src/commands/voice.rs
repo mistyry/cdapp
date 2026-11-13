@@ -10,13 +10,11 @@ use crate::error::{AppError, AppResult};
 use crate::kook::gate::Need;
 use crate::kook::voice::{EndReason, MicPrefs, Sink, VoiceEvent, VoiceSession};
 
-/// 本人能否开启屏幕分享。服务端只在开播时校验会员，这里按会员到期时间预判。
 #[tauri::command]
 pub async fn golive_allowed(state: State<'_, Mutex<AppState>>) -> AppResult<bool> {
     api(&state)?.golive_owned().await
 }
 
-/// 通知当前语音会话系统已唤醒或网络已恢复。
 #[tauri::command]
 pub async fn voice_wake(voice: State<'_, VoiceState>) -> AppResult<()> {
     if let Some(s) = voice.0.lock().await.session.as_ref() {
@@ -25,7 +23,6 @@ pub async fn voice_wake(voice: State<'_, VoiceState>) -> AppResult<()> {
     Ok(())
 }
 
-/// 语音事件，`generation` 为会话代次。
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct VoicePayload {
@@ -34,7 +31,6 @@ struct VoicePayload {
     event: VoiceEvent,
 }
 
-/// 加入时的麦克风与耳机状态。
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JoinAudio {
@@ -42,12 +38,9 @@ pub struct JoinAudio {
     muted: bool,
     #[serde(default)]
     deafened: bool,
-    /// 关闭耳机前麦克风是否静音。
     mic_before_deaf: Option<bool>,
 }
 
-/// 加入语音频道，返回会话代次。先完全释放旧会话，再在后台加入。
-/// 进度、成员与结束原因以 `voice://event` 广播。
 #[tauri::command]
 pub async fn voice_join(
     channel_id: String,
@@ -59,24 +52,19 @@ pub async fn voice_join(
     voice: State<'_, VoiceState>,
 ) -> AppResult<u64> {
     let api = api(&state)?;
-    // 服务端不校验查看与连接权限，须在申请令牌前拦截。
     check(&state, &channel_id, Need::Connect)?;
     let token = api.token().unwrap_or_default().to_owned();
-    // 分享依附原语音频道，加入或切换前先停。
     super::stop_share(&app).await;
     let mut slot = voice.0.lock().await;
-    // 前端按序号发出请求，但拿锁顺序不定。已被后发的加入或退出取代时不再加入。
     if !slot.admit_join(request) {
         return Err(AppError::Cancelled);
     }
     if let Some(old) = slot.session.take() {
         old.leave().await;
     }
-    // 加入前结束麦克风测试，释放设备。
     if let Some(t) = slot.test.take() {
         let _ = tauri::async_runtime::spawn_blocking(move || drop(t)).await;
     }
-    // 等锁与释放期间可能已退出登录。
     if lock(&state)?.token.as_deref() != Some(token.as_str()) {
         return Err(AppError::NotLoggedIn);
     }
@@ -104,7 +92,6 @@ pub async fn voice_join(
         if let Err(e) = app.emit("voice://event", payload) {
             log::warn!("事件广播失败：{e}");
         }
-        // 凭据失效时与其他命令一致，结束当前登录。旧账号的迟到结果不影响新登录。
         if unauthorized && expire(&app.state::<Mutex<AppState>>(), &token) {
             let _ = app.emit("session://expired", message);
         }
@@ -114,10 +101,8 @@ pub async fn voice_join(
         deafened,
         mic_before_deaf,
     } = audio.unwrap_or_default();
-    // 启用测试特性时 MicPrefs 另有测试字段。
     #[allow(clippy::needless_update)]
     let mic = MicPrefs {
-        // 闭听加入时麦克风也静音。
         muted: muted || deafened,
         source: mic_source(slot.input.clone()),
         gain: slot.gain.clone(),
@@ -130,9 +115,7 @@ pub async fn voice_join(
         password: password.filter(|p| !p.is_empty()),
         ..MicPrefs::default()
     };
-    // 每次加入语音重新尝试 KOOK AI 降噪。
     crate::audio::denoise::retry_kook();
-    // 降噪在启动时已开启而尚无许可，在后台获取，取得后自动启用，此前用 RNNoise。
     let peers_denoised = !slot.denoised.is_empty();
     if (slot.denoise.on() || peers_denoised)
         && slot.denoise.mode() == crate::audio::denoise::Mode::Kook
@@ -145,8 +128,6 @@ pub async fn voice_join(
     Ok(generation)
 }
 
-/// 退出语音，等待旧连接释放。`request` 为前端请求序号，序号更小的在途加入随之作废。
-/// 退出登录等无序号的调用只释放当前会话。先停屏幕分享。
 #[tauri::command]
 pub async fn voice_leave(
     request: Option<u64>,
@@ -165,7 +146,6 @@ pub async fn voice_leave(
     Ok(())
 }
 
-/// 采集来源。启用 `test-media` 特性时，设置 `CDAPP_MIC_TONE=<频率>` 可用合成音代替麦克风。
 fn mic_source(input: Option<String>) -> Source {
     #[cfg(feature = "test-media")]
     if let Some(f) = std::env::var("CDAPP_MIC_TONE")
@@ -178,7 +158,6 @@ fn mic_source(input: Option<String>) -> Source {
     Source::Device(input)
 }
 
-/// 列出输入设备。只读取设备列表，不打开设备，不触发系统权限请求。
 #[tauri::command]
 pub async fn audio_inputs(voice: State<'_, VoiceState>) -> AppResult<AudioInputs> {
     let selected = voice.0.lock().await.input.clone();
@@ -193,11 +172,9 @@ pub async fn audio_inputs(voice: State<'_, VoiceState>) -> AppResult<AudioInputs
 #[serde(rename_all = "camelCase")]
 pub struct AudioInputs {
     devices: Vec<InputDevice>,
-    /// 当前选择，None 为系统默认。
     selected: Option<String>,
 }
 
-/// 选择输入设备，None 为系统默认。正在采集时立即切换。
 #[tauri::command]
 pub async fn set_audio_input(id: Option<String>, voice: State<'_, VoiceState>) -> AppResult<()> {
     let mut slot = voice.0.lock().await;
@@ -209,8 +186,6 @@ pub async fn set_audio_input(id: Option<String>, voice: State<'_, VoiceState>) -
     Ok(())
 }
 
-/// 设置麦克风静音。取消静音也用于失败后的重试。
-/// `generation` 须为当前会话代次，避免操作到切换后的新会话。
 #[tauri::command]
 pub async fn voice_set_mic(
     generation: u64,
@@ -224,7 +199,6 @@ pub async fn voice_set_mic(
     control.pause(paused).await
 }
 
-/// 当前会话的控制句柄。代次不符或会话已结束时返回错误。
 async fn control(
     voice: &State<'_, VoiceState>,
     generation: u64,
@@ -235,7 +209,6 @@ async fn control(
     }
 }
 
-/// 设置耳机关闭。关闭耳机时同时静音麦克风。
 #[tauri::command]
 pub async fn voice_set_deafen(
     generation: u64,
@@ -245,7 +218,6 @@ pub async fn voice_set_deafen(
     control(&voice, generation).await?.deafen(deafened).await
 }
 
-/// 列出输出设备，不打开设备。
 #[tauri::command]
 pub async fn audio_outputs(voice: State<'_, VoiceState>) -> AppResult<AudioOutputs> {
     let selected = voice.0.lock().await.output.clone();
@@ -263,7 +235,6 @@ pub struct AudioOutputs {
     selected: Option<String>,
 }
 
-/// 选择输出设备，None 为系统默认。正在播放时立即切换。
 #[tauri::command]
 pub async fn set_audio_output(id: Option<String>, voice: State<'_, VoiceState>) -> AppResult<()> {
     let mut slot = voice.0.lock().await;
@@ -276,7 +247,6 @@ pub async fn set_audio_output(id: Option<String>, voice: State<'_, VoiceState>) 
     Ok(())
 }
 
-/// 设置成员音量，上限 200%。100% 不记录。
 #[tauri::command]
 pub async fn voice_set_volume(
     user_id: String,
@@ -296,7 +266,6 @@ pub async fn voice_set_volume(
     Ok(())
 }
 
-/// 开启或关闭成员降噪，使用本机选择的降噪方式。
 #[tauri::command]
 pub async fn voice_set_peer_denoise(
     user_id: String,
@@ -321,7 +290,6 @@ pub async fn voice_set_peer_denoise(
     Ok(())
 }
 
-/// 设置总音量，上限 200%。
 #[tauri::command]
 pub async fn voice_set_master(percent: u16, voice: State<'_, VoiceState>) -> AppResult<()> {
     let percent = percent.min(crate::audio::mixer::MAX_VOLUME);
@@ -337,8 +305,6 @@ pub async fn voice_set_master(percent: u16, voice: State<'_, VoiceState>) -> App
     Ok(())
 }
 
-/// 设置麦克风输入增益，上限 200%，100% 为原始音量。正在采集时立即生效。
-/// 返回实际生效的值。
 #[tauri::command]
 pub async fn voice_set_gain(percent: u16, voice: State<'_, VoiceState>) -> AppResult<u16> {
     let slot = voice.0.lock().await;
@@ -347,7 +313,6 @@ pub async fn voice_set_gain(percent: u16, voice: State<'_, VoiceState>) -> AppRe
     Ok(slot.gain.percent())
 }
 
-/// 在后台获取 KOOK AI 降噪许可。已有许可时不请求。
 fn spawn_license(api: crate::kook::api::Api) {
     if crate::audio::denoise::has_license() {
         return;
@@ -359,7 +324,6 @@ fn spawn_license(api: crate::kook::api::Api) {
     });
 }
 
-/// 降噪开启且使用 KOOK AI 降噪 2.0 时，在后台获取许可。未登录时跳过。
 async fn need_license(state: &State<'_, Mutex<AppState>>, voice: &State<'_, VoiceState>) {
     let d = voice.0.lock().await.denoise.clone();
     if d.on()
@@ -370,7 +334,6 @@ async fn need_license(state: &State<'_, Mutex<AppState>>, voice: &State<'_, Voic
     }
 }
 
-/// KOOK AI 降噪故障、改用 `RNNoise` 时以 `denoise://fallback` 通知界面，内容为原因。
 pub fn watch_denoise(app: &AppHandle, denoise: &crate::audio::denoise::Denoise) {
     let app = app.clone();
     denoise.on_fail(Box::new(move |reason| {
@@ -383,8 +346,6 @@ pub fn watch_denoise(app: &AppHandle, denoise: &crate::audio::denoise::Denoise) 
     }));
 }
 
-/// 开启或关闭降噪。`mode` 为空时沿用当前方式。
-/// 使用 KOOK AI 降噪 2.0 时先获取许可，正在采集时立即生效。
 #[tauri::command]
 pub async fn voice_set_denoise(
     on: bool,
@@ -400,7 +361,6 @@ pub async fn voice_set_denoise(
         crate::kook::denoise_asset::ensure_license(&api(&state)?).await?;
     }
     let slot = voice.0.lock().await;
-    // 修改设置时重新尝试 KOOK AI 降噪。
     crate::audio::denoise::retry_kook();
     slot.denoise.set_mode(mode);
     slot.denoise.set(on);
@@ -408,7 +368,6 @@ pub async fn voice_set_denoise(
     Ok(())
 }
 
-/// 本机音频偏好，启动时读取一次。
 #[tauri::command]
 pub async fn audio_prefs(
     voice: State<'_, VoiceState>,
@@ -416,7 +375,6 @@ pub async fn audio_prefs(
     Ok(voice.0.lock().await.prefs())
 }
 
-/// 保存麦克风与耳机开关，下次启动沿用。
 #[tauri::command]
 pub async fn set_voice_switches(
     muted: bool,
@@ -439,8 +397,6 @@ enum MicTestEvent {
     Failed { message: String },
 }
 
-/// 开始或停止麦克风测试。开始时把将要推送的音频按总音量播放到所选扬声器，电平经 `mic-test://event` 上报。
-/// 在语音频道中时不允许开始，避免两路采集同时占用麦克风。
 #[tauri::command]
 pub async fn mic_test(
     on: bool,
@@ -475,7 +431,6 @@ pub async fn mic_test(
         }
         old
     };
-    // 停止时等待线程释放设备，不阻塞异步运行时。
     if let Some(t) = old {
         let _ = tauri::async_runtime::spawn_blocking(move || drop(t)).await;
     }

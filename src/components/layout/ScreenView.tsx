@@ -3,8 +3,6 @@ import { Fullscreen, Maximize, Minimize, PictureInPicture2, Shrink, X } from "lu
 import { attachCanvas, setWatchMode, stopWatch, watch } from "../../stores/watch";
 import { voice } from "../../stores/voice";
 
-// 观看中的屏幕分享画面。canvas 由解码器绘制，控制台浮在画面上，悬停或键盘聚焦时显示。
-// 舞台内、软件内全屏与全屏共用本组件，只改变外层布局；悬浮窗由独立窗口显示，见 PipView。
 export default function ScreenView() {
   let canvas!: HTMLCanvasElement;
   onMount(() => attachCanvas(canvas));
@@ -14,7 +12,6 @@ export default function ScreenView() {
     return p?.name || "未知用户";
   };
   const expanded = () => watch.mode === "app" || watch.mode === "screen";
-  // Esc 退出软件内全屏或全屏，回到舞台。
   const onKey = (e: KeyboardEvent) => {
     if (e.key === "Escape" && expanded()) {
       e.preventDefault();

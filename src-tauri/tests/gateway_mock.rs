@@ -1,4 +1,3 @@
-//! 主网关生命周期回归：本地模拟网关，不需要账号。
 #![allow(clippy::result_large_err)]
 
 use std::sync::{Arc, Mutex};
@@ -11,22 +10,24 @@ use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use tokio::sync::{Notify, mpsc, watch};
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
+use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
+use tokio_tungstenite::tungstenite::http::StatusCode;
 
-/// 模拟网关对单个连接的行为。收到连接 URI，返回脚本。
 #[derive(Clone)]
 enum Step {
     Send(Value),
-    /// 等到客户端发来心跳后回复 s:3。
     Pong,
     Close,
-    /// 保持连接直到客户端断开。
     Hold,
 }
 
 type Script = Arc<dyn Fn(usize, &str) -> Vec<Step> + Send + Sync>;
 
 async fn serve(script: Script) -> (String, Arc<Mutex<Vec<String>>>) {
+    serve_with(script, false).await
+}
+
+async fn serve_with(script: Script, reject_resume: bool) -> (String, Arc<Mutex<Vec<String>>>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let uris = Arc::new(Mutex::new(Vec::new()));
@@ -45,12 +46,18 @@ async fn serve(script: Script) -> (String, Arc<Mutex<Vec<String>>>) {
                 let mut uri = String::new();
                 let cb = |req: &Request, resp: Response| {
                     uri = req.uri().to_string();
+                    if reject_resume && uri.contains("resume=1") {
+                        let mut e = ErrorResponse::new(Some("forbidden".into()));
+                        *e.status_mut() = StatusCode::FORBIDDEN;
+                        return Err(e);
+                    }
                     Ok(resp)
                 };
-                let Ok(mut ws) = tokio_tungstenite::accept_hdr_async(tcp, cb).await else {
+                let accepted = tokio_tungstenite::accept_hdr_async(tcp, cb).await;
+                seen.lock().unwrap().push(uri.clone());
+                let Ok(mut ws) = accepted else {
                     return;
                 };
-                seen.lock().unwrap().push(uri.clone());
                 for step in script(i, &uri) {
                     match step {
                         Step::Send(v) => {
@@ -155,7 +162,6 @@ async fn next(r: &mut Run) -> GatewayEvent {
         .expect("网关已结束")
 }
 
-/// 跳过断开通知，取下一个非断开事件。
 async fn next_live(r: &mut Run) -> GatewayEvent {
     loop {
         match next(r).await {
@@ -194,9 +200,10 @@ async fn resumes_after_drop_without_duplicates() {
         next(&mut r).await,
         GatewayEvent::Disconnected { .. }
     ));
-    // 续传期间重发的 sn=2 被丢弃，补发的 sn=3 只出现一次，最后报告续传成功。
     assert_eq!(next(&mut r).await, GatewayEvent::Event(json!({"n":3})));
     assert_eq!(next(&mut r).await, ready(ReadyKind::Resumed));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(r.rx.try_recv().is_err(), "续传后不应再有重复事件");
     let resume = uris.lock().unwrap()[1].clone();
     assert!(resume.contains("resume=1&sn=2&session_id=S"), "{resume}");
     assert_eq!(*r.fetches.lock().unwrap(), 1, "续传不重新取地址");
@@ -226,8 +233,36 @@ async fn rejected_resume_rebuilds_immediately() {
 }
 
 #[tokio::test]
+async fn resume_handshake_rejected_rebuilds_immediately() {
+    let (url, uris) = serve_with(
+        Arc::new(|i, _: &str| match i {
+            0 => vec![hello("S"), event(1), Step::Close],
+            _ => vec![hello("S"), Step::Hold],
+        }),
+        true,
+    )
+    .await;
+    let mut r = start(url, None);
+    assert_eq!(next(&mut r).await, ready(ReadyKind::New));
+    next(&mut r).await;
+    let mut retries = Vec::new();
+    let rebuilt = loop {
+        match next(&mut r).await {
+            GatewayEvent::Disconnected { retry_in, .. } => retries.push(retry_in),
+            e => break e,
+        }
+    };
+    assert_eq!(rebuilt, ready(ReadyKind::Rebuilt));
+    assert_eq!(*r.fetches.lock().unwrap(), 2, "握手被拒后重新取地址");
+    assert_eq!(retries.get(1), Some(&Duration::ZERO), "{retries:?}");
+    let seen = uris.lock().unwrap().clone();
+    assert!(seen[1].contains("resume=1"), "{seen:?}");
+    assert!(!seen[2].contains("resume=1"), "{seen:?}");
+    r.stop.send(true).unwrap();
+}
+
+#[tokio::test]
 async fn server_reset_rebuilds() {
-    // s:5 要求重连：丢弃会话，立即开新会话。
     let (url, uris) = serve(Arc::new(|i, _: &str| match i {
         0 => vec![hello("S"), event(1), Step::Send(json!({"s":5})), Step::Hold],
         _ => vec![hello("S"), Step::Hold],
@@ -245,7 +280,7 @@ async fn server_reset_rebuilds() {
 async fn resume_without_completion_is_treated_as_rebuilt() {
     let (url, _) = serve(Arc::new(|i, _: &str| match i {
         0 => vec![hello("S"), event(1), Step::Close],
-        _ => vec![hello("S"), Step::Hold], // 续传连接接受但不发 s:6
+        _ => vec![hello("S"), Step::Hold],
     }))
     .await;
     let mut r = start(url, None);
@@ -257,7 +292,6 @@ async fn resume_without_completion_is_treated_as_rebuilt() {
 
 #[tokio::test]
 async fn expired_credentials_stop_without_retry() {
-    // 续传被拒后重新取地址时返回 401：上报失效并停止，不再重试。
     let (url, _) = serve(Arc::new(|i, _: &str| match i {
         0 => vec![hello("S"), Step::Close],
         _ => vec![Step::Send(json!({"s":1,"d":{"code":40106}})), Step::Close],
@@ -276,9 +310,7 @@ async fn expired_credentials_stop_without_retry() {
 #[tokio::test]
 async fn hello_timeout_and_heartbeat_timeout_disconnect() {
     let (url, _) = serve(Arc::new(|i, _: &str| match i {
-        // 首个连接不发 hello。
         0 => vec![Step::Hold],
-        // 第二个连接发 hello 后不回心跳。
         _ => vec![hello("S"), Step::Hold],
     }))
     .await;
@@ -298,8 +330,7 @@ async fn hello_timeout_and_heartbeat_timeout_disconnect() {
 #[tokio::test]
 async fn backoff_grows_and_resets_after_stable_connection() {
     let (url, _) = serve(Arc::new(|i, _: &str| match i {
-        // 第 4 个连接心跳往返成功（稳定），其余握手后立即关闭（不稳定）。
-        3 => vec![hello("S"), Step::Pong, Step::Close], // 心跳往返成功：稳定
+        3 => vec![hello("S"), Step::Pong, Step::Close],
         _ => vec![Step::Close],
     }))
     .await;
@@ -311,7 +342,6 @@ async fn backoff_grows_and_resets_after_stable_connection() {
         }
     }
     assert_eq!(&delays[..3], &[20, 40, 80]);
-    // 稳定连接断开后回到基线。
     assert_eq!(delays[3], 20, "{delays:?}");
     r.stop.send(true).unwrap();
 }
@@ -320,7 +350,6 @@ async fn backoff_grows_and_resets_after_stable_connection() {
 async fn wake_skips_backoff_and_stop_ends_run() {
     let (url, uris) = serve(Arc::new(|_, _: &str| vec![Step::Close])).await;
     let mut r = start(url, None);
-    // 退避上限 200ms 下等到退避足够长，再唤醒立即重连。
     loop {
         if let GatewayEvent::Disconnected { retry_in, .. } = next(&mut r).await
             && retry_in >= Duration::from_millis(160)
@@ -372,7 +401,13 @@ async fn missing_sequence_is_skipped_after_a_heartbeat() {
     let mut r = start(url, None);
     assert_eq!(next(&mut r).await, ready(ReadyKind::New));
     assert_eq!(next(&mut r).await, GatewayEvent::Event(json!({ "n": 1 })));
+    let t = std::time::Instant::now();
     assert_eq!(next(&mut r).await, GatewayEvent::Event(json!({ "n": 3 })));
+    assert!(
+        t.elapsed() + Duration::from_millis(5) >= cfg().heartbeat,
+        "{:?}",
+        t.elapsed()
+    );
     r.stop.send(true).unwrap();
 }
 

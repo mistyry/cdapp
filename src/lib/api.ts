@@ -1,14 +1,11 @@
 import { invoke as rawInvoke, type Channel, type InvokeArgs, type InvokeOptions } from "@tauri-apps/api/core";
 import type { GuildAccess, Overwrite, UserOverwrite } from "./perms";
 
-// 后端命令封装。接口返回原始 JSON，字段以网页端抓包为准。
 export type Raw = Record<string, any>;
 export type QrStatus = { status: "waiting" | "scanned" | "confirmed" | "unknown" };
 
 export type Restore = { status: "none" } | { status: "ready"; me: Raw } | { status: "expired"; message: string };
 
-// 任一命令返回凭据失效时通知会话层结束登录。
-// 请求发起时记录登录代次，旧登录的迟到 401 不结束新登录。
 let onUnauthorized: (message: string, gen: number) => void = () => {};
 let generation: () => number = () => 0;
 export const setUnauthorizedHandler = (f: (message: string, gen: number) => void, gen: () => number) => {
@@ -26,65 +23,49 @@ async function invoke<T>(cmd: string, args?: InvokeArgs, options?: InvokeOptions
   }
 }
 
-// 后端 audio::capture::InputDevice。
 export type InputDevice = { id: string; name: string; default: boolean };
-// 后端 audio::store::AudioPrefs。设备为 null 时跟随系统默认。
 export type AudioPrefs = { input: string | null; output: string | null; gain: number; master: number; effectVolume: number; effectsOff: number[]; muted: boolean; deafened: boolean; denoise?: boolean; denoiseMode?: DenoiseMode };
-// 后端 audio::denoise::Mode。
 export type DenoiseMode = "kook" | "rnnoise";
 
-// 后端 kook::model::Channel。kind 为 category / text / voice / unknown。
 export type ChannelDto = {
-  id: string; name: string; kind: "category" | "text" | "voice" | "unknown"; rawType: number;
+  id: string; name: string; kind: "category" | "text" | "voice" | "radio" | "unknown"; rawType: number;
   parentId: string | null; level: number; limit: number;
   overwrites?: Overwrite[]; userOverwrites?: UserOverwrite[];
   hasPassword?: boolean; permissionSync?: boolean;
   users?: VoiceUserDto[]; preview?: string;
 };
-// 后端 kook::model::VoiceUser。live 为屏幕分享状态，未分享时为 null。
 export type VoiceUserDto = { id: string; username: string; nickname: string; identifyNum: string; avatar: string; live: LiveInfo | null };
-// 后端 kook::model::LiveInfo。startTime 为毫秒。
 export type LiveInfo = { resolution: number; frameRate: number; startTime: number; audienceCount: number; audienceLimit: number };
 
-// 后端 kook::model::Member 与 MemberPage。成员按服务端顺序（在线在前），人数取服务端统计。
 export type MemberDto = {
   id: string; username: string; nickname: string; identifyNum: string; avatar: string;
   online: boolean; bot: boolean; roles: number[]; color: number;
 };
 export type MemberPageDto = { items: MemberDto[]; page: number; pageTotal: number; total: number; online: number; offline: number };
 
-// 一页历史，按时间从旧到新；end 表示没有更早的消息。
 export type HistoryPage = { items: Raw[]; end: boolean };
 
-// 后端 kook::model::ChannelUnread，只含有未读或提及的频道。
 export type UnreadDto = { guildId: string; channelId: string; unread: boolean; mentions: number; readAt: number };
 
-// 后端 kook::model::MessageLocation。id 为 rong_id。
 export type MessageLocation = { id: string; channelId: string; createAt: number };
 
-// 后端 kook::model::DmChat / DmPage。code 为 chat_code（不是用户 ID，也不是频道 ID），对方用户 ID 为 target.id。
 export type DmUserDto = { id: string; username: string; nickname: string; identifyNum: string; avatar: string; online: boolean; bot: boolean; system: boolean };
 export type DmChatDto = { code: string; target: DmUserDto; preview: string; latestAt: number; readAt: number; unread: number };
 export type DmPageDto = { items: DmChatDto[]; page: number; pageTotal: number; total: number };
 
-// 后端 kook::model::DmSent。id 为消息 ID，code 为 chat_code。
 export type DmSentDto = { id: string; code: string; createAt: number };
 
-// 后端 kook::emoji::EmojiSet。服务器表情按服务器分组；个人表情读取失败时 personalFailed 为 true。
 export type EmojiItemDto = { id: string; name: string; animated: boolean };
 export type EmojiSetDto = { guilds: Array<{ guildId: string; name: string; icon: string; items: EmojiItemDto[] }>; personal: EmojiItemDto[]; personalFailed: boolean; joined: string[] | null };
 
 export const MsgType = { TEXT: 1, IMAGE: 2, FILE: 4, KMARKDOWN: 9 } as const;
 
-// 后端 kook::model::Asset。上传进度事件 upload://progress 为 {id, sent, total}。
 export type AssetDto = { url: string };
 export type UploadProgress = { id: string; sent: number; total: number };
-// 实测普通账号上限 5 MiB（含）；空文件会被服务端换成默认图片。后端同样检查。
 export const UPLOAD_LIMIT = 5 * 1024 * 1024;
 
 export interface Saying { game: string; role_name: string; words: string }
 
-// 后端 storage::Info。
 export type StorageInfo = {
   status: "ready" | "missing" | "unwritable" | "locked";
   message?: string;
@@ -94,14 +75,11 @@ export type StorageInfo = {
   cacheBytes: number;
 };
 
-// 后端 commands::share::ShareSdk。
 export type ShareSdk = { status: "ready"; version: string } | { status: "unavailable"; message: string };
-// 后端 share::bridge::Source。id 为窗口或显示器句柄的十进制字符串，只在本次运行中有效。
 export type ShareSource = {
   kind: "screen" | "window"; id: string; pid: number; primary: boolean;
   width: number; height: number; name: string; application: string;
 };
-// 后端 share::session::ShareEvent，经 share://event 以 {generation, event} 广播。
 export type ShareEvent =
   | { kind: "live"; width: number; height: number }
   | { kind: "tier"; resolution: number; frameRate: number; width: number; height: number }
@@ -111,7 +89,6 @@ export type ShareStart = {
   channelId: string; sourceKind: "screen" | "window"; sourceId: string; sourcePid: number;
   resolution: number; frameRate: number; audio: boolean;
 };
-// 后端 share::watch::WatchState，经 watch://event 以 {generation, state} 广播。
 export type WatchEvent =
   | { kind: "waiting" }
   | { kind: "playing" }
@@ -140,7 +117,6 @@ export const api = {
   shareStop: () => invoke<void>("share_stop"),
   shareUpdate: (generation: number, resolution: number, frameRate: number) =>
     invoke<void>("share_update", { generation, resolution, frameRate }),
-  // frames 收到的每条消息为 ArrayBuffer，格式见 lib/screenDecoder.ts。
   watchStart: (channelId: string, liver: string, frames: Channel<ArrayBuffer>) =>
     invoke<number>("watch_start", { channelId, liver, frames }),
   watchStop: () => invoke<void>("watch_stop"),
@@ -176,13 +152,11 @@ export const api = {
   openDm: (userId: string) => invoke<DmChatDto>("open_dm", { userId }),
   dmMessages: (chatCode: string, before?: string) => invoke<HistoryPage>("dm_messages", { chatCode, before }),
   markDmRead: (chatCode: string, msgId: string, time: number) => invoke<void>("mark_dm_read", { chatCode, msgId, time }),
-  // 私信写操作只走私信接口：频道删除接口对私信返回成功但不删除，频道编辑接口返回 40012。
   sendDirect: (userId: string, kind: number, content: string, quote?: string) =>
     invoke<DmSentDto>("send_direct", { userId, kind, content, quote }),
   updateDmMessage: (msgId: string, content: string) => invoke<void>("update_dm_message", { msgId, content }),
   deleteDmMessage: (msgId: string) => invoke<void>("delete_dm_message", { msgId }),
   dmReaction: (msgId: string, emoji: string, add: boolean) => invoke<void>("dm_reaction", { msgId, emoji, add }),
-  // 原始字节作为请求体，文件名经 URI 编码放在请求头中。
   upload: (id: string, name: string, bytes: Uint8Array) =>
     invoke<AssetDto>("upload", bytes, { headers: { "x-upload-id": id, "x-file-name": encodeURIComponent(name) } }),
   uploadCancel: (id: string) => invoke<void>("upload_cancel", { id }),
@@ -190,24 +164,17 @@ export const api = {
   gatewayReconnect: () => invoke<void>("gateway_reconnect"),
   gatewayStop: () => invoke<void>("gateway_stop"),
   clientLog: (level: "info" | "warn" | "debug", message: string) => rawInvoke<void>("client_log", { level, message }),
-  // 返回会话代次，进度与成员经 voice://event 推送。
-  // request 为前端请求序号，后端据此丢弃已被后发的加入或退出取代的加入。
-  // password 仅用于本次加入，不保存。
   voiceJoin: (channelId: string, request: number, muted = false, deafened = false, micBeforeDeaf: boolean | null = null, password: string | null = null) =>
     invoke<number>("voice_join", { channelId, request, audio: { muted, deafened, micBeforeDeaf }, password }),
   voiceLeave: (request?: number) => invoke<void>("voice_leave", { request: request ?? null }),
-  // 通知语音会话系统已唤醒或网络已恢复。
   voiceWake: () => invoke<void>("voice_wake"),
   goliveAllowed: () => invoke<boolean>("golive_allowed"),
   voiceSetMic: (generation: number, paused: boolean) => invoke<void>("voice_set_mic", { generation, paused }),
-  // 列出输入设备，不打开设备，不触发系统权限请求。
   audioInputs: () => invoke<{ devices: InputDevice[]; selected: string | null }>("audio_inputs"),
   setAudioInput: (id: string | null) => invoke<void>("set_audio_input", { id }),
-  // 关闭耳机时后端同时静音麦克风。
   voiceSetDeafen: (generation: number, deafened: boolean) => invoke<void>("voice_set_deafen", { generation, deafened }),
   audioOutputs: () => invoke<{ devices: InputDevice[]; selected: string | null }>("audio_outputs"),
   setAudioOutput: (id: string | null) => invoke<void>("set_audio_output", { id }),
-  // 成员音量与总音量的上限为 200。
   voiceSetVolume: (userId: string, percent: number) => invoke<void>("voice_set_volume", { userId, percent }),
   guildMute: (guildId: string, userId: string, kind: "mute" | "deafen", on: boolean) => invoke<void>("guild_mute", { guildId, userId, kind, on }),
   guildMutes: (guildId: string) => invoke<{ mute: string[]; deafen: string[] }>("guild_mutes", { guildId }),
@@ -217,7 +184,6 @@ export const api = {
   guildBan: (guildId: string, userId: string) => invoke<void>("guild_ban", { guildId, userId }),
   voiceSetPeerDenoise: (userId: string, on: boolean) => invoke<void>("voice_set_peer_denoise", { userId, on }),
   voiceSetMaster: (percent: number) => invoke<void>("voice_set_master", { percent }),
-  // 麦克风输入增益，上限 200，返回实际生效的值。
   voiceSetGain: (percent: number) => invoke<number>("voice_set_gain", { percent }),
   micTest: (on: boolean) => invoke<void>("mic_test", { on }),
   voiceSetDenoise: (on: boolean, mode?: DenoiseMode) => invoke<void>("voice_set_denoise", { on, mode: mode ?? null }),
@@ -229,8 +195,6 @@ export const api = {
   setEffectEnabled: (id: number, on: boolean) => invoke<void>("set_effect_enabled", { id, on }),
 };
 
-// 后端错误带结果确定性：not_sent 未发出，rejected 服务端拒绝，uncertain 可能已被处理，local 本地错误，
-// unauthorized 凭据已失效（请求未被处理），rate_limited 被限流（请求未被处理，稍后可重试）。
 export type ErrorKind = "not_sent" | "rejected" | "uncertain" | "local" | "unauthorized" | "rate_limited";
 const KINDS: ErrorKind[] = ["not_sent", "rejected", "uncertain", "local", "unauthorized", "rate_limited"];
 
@@ -241,7 +205,6 @@ export function errorText(e: unknown): string {
   return "未知错误";
 }
 
-// 无法识别的错误按不确定处理，避免误判为未发出而重复发送。
 export function errorKind(e: unknown): ErrorKind {
   const k = e && typeof e === "object" ? (e as Raw).kind : undefined;
   return KINDS.includes(k) ? k : "uncertain";

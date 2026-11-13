@@ -4,8 +4,6 @@ import { parse as parseKmd, toPlain, type Names } from "../../lib/kmarkdown";
 import { isText, label, parseCards, toAttachment, Kind } from "../../lib/content";
 import { channelById, session, setSession } from "./state";
 
-// 映射
-
 export function toUser(r: Raw | undefined): User {
   return {
     id: String(r?.id ?? ""),
@@ -29,7 +27,6 @@ export function stamp(ms: number) {
   return { time: `${day} ${short}`, short };
 }
 
-// 提及名称按 ID 解析：用户取已知用户，角色取服务器角色表，频道取频道列表；都没有时用消息附带的名称表。
 export const names: Names = {
   user: (id) => session.users[id]?.name,
   role: (id) => {
@@ -42,7 +39,6 @@ export const names: Names = {
   channel: (id) => channelById(id)?.channel.name ?? session.refs.channels[id],
 };
 
-// 单行摘要，用于引用、回复预览。非文本消息给出类型说明；卡片取首段文字。
 export function plainContent(type: number, content: string, attachment?: Message["attachment"]): string {
   if (type === Kind.CARD) {
     const parts = parseCards(content)?.flatMap((c) => c.parts) ?? [];
@@ -56,7 +52,6 @@ export function plainContent(type: number, content: string, attachment?: Message
   return toPlain(parseKmd(content.slice(0, 2000)), names);
 }
 
-// 记录消息附带的提及名称表。只补充未知项，不覆盖本地已有数据。
 export function rememberRefs(k: Raw | undefined) {
   if (!k || typeof k !== "object") return;
   for (const u of Array.isArray(k.mention_part) ? k.mention_part : []) {
@@ -77,7 +72,6 @@ export function toQuote(q: Raw | undefined | null): Quote | undefined {
   rememberRefs(q.kmarkdown);
   const type = Number(q.type ?? Kind.KMARKDOWN);
   const content = String(q.content ?? "");
-  // 引用的 rong_id 即被引用消息的 ID（id 字段是内部 ID）。
   const id = q.rong_id ?? q.msg_id;
   return { id: id ? String(id) : undefined, authorId: author.id || undefined, author: author.name, type, content, text: plainContent(type, content, toAttachment(q.attachments)) };
 }
@@ -89,7 +83,6 @@ export function toMessage(r: Raw): Message {
   const createAt = Number(r.create_at ?? r.msg_timestamp ?? Date.now());
   const type = Number(r.type ?? Kind.TEXT);
   return {
-    // v2 历史的 id 是内部 ID；发送响应、网关推送、编辑删除与引用都使用 rong_id（UUID）。
     id: String(r.rong_id ?? r.msg_id ?? r.id),
     rongId: r.rong_id,
     author: author.id,
@@ -107,7 +100,6 @@ export function toMessage(r: Raw): Message {
   };
 }
 
-// 历史中的回应：[{emoji:{id,name}, count, me}]。计数为 0 的丢弃。
 export function toReactions(list: unknown): Reaction[] | undefined {
   if (!Array.isArray(list)) return undefined;
   const out: Reaction[] = [];
@@ -123,8 +115,9 @@ export function toReactions(list: unknown): Reaction[] | undefined {
 export function toChannel(c: ChannelDto): Channel {
   return {
     id: c.id,
-    name: c.name || (c.kind === "unknown" ? `未知频道（类型 ${c.rawType}）` : "未命名频道"),
+    name: c.name || (c.kind === "unknown" || c.kind === "radio" ? `未知频道（类型 ${c.rawType}）` : "未命名频道"),
     type: c.kind === "text" || c.kind === "voice" ? c.kind : "unknown",
+    radio: c.kind === "radio" || undefined,
     limit: c.limit || undefined,
     overwrites: c.overwrites ?? [],
     userOverwrites: c.userOverwrites ?? [],
@@ -135,8 +128,6 @@ export function toChannel(c: ChannelDto): Channel {
   };
 }
 
-// 语音频道内用户。nickname 为服务器昵称，未设置时为用户名；按 ID 去重。
-// 后端转换的列表带 live，网关事件原样带 live_info。
 export function voiceUsers(list: Raw[]): VoiceUser[] {
   const out: VoiceUser[] = [];
   for (const u of list) {
@@ -150,7 +141,6 @@ export function voiceUsers(list: Raw[]): VoiceUser[] {
   return out;
 }
 
-// 网关事件中的 live_info，与后端 kook::model::LiveInfo 一致。未分享或缺失时为 undefined。
 export function toLive(r: Raw | null | undefined): LiveInfo | undefined {
   if (!r?.in_live) return undefined;
   const n = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
@@ -160,8 +150,6 @@ export function toLive(r: Raw | null | undefined): LiveInfo | undefined {
   };
 }
 
-// 按 level 排序（相同时保持服务端顺序）。顶层频道与分组按 level 交错排列；
-// 相邻的顶层频道合并为一个无标题分组，指向不存在分组的频道归入顶层。
 export function toGroups(list: ChannelDto[]): Group[] {
   const byLevel = (a: ChannelDto, b: ChannelDto) => a.level - b.level;
   const cats = new Map(list.filter((c) => c.kind === "category").map((c) => [c.id, c]));

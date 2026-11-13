@@ -1,5 +1,3 @@
-//! 火山 RTC SDK 运行文件：启动时校验缓存，缺失或不符时下载，就绪后加载。
-
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -10,14 +8,11 @@ use sha2::{Digest, Sha256};
 use crate::error::{AppError, AppResult};
 
 const VERSION: &str = "3.58.1.100";
-/// 火山 CDN 上的 Electron SDK 压缩包，运行文件在 `build/Release/` 下。
 const CDN_ZIP: &str = "https://hstob-cdn-tos.volccdn.com/volcengine/VolcEngineRTC-Electron-sdk-Win64/3.58.4/vertc-electron-addon.zip";
 const ZIP_PREFIX: &str = "build/Release/";
-/// 火山 GitHub 示例仓库，按提交号取文件。
 const GITHUB_BASE: &str = "https://raw.githubusercontent.com/volcengine/VolcEngineRTC/4f0cb73622/Windows/3rd/Windows/VolcEngineRTC/bin/x64/";
 const TIMEOUT: Duration = Duration::from_secs(600);
 
-/// 下载地址。启用 `test-media` 特性时，`CDAPP_VOLC_CDN` 与 `CDAPP_VOLC_GITHUB` 可替换两个来源，用于验收下载失败与备用来源。
 fn source(default: &'static str, env: &str) -> String {
     #[cfg(feature = "test-media")]
     if let Ok(v) = std::env::var(env) {
@@ -34,7 +29,6 @@ struct Entry {
     sha256: &'static str,
 }
 
-/// 运行文件清单，两个来源的文件相同。
 const FILES: &[Entry] = &[
     Entry {
         path: "VolcEngineRTC.dll",
@@ -118,12 +112,10 @@ const FILES: &[Entry] = &[
     },
 ];
 
-/// SDK 状态。
 pub use crate::commands::ShareSdk as Status;
 
 static STATUS: OnceLock<Status> = OnceLock::new();
 
-/// 当前状态，未同步时为 None。
 #[must_use]
 pub fn status() -> Option<Status> {
     STATUS.get().cloned()
@@ -143,13 +135,11 @@ fn matches(e: &Entry, bytes: &[u8]) -> bool {
     bytes.len() as u64 == e.size && hex(bytes) == e.sha256
 }
 
-/// 不存在或与清单不符的文件。
 fn missing(dir: &Path) -> Vec<&'static Entry> {
     FILES
         .iter()
         .filter(|e| {
             let p = dir.join(e.path);
-            // 大小不符时不读内容。
             !std::fs::metadata(&p).is_ok_and(|m| m.len() == e.size)
                 || !std::fs::read(&p).is_ok_and(|b| matches(e, &b))
         })
@@ -164,7 +154,6 @@ fn store(dir: &Path, e: &Entry, bytes: &[u8]) -> AppResult<()> {
     Ok(())
 }
 
-/// 从压缩包中取出清单内缺少的文件。
 fn extract(dir: &Path, zip: &[u8], want: &[&'static Entry]) -> AppResult<()> {
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(zip))
         .map_err(|e| AppError::Format(format!("压缩包损坏：{e}")))?;
@@ -215,7 +204,6 @@ fn sdk_dir() -> AppResult<PathBuf> {
         .ok_or_else(|| AppError::Other("数据目录不可用".into()))
 }
 
-/// 校验缓存，缺失或不符的文件先从火山 CDN 下载，失败再从 GitHub 下载。
 async fn prepare() -> AppResult<PathBuf> {
     let dir = sdk_dir()?;
     let d = dir.clone();
@@ -244,7 +232,6 @@ fn load(dir: &Path) -> AppResult<String> {
     Ok(super::bridge::version())
 }
 
-/// 准备并加载 SDK，只执行一次，之后返回首次的结果。
 pub async fn sync() -> Status {
     if let Some(s) = status() {
         return s;
@@ -305,7 +292,6 @@ mod tests {
         std::fs::remove_dir_all(d).unwrap();
     }
 
-    /// 需要本机 CDN 压缩包，用环境变量 `CDAPP_VOLC_ZIP` 指定。
     #[test]
     #[ignore = "需要 SDK 压缩包"]
     fn extracts_cdn_zip() {
@@ -313,7 +299,6 @@ mod tests {
         let d = temp("zip");
         extract(&d, &zip, &missing(&d)).unwrap();
         assert!(missing(&d).is_empty());
-        // 篡改一个文件后只重新取出该文件。
         std::fs::write(d.join("libEGL.dll"), vec![0u8; 21_280]).unwrap();
         let want = missing(&d);
         assert_eq!(want.len(), 1);
@@ -322,7 +307,6 @@ mod tests {
         std::fs::remove_dir_all(d).unwrap();
     }
 
-    /// 联网从火山 CDN 下载、校验并加载，约 42 MB。
     #[test]
     #[ignore = "需要联网"]
     fn downloads_and_loads() {
@@ -340,7 +324,6 @@ mod tests {
         assert!(missing(&sdk_dir().unwrap()).is_empty());
     }
 
-    /// 联网从 GitHub 备用来源下载最小的文件并校验。直连不通时用环境变量 `CDAPP_TEST_PROXY` 指定代理。
     #[test]
     #[ignore = "需要联网"]
     fn downloads_from_github() {

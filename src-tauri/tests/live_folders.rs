@@ -1,7 +1,3 @@
-//! 真实账号服务器文件夹读取验证，只读。默认忽略：
-//! `CDAPP_LIVE_TOKEN=... cargo test --test live_folders -- --ignored --nocapture`
-//! 核对文件夹条目字段与服务器列表的覆盖关系。只输出计数，不输出 ID 与名称。
-
 use std::collections::HashSet;
 
 use cdapp_lib::kook::api::Api;

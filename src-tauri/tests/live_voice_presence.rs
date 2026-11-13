@@ -1,8 +1,3 @@
-//! 语音频道在线成员的进出对照（真实账号）。默认忽略：
-//! `CDAPP_LIVE_TOKEN=... CDAPP_LIVE_VOICE=... CDAPP_LIVE_HOLD=15
-//!  cargo test --features test-media --test live_voice_presence -- --ignored --nocapture`
-//! 以合成静音加入语音频道，停留指定秒数后离开，供另一账号观察进出显示与事件。
-
 use std::sync::Arc;
 use std::time::Duration;
 

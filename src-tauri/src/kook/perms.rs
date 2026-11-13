@@ -1,5 +1,3 @@
-//! 频道有效权限。与前端 `src/lib/perms.ts` 的计算一致，用于命令边界拦截。
-
 use super::model::{Channel, GuildAccess};
 
 pub const ADMIN: u64 = 1 << 0;
@@ -7,10 +5,8 @@ pub const VIEW: u64 = 1 << 11;
 pub const SEND: u64 = 1 << 12;
 pub const VOICE_CONNECT: u64 = 1 << 15;
 
-/// 拥有全部权限（服务器主或管理员）。
 pub const ALL: u64 = u64::MAX;
 
-/// 服务器基础权限：@全体成员（角色 0）与本人所有角色的并集。
 #[must_use]
 pub fn base(a: &GuildAccess) -> u64 {
     if a.master {
@@ -26,8 +22,6 @@ pub fn base(a: &GuildAccess) -> u64 {
     if p & ADMIN == 0 { p } else { ALL }
 }
 
-/// 频道有效权限：基础权限、@全体成员覆盖、本人角色覆盖合并、本人用户覆盖，依次先拒绝再允许。
-/// 同步分组的频道由服务端复制了完整覆盖，不再叠加父分组。
 #[must_use]
 pub fn channel(a: &GuildAccess, me: &str, c: &Channel) -> u64 {
     let mut p = base(a);
@@ -108,16 +102,12 @@ mod tests {
     #[test]
     fn overwrite_order_matches_server() {
         let a = access(VIEW | SEND, &[(5, 0)], false);
-        // @全体成员拒绝发送，角色允许可发。
         let p = channel(&a, "me", &chan(&[(0, 0, SEND), (5, SEND, 0)], &[]));
         assert!(has(p, VIEW | SEND));
-        // 角色拒绝，用户允许可发。
         let p = channel(&a, "me", &chan(&[(5, 0, SEND)], &[("me", SEND, 0)]));
         assert!(has(p, SEND));
-        // 角色允许，用户拒绝不可发。
         let p = channel(&a, "me", &chan(&[(5, SEND, 0)], &[("me", 0, SEND)]));
         assert!(!has(p, SEND));
-        // 他人的用户覆盖与非本人角色不生效。
         let p = channel(&a, "me", &chan(&[(9, 0, VIEW)], &[("x", 0, VIEW)]));
         assert!(has(p, VIEW));
     }

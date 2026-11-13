@@ -1,23 +1,15 @@
-//! 单次连接结果与是否重建的判定。
-
 use super::{AppError, DisconnectKind, EndReason};
 
-/// 单次连接的结果。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Outcome {
-    /// 结束会话，不再重建。
     End(EndReason, Option<String>),
-    /// 连接中断，可以重建。
     Lost(Lost),
 }
 
-/// 连接中断的详情。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Lost {
     pub(super) message: String,
-    /// 立即重建，不等待退避。
     pub(super) urgent: bool,
-    /// 中断前已稳定连接，重建次数重新计数。
     pub(super) stable: bool,
 }
 
@@ -29,7 +21,6 @@ pub(super) fn lost(message: impl Into<String>) -> Outcome {
     })
 }
 
-/// 加入失败的处理。凭据失效与服务端拒绝结束会话，网络错误可以重建。
 pub(super) fn join_error(e: &AppError) -> Outcome {
     match e {
         AppError::Unauthorized(m) => Outcome::End(EndReason::Unauthorized, Some(m.clone())),
@@ -41,8 +32,6 @@ pub(super) fn join_error(e: &AppError) -> Outcome {
     }
 }
 
-/// 加入失败的处理与是否需要发送 exit。
-/// 已收到 disconnect 时按错误码处理，连接已关闭时不再发送 exit。
 pub(super) fn failed_join(e: &AppError, disconnect: Option<i64>, closed: bool) -> (Outcome, bool) {
     let outcome = match disconnect {
         Some(_) => closed_outcome(disconnect),
@@ -51,7 +40,6 @@ pub(super) fn failed_join(e: &AppError, disconnect: Option<i64>, closed: bool) -
     (outcome, disconnect.is_none() && !closed)
 }
 
-/// 信令关闭后的处理，依据最后收到的 disconnect 错误码。
 pub(super) fn closed_outcome(disconnect: Option<i64>) -> Outcome {
     match disconnect.map(DisconnectKind::from_code) {
         Some(DisconnectKind::Replaced) => Outcome::End(EndReason::Replaced, None),
@@ -63,7 +51,6 @@ pub(super) fn closed_outcome(disconnect: Option<i64>) -> Outcome {
     }
 }
 
-/// 运行结果为断线且已收到不可重连的 disconnect 时，改用错误码对应的结束原因。
 pub(super) fn settle_lost(
     outcome: Outcome,
     server_ended: bool,
@@ -105,7 +92,6 @@ mod tests {
             assert!(matches!(o, Outcome::End(r, None) if r == reason));
             assert!(ended, "服务端已断开，不再发送 exit");
         }
-        // 其他错误码与未收到 disconnect 时仍可重建。
         assert!(matches!(
             settle_lost(lost("x"), false, Some(1)).0,
             Outcome::Lost(_)
@@ -114,7 +100,6 @@ mod tests {
             settle_lost(lost("x"), false, None),
             (Outcome::Lost(_), false)
         ));
-        // 主动退出不受影响。
         let (o, ended) = settle_lost(Outcome::End(EndReason::Left, None), false, Some(41101));
         assert!(matches!(o, Outcome::End(EndReason::Left, None)) && !ended);
     }
@@ -163,12 +148,10 @@ mod tests {
             failed_join(&closed, Some(41100), true),
             (Outcome::End(EndReason::JoinFailed, None), false)
         );
-        // 连接已关闭但没有错误码，可重建，不发送 exit。
         assert!(matches!(
             failed_join(&closed, None, true),
             (Outcome::Lost(_), false)
         ));
-        // 服务端拒绝时结束会话，并发送 exit。
         let rejected = AppError::Api {
             code: 0,
             message: "拒绝加入".into(),

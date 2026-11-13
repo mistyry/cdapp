@@ -1,10 +1,3 @@
-//! 接收、播放与混音的真实环境测试：
-//! `CDAPP_LIVE_TOKEN=... CDAPP_LIVE_TOKEN2=... CDAPP_LIVE_VOICE=...
-//!  cargo test --features test-media --test live_playback -- --ignored --nocapture`
-//! 两个账号以不同频率的合成音互推，从混音录制中测量主频，不打开扬声器。
-//! 验证双向可听、关闭耳机后无声并静音麦克风、恢复后重新可听、
-//! 成员离开后不残留声音，以及退出后播放线程全部退出。
-
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -63,7 +56,6 @@ fn connected(e: &VoiceEvent) -> bool {
     )
 }
 
-/// 清空录制缓冲，录制 `secs` 秒混音输出。
 async fn record(tap: &Tap, secs: u64) -> Vec<f32> {
     tap.lock().unwrap().clear();
     tokio::time::sleep(Duration::from_secs(secs)).await;
@@ -78,7 +70,6 @@ fn rms(x: &[f32]) -> f64 {
     (x.iter().map(|&v| f64::from(v) * f64::from(v)).sum::<f64>() / x.len() as f64).sqrt()
 }
 
-/// 中间 1 秒内 100 至 2000 Hz 的主频，步长 1 Hz。
 #[allow(clippy::cast_precision_loss)]
 fn peak(x: &[f32]) -> f64 {
     let n = x.len().min(48_000);
@@ -123,7 +114,6 @@ async fn two_way_playback_deafen_and_cleanup() {
     let threads = live_outputs();
     tokio::time::sleep(Duration::from_secs(3)).await;
 
-    // 双向收听。
     let (ra, rb) = tokio::join!(record(&ta, 4), record(&tb, 4));
     let (fa, fb) = (peak(&ra), peak(&rb));
     println!(
@@ -135,7 +125,6 @@ async fn two_way_playback_deafen_and_cleanup() {
     assert!((fa - 660.0).abs() <= 2.0, "主号应收到 660 Hz");
     assert!((fb - 523.0).abs() <= 2.0, "小号应收到 523 Hz");
 
-    // 主号关闭耳机。
     a.control().deafen(true).await.unwrap();
     tokio::time::sleep(Duration::from_millis(500)).await;
     let deaf = record(&ta, 3).await;
@@ -164,7 +153,6 @@ async fn two_way_playback_deafen_and_cleanup() {
     assert!(rms(&deaf) < 1e-6, "关闭耳机后仍有声音");
     assert!(mic_muted, "关闭耳机未静音麦克风");
 
-    // 主号打开耳机，恢复之前的麦克风状态。
     a.control().deafen(false).await.unwrap();
     let headset_back = wait_for(
         &lb,
@@ -185,22 +173,18 @@ async fn two_way_playback_deafen_and_cleanup() {
         "恢复后小号未收到主号的声音"
     );
 
-    // 小号离开后不应残留声音。
     b.leave().await;
     tokio::time::sleep(Duration::from_secs(1)).await;
     let gone = record(&ta, 2).await;
     println!("小号离开后 rms={:.6}", rms(&gone));
     assert!(rms(&gone) < 1e-6, "成员离开后仍有声音");
 
-    // 主号退出，播放线程应全部退出。
     a.leave().await;
     tokio::time::sleep(Duration::from_millis(300)).await;
     println!("退出后播放线程={}", live_outputs());
     assert_eq!(live_outputs(), 0);
 }
 
-/// 反复打开与关闭默认扬声器，检查线程释放：
-/// `cargo test --features test-media --test live_playback device_open_close -- --ignored --nocapture`
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "需要扬声器设备"]
 async fn device_open_close() {
@@ -222,7 +206,6 @@ async fn device_open_close() {
         assert!(ok);
         assert_eq!(live_outputs(), 0);
     }
-    // 所选设备不存在时直接改用默认设备，不另行通知。
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let p = Playback::start(Out::Device(Some("missing:0".into())), mixer, 9, tx);
     let first = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await;

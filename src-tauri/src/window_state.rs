@@ -1,7 +1,3 @@
-//! 主窗口尺寸、位置与最大化状态。
-//! 保存在数据根 `config/window.json`。窗口初始隐藏，恢复后再显示，避免启动时跳动。
-//! 尺寸按逻辑像素保存，位置按物理像素保存；保存的位置不在任何显示器内时居中。
-
 use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -10,9 +6,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{LogicalSize, PhysicalPosition, WebviewWindow, WindowEvent};
 
 const FILE: &str = "window.json";
-/// 调整尺寸或移动停止后延迟保存，拖动期间不频繁写盘。
 const SAVE_DELAY: Duration = Duration::from_millis(500);
-/// 窗口顶部至少可见的范围，物理像素。
 const GRIP_W: i32 = 120;
 const GRIP_H: i32 = 32;
 
@@ -20,10 +14,8 @@ const GRIP_H: i32 = 32;
 #[serde(default)]
 pub struct WindowState {
     pub v: u8,
-    /// 还原状态下的内容区尺寸，逻辑像素。
     pub width: f64,
     pub height: f64,
-    /// 还原状态下的窗口左上角，物理像素。
     pub x: Option<i32>,
     pub y: Option<i32>,
     pub maximized: bool,
@@ -43,7 +35,6 @@ impl Default for WindowState {
 }
 
 impl WindowState {
-    /// 解析保存的状态，损坏或尺寸无效时返回 None。
     #[must_use]
     pub fn parse(bytes: &[u8]) -> Option<Self> {
         let s: Self = serde_json::from_slice(bytes).ok()?;
@@ -52,7 +43,6 @@ impl WindowState {
     }
 }
 
-/// 窗口顶部是否有足够部分落在某个显示器内，可以拖回。
 #[must_use]
 pub fn reachable(x: i32, y: i32, width: i32, monitors: &[(i32, i32, i32, i32)]) -> bool {
     monitors.iter().any(|&(mx, my, mw, mh)| {
@@ -78,7 +68,6 @@ fn save(state: &WindowState) {
     }
 }
 
-/// 读取当前窗口状态。最小化时返回 None；最大化时沿用上次保存的还原尺寸与位置。
 fn capture(window: &WebviewWindow, last: Option<WindowState>) -> Option<WindowState> {
     if window.is_minimized().unwrap_or(false) {
         return None;
@@ -104,7 +93,6 @@ fn capture(window: &WebviewWindow, last: Option<WindowState>) -> Option<WindowSt
     })
 }
 
-/// 恢复保存的状态并显示窗口，随后跟踪变化。恢复失败时按默认尺寸显示。
 pub fn init(window: &WebviewWindow) {
     if let Some(s) = load() {
         let _ = window.set_size(LogicalSize::new(s.width, s.height));

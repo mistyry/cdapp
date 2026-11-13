@@ -1,12 +1,8 @@
-//! 表情列表。服务器表情来自 `/api/v3/vip-expression/get-all-emojis`，按服务器分组；
-//! 个人表情来自 `/api/v3/user-emoji/all` 中 `from = 1` 的分组，互动表情不在此列。
-
 use serde::Serialize;
 use serde_json::Value;
 
 use super::model::id_str;
 
-/// 单个表情。`id` 为消息中 `(emj)名称(emj)[ID]` 的 ID，服务器表情可直接用于回应。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EmojiItem {
@@ -15,7 +11,6 @@ pub struct EmojiItem {
     pub animated: bool,
 }
 
-/// 一个服务器的表情。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GuildEmojis {
@@ -30,14 +25,10 @@ pub struct GuildEmojis {
 pub struct EmojiSet {
     pub guilds: Vec<GuildEmojis>,
     pub personal: Vec<EmojiItem>,
-    /// 个人表情读取失败。服务器表情仍可用。
     pub personal_failed: bool,
-    /// 用户已添加的服务器表情组（服务器 ID，按用户排序）。读取失败时为 None。
     pub joined: Option<Vec<String>>,
 }
 
-/// 解析 `/api/v3/vip-expression/join-list`：`[{expression_id, target_id, type}]`，保留顺序并去重。
-///
 /// # Errors
 ///
 /// 响应不是数组时返回错误。
@@ -51,7 +42,6 @@ pub fn parse_joined(data: &Value) -> Result<Vec<String>, String> {
         .collect())
 }
 
-/// 表情 ID 只允许字母、数字、下划线、连字符与斜杠分段，与 `KMarkdown` 解析一致。
 #[must_use]
 pub fn valid_id(id: &str) -> bool {
     let parts: Vec<&str> = id.split('/').collect();
@@ -71,8 +61,6 @@ fn text(v: &Value, key: &str) -> String {
         .to_owned()
 }
 
-/// 解析服务器表情分组。缺少服务器 ID 的分组、格式不符或重复的表情跳过，不使整个列表失败。
-///
 /// # Errors
 ///
 /// 响应不是数组时返回错误。
@@ -116,8 +104,6 @@ pub fn parse_guilds(data: &Value) -> Result<Vec<GuildEmojis>, String> {
     Ok(out)
 }
 
-/// 解析个人表情。只取 `from = 1` 的分组，ID 为 `code`。
-///
 /// # Errors
 ///
 /// 响应缺少 items 时返回错误。

@@ -6,9 +6,6 @@ import { allCustom, emoji, ensureEmojis, noteRecent, shownGuilds } from "../../s
 import { session } from "../../stores/session";
 import GuildIcon from "../common/GuildIcon";
 
-// 表情选择器。发送与回应共用。页签为最近、个人、各服务器；不显示预览，名称以悬停提示显示。
-// purpose 决定哪些表情可选，选择器本身不决定发送目标。
-// 自定义表情只在可视区域附近加载图片（loading=lazy），分区按需渲染。
 type Section = { key: string; title: string; icon?: string; items: Pick[] };
 
 const CELL = 36;
@@ -32,7 +29,6 @@ export default function EmojiPicker(p: { purpose: Purpose; onPick: (x: Pick) => 
   let body!: HTMLDivElement;
   const [query, setQuery] = createSignal("");
   const [active, setActive] = createSignal(0);
-  // 列数取表情区实际可用宽度（扣除滚动条与内边距），网格与键盘导航使用同一列数。
   const [cols, setCols] = createSignal(8);
 
   onMount(() => {
@@ -48,12 +44,10 @@ export default function EmojiPicker(p: { purpose: Purpose; onPick: (x: Pick) => 
     ro.observe(body);
     onCleanup(() => ro.disconnect());
   });
-  // 触发按钮自己负责开关，不按外部点击处理。
   const onDown = (e: PointerEvent) => {
     const t = e.target as Node;
     if (!root.contains(t) && !p.trigger?.()?.contains(t)) p.onClose(false);
   };
-  // 固定定位的弹层：外部滚动或窗口缩放时由调用方重新定位。
   const onScroll = (e: Event) => {
     if (!root.contains(e.target as Node)) p.onReflow?.();
   };
@@ -69,8 +63,6 @@ export default function EmojiPicker(p: { purpose: Purpose; onPick: (x: Pick) => 
     window.removeEventListener("resize", onResize);
   });
 
-  // 页签：最近、个人、各服务器。“最近”页上方为最近使用，下方为按分组排列的 Unicode 表情。
-  // 各分区分别缓存，记录最近使用时只有该分区重建，其余格子保持不变。
   const recentSec = createMemo<Section | null>(() => (emoji.recent.length ? { key: "recent", title: "最近使用", items: [...emoji.recent] } : null));
   const personalSec = createMemo<Section>(() =>
     ({ key: "personal", title: "个人表情", items: emoji.personal.map((x): Pick => ({ kind: "custom", ...x, guildId: "" })) }));
@@ -80,12 +72,10 @@ export default function EmojiPicker(p: { purpose: Purpose; onPick: (x: Pick) => 
     key: `u:${grp.id}`, title: grp.name,
     items: emoji.unicode.filter((u) => u.group === grp.id).map((u): Pick => ({ kind: "unicode", char: u.char, name: u.name })),
   })).filter((x) => x.items.length));
-  // 服务器页签使用与侧边栏相同的服务器名称与图标；不在服务器列表中时取表情接口提供的名称与图标。
   const guildOf = (gid: string, name: string, icon?: string) => {
     const g = session.guilds.find((x) => x.id === gid);
     return { name: g?.name ?? name, icon: g ? g.icon : icon };
   };
-  // 整组不可用（例如在其他服务器或私信中）时页签加锁。
   const groupLocked = (sec: Section) => sec.items.length > 0 && sec.items.every((x) => unavailable(x, p.purpose));
   type Tab = { key: string; title: string; guild?: { name: string; icon?: string }; locked?: boolean };
   const tabs = createMemo<Tab[]>(() => [
@@ -97,7 +87,6 @@ export default function EmojiPicker(p: { purpose: Purpose; onPick: (x: Pick) => 
     }),
   ]);
   const [tab, setTab] = createSignal("recent");
-  // 所选页签消失（例如列表刷新）时回到“最近”。
   const current = () => (tabs().some((t) => t.key === tab()) ? tab() : "recent");
   const sections = createMemo<Section[]>(() => {
     const k = current();
@@ -111,7 +100,6 @@ export default function EmojiPicker(p: { purpose: Purpose; onPick: (x: Pick) => 
     body.scrollTop = 0;
   };
   const results = createMemo(() => (query().trim() ? search(emoji.unicode, allCustom(), query()) : null));
-  // 键盘导航用的扁平列表。
   const flat = createMemo(() => results() ?? sections().flatMap((s) => s.items));
 
   const why = (x: Pick) => unavailable(x, p.purpose);
@@ -128,7 +116,6 @@ export default function EmojiPicker(p: { purpose: Purpose; onPick: (x: Pick) => 
     setActive(n);
     body.querySelector<HTMLElement>(`[data-i="${n}"]`)?.scrollIntoView({ block: "nearest" });
   };
-  // 每个分区各自从第一列起排。上下移动到相邻行的同一列，跨分区时取目标行，越界时取该行最后一格。
   const bounds = () => (results() ? [{ start: 0, len: results()!.length }] : sections().map((x, i) => ({ start: offsets()[i], len: x.items.length })));
   const move = (i: number, d: number) => gridMove(bounds(), i, d, cols());
   const onKey = (e: KeyboardEvent) => {
@@ -139,7 +126,6 @@ export default function EmojiPicker(p: { purpose: Purpose; onPick: (x: Pick) => 
       e.stopPropagation();
       p.onClose(true);
     } else if (e.key in step) {
-      // 搜索框内左右键用于移动光标。
       if (e.target === input && (e.key === "ArrowLeft" || e.key === "ArrowRight") && query()) return;
       e.preventDefault();
       focusCell(move(active(), step[e.key]));
@@ -152,7 +138,6 @@ export default function EmojiPicker(p: { purpose: Purpose; onPick: (x: Pick) => 
     }
   };
 
-  // 渲染单个表情格子。index 用于键盘高亮，跨分区连续编号。
   const cell = (x: Pick, i: number) => {
     const reason = why(x);
     const label = x.name;

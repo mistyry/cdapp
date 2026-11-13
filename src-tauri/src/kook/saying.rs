@@ -1,5 +1,3 @@
-//! 启动页一言。来源为 `/api/file/config` 的 `saying` 字段，按 etag 缓存到数据根 `cache/`。
-
 use std::fs;
 
 use serde::{Deserialize, Serialize};
@@ -43,7 +41,6 @@ fn save(cache: &Cache) {
     }
 }
 
-/// 解析一言列表，跳过缺字段或内容为空的条目。
 #[must_use]
 pub fn parse(v: &Value) -> Vec<Saying> {
     v.as_array()
@@ -56,9 +53,6 @@ pub fn parse(v: &Value) -> Vec<Saying> {
         .unwrap_or_default()
 }
 
-/// 读取一言列表。有缓存时立即返回缓存，并在后台检查更新，新内容下次启动使用；
-/// 没有缓存时联网下载并缓存。
-///
 /// # Errors
 ///
 /// 没有缓存且下载失败时返回错误。
@@ -82,7 +76,6 @@ pub async fn list(api: Api) -> AppResult<Vec<Saying>> {
     Ok(fresh.data)
 }
 
-/// etag 未变时返回 None。
 async fn fetch(api: &Api, cache: &Cache) -> AppResult<Option<Cache>> {
     let cfg = api.get("/api/file/config", &()).await?;
     let s = cfg

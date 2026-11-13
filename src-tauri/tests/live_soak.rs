@@ -1,18 +1,9 @@
-//! 长时间通话、多轮加入退出与故障恢复的真实环境测试：
-//! `CDAPP_LIVE_TOKEN=... CDAPP_LIVE_TOKEN2=... CDAPP_LIVE_VOICE=...
-//!  cargo test --features test-media --test live_soak -- --ignored --nocapture`
-//!
-//! 两个账号推送合成音，每 2 秒的开头 120 ms 切换为标记频率。标记周期按系统时间对齐，
-//! 接收端从混音录制中检测标记出现的时刻，据此测量端到端延迟。
-//! - `long_call`：每分钟检查双向可听、延迟、CPU、内存、线程与文件描述符，
-//!   时长由 `CDAPP_SOAK_MINUTES` 设置，默认 30 分钟。
-//! - `join_leave_rounds`：多轮加入退出，检查资源是否持续增长。轮数由 `CDAPP_SOAK_ROUNDS` 设置。
-//! - `fault_recovery`：注入信令断开与系统睡眠，检查重建与恢复收听。
-
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use cdapp_lib::audio::capture::{MARK_MS, MARK_PERIOD_MS, Source, live_captures};
+use cdapp_lib::audio::capture::{
+    MARK_MS, MARK_PERIOD_MS, MARK_STEP_HZ, MARK_STEPS, Source, live_captures, mark_freq,
+};
 use cdapp_lib::audio::output::{Sink as Out, live_outputs};
 use cdapp_lib::kook::api::Api;
 use cdapp_lib::kook::voice::health::{DownStats, Quality, STABLE_AFTER, UpStats};
@@ -45,7 +36,35 @@ fn now_ms() -> f64 {
         .map_or(0.0, |d| d.as_secs_f64() * 1000.0)
 }
 
-/// 一段混音录制，48 kHz 单声道。
+struct StderrLog(Instant);
+
+impl log::Log for StderrLog {
+    fn enabled(&self, m: &log::Metadata) -> bool {
+        m.level() <= log::Level::Info && m.target().starts_with("cdapp")
+    }
+
+    fn log(&self, r: &log::Record) {
+        if self.enabled(r.metadata()) {
+            eprintln!(
+                "[{:>8.1}s {} {}] {}",
+                self.0.elapsed().as_secs_f64(),
+                r.level(),
+                r.target(),
+                r.args()
+            );
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+fn init_log() {
+    let l: &'static StderrLog = Box::leak(Box::new(StderrLog(Instant::now())));
+    if log::set_logger(l).is_ok() {
+        log::set_max_level(log::LevelFilter::Info);
+    }
+}
+
 #[derive(Default)]
 struct Rec {
     samples: Vec<f32>,
@@ -114,7 +133,6 @@ async fn wait_connected(log: &Log, n: usize, secs: u64) -> bool {
     false
 }
 
-/// 清空录制缓冲，录制 `ms` 毫秒，返回录制与结束时的系统时间。
 async fn record(tap: &Arc<Mutex<Vec<f32>>>, ms: u64) -> (Rec, f64) {
     tap.lock().unwrap().clear();
     tokio::time::sleep(Duration::from_millis(ms)).await;
@@ -130,7 +148,6 @@ fn rms(x: &[f32]) -> f64 {
     (x.iter().map(|&v| f64::from(v) * f64::from(v)).sum::<f64>() / x.len() as f64).sqrt()
 }
 
-/// 单频点功率。
 #[allow(clippy::cast_precision_loss)]
 fn power(seg: &[f32], f: f64) -> f64 {
     let w = 2.0 * std::f64::consts::PI * f / 48_000.0;
@@ -142,7 +159,6 @@ fn power(seg: &[f32], f: f64) -> f64 {
     re * re + im * im
 }
 
-/// 中间 1 秒内 100 至 2000 Hz 的主频，步长 1 Hz。
 fn peak(x: &[f32]) -> f64 {
     let n = x.len().min(48_000);
     if n == 0 {
@@ -156,32 +172,62 @@ fn peak(x: &[f32]) -> f64 {
         .0
 }
 
-/// 检测标记音出现的时刻，换算为相对发送时刻的延迟，单位毫秒。
-/// 发送时刻取所在标记周期的起点。
-#[allow(clippy::cast_precision_loss)]
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
 fn mark_delays(rec: &Rec, end_ms: f64, base: f32, mark: f32) -> Vec<f64> {
     const WIN: usize = 480;
     let x = &rec.samples;
     let t0 = end_ms - x.len() as f64 / 48.0;
+    let period = MARK_PERIOD_MS as f64;
+    let span = period * MARK_STEPS as f64;
     let mut out = Vec::new();
     let mut inside = false;
     for (k, seg) in x.as_chunks::<WIN>().0.iter().enumerate() {
-        let m = power(seg, f64::from(mark));
         let b = power(seg, f64::from(base));
+        let (step, m) = (0..MARK_STEPS)
+            .map(|s| {
+                (
+                    s,
+                    power(seg, f64::from(mark_freq(mark, s * MARK_PERIOD_MS))),
+                )
+            })
+            .fold((0, 0.0), |a, c| if c.1 > a.1 { c } else { a });
         let on = m > 4.0 * b && rms(seg) > 0.01;
         if on && !inside {
             let at = t0 + (k * WIN) as f64 / 48.0;
-            let period = MARK_PERIOD_MS as f64;
-            let sent = (at / period).floor() * period;
-            let d = at - sent;
-            // 落在标记时长之后的检测结果无法对应周期，舍弃。
-            if (0.0..period - MARK_MS as f64).contains(&d) {
+            if let Some(d) = mark_delay(at, step, period, span) {
                 out.push(d);
             }
         }
         inside = on;
     }
     out
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn mark_delay(at: f64, step: u64, period: f64, span: f64) -> Option<f64> {
+    let sent_in_span = step as f64 * period;
+    let d = (at - sent_in_span).rem_euclid(span);
+    (d < span - MARK_MS as f64).then_some(d)
+}
+
+#[test]
+fn mark_delay_resolves_beyond_one_period() {
+    let (p, s) = (2000.0, 8000.0);
+    for real in [90.0, 1879.0, 2090.0, 4100.0, 6500.0] {
+        let sent: f64 = 1_000_000.0;
+        let step = 1_000_000 / MARK_PERIOD_MS % MARK_STEPS;
+        let d = mark_delay(sent + real, step, p, s).unwrap();
+        assert!((d - real).abs() < 1e-6, "{real} -> {d}");
+    }
+    assert_eq!(MARK_STEPS, 4);
+    let a = mark_freq(1200.0, 0);
+    let b = mark_freq(1200.0, MARK_PERIOD_MS);
+    assert!((b - a - MARK_STEP_HZ).abs() < f32::EPSILON);
+    assert!((mark_freq(1200.0, MARK_PERIOD_MS * MARK_STEPS) - a).abs() < f32::EPSILON);
 }
 
 fn median(v: &mut [f64]) -> Option<f64> {
@@ -192,7 +238,6 @@ fn median(v: &mut [f64]) -> Option<f64> {
     Some(v[v.len() / 2])
 }
 
-/// 最近一次链路质量事件。
 fn last_link(log: &Log) -> Option<(Option<Quality>, Option<UpStats>, DownStats)> {
     log.lock().unwrap().iter().rev().find_map(|(_, e)| match e {
         VoiceEvent::Link {
@@ -227,7 +272,6 @@ fn ended(e: &VoiceEvent) -> Option<EndReason> {
     }
 }
 
-/// 进程资源占用。
 #[derive(Debug, Clone, Copy)]
 struct Res {
     rss_mb: f64,
@@ -238,13 +282,7 @@ struct Res {
 
 #[allow(clippy::cast_precision_loss)]
 fn res() -> Res {
-    // SAFETY: rusage 为纯数据结构，getrusage 只写入该结构。
-    let cpu_s = unsafe {
-        let mut u: libc::rusage = std::mem::zeroed();
-        libc::getrusage(libc::RUSAGE_SELF, &raw mut u);
-        let t = |v: libc::timeval| v.tv_sec as f64 + f64::from(v.tv_usec) / 1e6;
-        t(u.ru_utime) + t(u.ru_stime)
-    };
+    let cpu_s = cpu_seconds();
     let (rss_mb, threads) = task_info();
     let fds = std::fs::read_dir("/dev/fd").map_or(0, |d| d.count() as u64);
     Res {
@@ -255,10 +293,34 @@ fn res() -> Res {
     }
 }
 
+#[cfg(unix)]
+#[allow(clippy::cast_precision_loss)]
+fn cpu_seconds() -> f64 {
+    unsafe {
+        let mut u: libc::rusage = std::mem::zeroed();
+        libc::getrusage(libc::RUSAGE_SELF, &raw mut u);
+        let t = |v: libc::timeval| v.tv_sec as f64 + f64::from(v.tv_usec) / 1e6;
+        t(u.ru_utime) + t(u.ru_stime)
+    }
+}
+
+#[cfg(windows)]
+#[allow(clippy::cast_precision_loss)]
+fn cpu_seconds() -> f64 {
+    use windows::Win32::Foundation::FILETIME;
+    use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
+    let mut t = [FILETIME::default(); 4];
+    let [created, exited, kernel, user] = &mut t;
+    if unsafe { GetProcessTimes(GetCurrentProcess(), created, exited, kernel, user) }.is_err() {
+        return 0.0;
+    }
+    let ticks = |f: &FILETIME| (u64::from(f.dwHighDateTime) << 32) | u64::from(f.dwLowDateTime);
+    (ticks(&t[2]) + ticks(&t[3])) as f64 / 1e7
+}
+
 #[cfg(target_os = "macos")]
 #[allow(clippy::cast_precision_loss)]
 fn task_info() -> (f64, u64) {
-    // SAFETY: proc_taskinfo 为纯数据结构，proc_pidinfo 按传入大小写入。
     unsafe {
         let mut info: libc::proc_taskinfo = std::mem::zeroed();
         let size = i32::try_from(std::mem::size_of::<libc::proc_taskinfo>()).unwrap_or(0);
@@ -293,13 +355,11 @@ fn task_info() -> (f64, u64) {
     (field("VmRSS:") as f64 / 1024.0, field("Threads:"))
 }
 
-/// 存活的异步任务数。
 fn alive_tasks() -> usize {
     let tauri::async_runtime::RuntimeHandle::Tokio(h) = tauri::async_runtime::handle();
     h.metrics().num_alive_tasks()
 }
 
-/// 最小二乘斜率，单位为每个样本点。
 #[allow(clippy::cast_precision_loss)]
 fn slope(y: &[f64]) -> f64 {
     let n = y.len() as f64;
@@ -340,7 +400,6 @@ fn fmt_down(d: DownStats) -> String {
     )
 }
 
-/// 同时录制双方的混音，返回双方的主频、RMS 与延迟中位数。
 async fn probe(a: &Party, b: &Party, ms: u64) -> [Option<f64>; 6] {
     let ((ra, ea), (rb, eb)) = tokio::join!(record(&a.tap, ms), record(&b.tap, ms));
     let mut da = mark_delays(&ra, ea, ALT_TONE, ALT_MARK);
@@ -367,6 +426,7 @@ fn opt(v: Option<f64>, digits: usize) -> String {
 #[ignore = "需要真实账号与语音频道"]
 #[allow(clippy::too_many_lines)]
 async fn long_call() {
+    init_log();
     let (main, alt, ch) = (
         env("CDAPP_LIVE_TOKEN"),
         env("CDAPP_LIVE_TOKEN2"),
@@ -458,8 +518,12 @@ async fn long_call() {
         if delays.is_empty() { 0.0 } else { lo },
         hi,
     );
+    let t = Instant::now();
     a.session.leave().await;
+    let la = t.elapsed().as_millis();
+    let t = Instant::now();
     b.session.leave().await;
+    println!("离开耗时 主号 {la} ms，小号 {} ms", t.elapsed().as_millis());
     tokio::time::sleep(Duration::from_millis(500)).await;
     let r2 = res();
     println!(
@@ -484,7 +548,6 @@ async fn join_leave_rounds() {
         env("CDAPP_LIVE_VOICE"),
     );
     let rounds = env_num("CDAPP_SOAK_ROUNDS", 20);
-    // 小号保持在线，主号反复加入退出。
     let b = start(&alt, &ch, ALT_TONE, ALT_MARK);
     assert!(wait_connected(&b.log, 1, 20).await, "小号未连接");
     tokio::time::sleep(Duration::from_secs(1)).await;
@@ -563,9 +626,7 @@ async fn join_leave_rounds() {
     assert!(slope(&tasks) < 0.5, "tokio 任务持续增长");
 }
 
-/// 注入故障，等待重新连接并检查双向可听，返回恢复用时。
 async fn recover(a: &Party, b: &Party, fault: Fault, label: &str) -> u128 {
-    // 先保持稳定连接，使重建次数重新计数。
     tokio::time::sleep(STABLE_AFTER + Duration::from_secs(2)).await;
     let before = connected_count(&a.log);
     let t = Instant::now();
@@ -578,7 +639,6 @@ async fn recover(a: &Party, b: &Party, fault: Fault, label: &str) -> u128 {
     tokio::time::sleep(Duration::from_secs(3)).await;
     let p = probe(a, b, 3000).await;
     let (ra, rb) = (heard(p[0], ALT_TONE), heard(p[3], MAIN_TONE));
-    // 小号看到的成员离开不应多于加入。
     let joined = count(&b.log, |e| matches!(e, VoiceEvent::PeerJoined { .. }));
     let left = count(&b.log, |e| matches!(e, VoiceEvent::PeerLeft { .. }));
     println!(
@@ -595,6 +655,7 @@ async fn recover(a: &Party, b: &Party, fault: Fault, label: &str) -> u128 {
 #[ignore = "需要真实账号与语音频道"]
 #[allow(clippy::many_single_char_names)]
 async fn fault_recovery() {
+    init_log();
     let (main, alt, ch) = (
         env("CDAPP_LIVE_TOKEN"),
         env("CDAPP_LIVE_TOKEN2"),
@@ -628,7 +689,6 @@ async fn fault_recovery() {
         .collect();
     println!("重连次数与等待时长：{attempts:?}");
 
-    // 加入持续失败时，重建次数用尽后结束会话。
     tokio::time::sleep(STABLE_AFTER + Duration::from_secs(2)).await;
     let t = Instant::now();
     a.session.control().inject(Fault::FailJoin);
@@ -662,8 +722,12 @@ async fn fault_recovery() {
     println!("小号看到主号离开={left}");
     tokio::time::sleep(Duration::from_secs(1)).await;
     assert!(a.session.is_finished());
+    let t = Instant::now();
     a.session.leave().await;
+    let la = t.elapsed().as_millis();
+    let t = Instant::now();
     b.session.leave().await;
+    println!("离开耗时 主号 {la} ms，小号 {} ms", t.elapsed().as_millis());
     tokio::time::sleep(Duration::from_millis(500)).await;
     println!(
         "退出后 采集/播放线程={}/{}",

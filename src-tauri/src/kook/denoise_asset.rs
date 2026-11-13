@@ -1,5 +1,3 @@
-//! AI 降噪资源：模块文件缓存到数据根 `cache/denoise/`，许可证书只保存在内存中。
-
 use sha2::{Digest, Sha256};
 
 use super::api::Api;
@@ -7,7 +5,6 @@ use crate::error::{AppError, AppResult};
 
 const URL: &str = "https://static.kookapp.cn/app/assets/external/ai_denoiser_module_simd.wasm";
 const FILE: &str = "denoise/ai_denoiser_module_simd.wasm";
-/// 模块文件的 SHA-256。地址上的文件更换后不再加载，避免运行未知版本。
 const SHA256: &str = "8f5ef43d31dce7f4be128adcd6ee5d5d4e96d33ec66f456a4dfb3fea5476416f";
 
 fn sha_ok(bytes: &[u8]) -> bool {
@@ -20,8 +17,6 @@ fn sha_ok(bytes: &[u8]) -> bool {
     hex == SHA256
 }
 
-/// 读取缓存的模块，缺失或校验失败时下载。成功后在后台编译。
-///
 /// # Errors
 ///
 /// 数据目录不可用、下载失败或校验不符时返回错误。
@@ -50,8 +45,6 @@ pub async fn sync(api: &Api) -> AppResult<()> {
     Ok(())
 }
 
-/// 获取许可证书并保存在内存中。已有证书时不再请求。
-///
 /// # Errors
 ///
 /// 请求失败或响应中没有证书时返回错误。

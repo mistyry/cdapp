@@ -1,11 +1,10 @@
-// 屏幕分享画面解码：后端经 Channel 发来编码后的帧，用 WebCodecs 解码后绘制到 canvas。
-// 帧格式：u8 关键帧标记、u8 编码（1 H.264）、u16 宽、u16 高、i64 时间戳微秒，小端，共 14 字节，之后为 Annex B 数据。
-// 解码出错、尺寸或编码参数变化时重建解码器，并通过 needKey 请求关键帧；收到关键帧前丢弃其余帧。
-
 export type ParsedFrame = { key: boolean; codec: number; width: number; height: number; ts: number; data: Uint8Array };
 
 const HEAD = 14;
-const H264 = 1;
+export const H264 = 1;
+export const H265 = 2;
+export const AV1 = 3;
+export const AV1_DEFAULT = "av01.0.08M.08";
 
 export function parseFrame(buf: ArrayBuffer): ParsedFrame | null {
   if (buf.byteLength <= HEAD) return null;
@@ -20,7 +19,6 @@ export function parseFrame(buf: ArrayBuffer): ParsedFrame | null {
   };
 }
 
-// 从 Annex B 数据中取 SPS 的 profile、约束与 level，组成 WebCodecs 的 codec 字符串。没有 SPS 时为 null。
 export function avcCodec(data: Uint8Array): string | null {
   for (let i = 0; i + 6 < data.length; i++) {
     if (data[i] !== 0 || data[i + 1] !== 0) continue;
@@ -33,6 +31,202 @@ export function avcCodec(data: Uint8Array): string | null {
   return null;
 }
 
+class Bits {
+  private pos = 0;
+  constructor(private readonly d: Uint8Array, private readonly end = d.length * 8) {}
+  get left() {
+    return this.end - this.pos;
+  }
+  u(n: number): number {
+    if (n > this.left) throw new RangeError("eof");
+    let v = 0;
+    for (let i = 0; i < n; i++, this.pos++) v = v * 2 + ((this.d[this.pos >> 3] >> (7 - (this.pos & 7))) & 1);
+    return v;
+  }
+  uvlc(): number {
+    let z = 0;
+    while (this.u(1) === 0) if (++z >= 32) throw new RangeError("uvlc");
+    return z ? this.u(z) + (2 ** z - 1) : 0;
+  }
+}
+
+function leb128(d: Uint8Array, at: number): [number, number] | null {
+  let v = 0;
+  for (let i = 0; i < 8 && at + i < d.length; i++) {
+    v += (d[at + i] & 0x7f) * 2 ** (7 * i);
+    if (!(d[at + i] & 0x80)) return [v, i + 1];
+  }
+  return null;
+}
+
+function av1SeqHeader(b: Bits): string {
+  const profile = b.u(3);
+  b.u(1);
+  const reduced = b.u(1);
+  let level = 0;
+  let tier = 0;
+  let decoderModel = 0;
+  let delayLen = 0;
+  if (reduced) level = b.u(5);
+  else {
+    if (b.u(1)) {
+      b.u(32);
+      b.u(32);
+      if (b.u(1)) b.uvlc();
+      decoderModel = b.u(1);
+      if (decoderModel) {
+        delayLen = b.u(5) + 1;
+        b.u(32);
+        b.u(5);
+        b.u(5);
+      }
+    }
+    const initialDelay = b.u(1);
+    const ops = b.u(5) + 1;
+    for (let i = 0; i < ops; i++) {
+      b.u(12);
+      const lv = b.u(5);
+      const tr = lv > 7 ? b.u(1) : 0;
+      if (i === 0) [level, tier] = [lv, tr];
+      if (decoderModel && b.u(1)) {
+        b.u(delayLen);
+        b.u(delayLen);
+        b.u(1);
+      }
+      if (initialDelay && b.u(1)) b.u(4);
+    }
+  }
+  const wBits = b.u(4) + 1;
+  const hBits = b.u(4) + 1;
+  b.u(wBits);
+  b.u(hBits);
+  if (!reduced && b.u(1)) {
+    b.u(4);
+    b.u(3);
+  }
+  b.u(3);
+  if (!reduced) {
+    b.u(4);
+    const orderHint = b.u(1);
+    if (orderHint) b.u(2);
+    const force = b.u(1) ? 2 : b.u(1);
+    if (force > 0 && !b.u(1)) b.u(1);
+    if (orderHint) b.u(3);
+  }
+  b.u(3);
+  const high = b.u(1);
+  const depth = profile === 2 && high ? (b.u(1) ? 12 : 10) : high ? 10 : 8;
+  const two = (x: number) => String(x).padStart(2, "0");
+  return `av01.${profile}.${two(level)}${tier ? "H" : "M"}.${two(depth)}`;
+}
+
+export function av1Codec(data: Uint8Array): string | null {
+  let at = 0;
+  while (at < data.length) {
+    const h = data[at];
+    const type = (h >> 3) & 0xf;
+    const ext = (h >> 2) & 1;
+    const hasSize = (h >> 1) & 1;
+    let p = at + 1 + ext;
+    let size = data.length - p;
+    if (hasSize) {
+      const s = leb128(data, p);
+      if (!s) return null;
+      [size, p] = [s[0], p + s[1]];
+    }
+    if (p + size > data.length) return null;
+    if (type === 1) {
+      try {
+        return av1SeqHeader(new Bits(data.subarray(p, p + size)));
+      } catch {
+        return null;
+      }
+    }
+    if (!hasSize) return null;
+    at = p + size;
+  }
+  return null;
+}
+
+function unescape(d: Uint8Array): Uint8Array {
+  const out: number[] = [];
+  let zeros = 0;
+  for (let i = 0; i < d.length; i++) {
+    if (d[i] === 3 && zeros >= 2) {
+      zeros = 0;
+      continue;
+    }
+    zeros = d[i] === 0 ? zeros + 1 : 0;
+    out.push(d[i]);
+  }
+  return Uint8Array.from(out);
+}
+
+export function hevcCodec(data: Uint8Array): string | null {
+  for (let i = 0; i + 4 < data.length; i++) {
+    if (data[i] !== 0 || data[i + 1] !== 0) continue;
+    const at = data[i + 2] === 1 ? i + 3 : data[i + 2] === 0 && data[i + 3] === 1 ? i + 4 : -1;
+    if (at < 0 || ((data[at] >> 1) & 0x3f) !== 33) continue;
+    let end = data.length;
+    for (let k = at + 2; k + 2 < data.length; k++) {
+      if (data[k] === 0 && data[k + 1] === 0 && (data[k + 2] === 1 || (data[k + 2] === 0 && data[k + 3] === 1))) {
+        end = k;
+        break;
+      }
+    }
+    const sps = unescape(data.subarray(at + 2, end));
+    if (sps.length < 13) return null;
+    const space = sps[1] >> 6;
+    const tier = (sps[1] >> 5) & 1;
+    const profile = sps[1] & 0x1f;
+    let compat = ((sps[2] << 24) | (sps[3] << 16) | (sps[4] << 8) | sps[5]) >>> 0;
+    let rev = 0;
+    for (let k = 0; k < 32; k++, compat >>>= 1) rev = (rev << 1) | (compat & 1);
+    const cons = Array.from(sps.subarray(6, 12));
+    while (cons.length && cons[cons.length - 1] === 0) cons.pop();
+    const level = sps[12];
+    const sp = ["", "A", "B", "C"][space];
+    const tail = cons.map((c) => `.${c.toString(16).toUpperCase()}`).join("");
+    return `hvc1.${sp}${profile}.${(rev >>> 0).toString(16).toUpperCase()}.${tier ? "H" : "L"}${level}${tail}`;
+  }
+  return null;
+}
+
+export function av1ShowExisting(data: Uint8Array): boolean {
+  let at = 0;
+  let found = false;
+  while (at < data.length) {
+    const h = data[at];
+    const type = (h >> 3) & 0xf;
+    const ext = (h >> 2) & 1;
+    const hasSize = (h >> 1) & 1;
+    let p = at + 1 + ext;
+    let size = data.length - p;
+    if (hasSize) {
+      const s = leb128(data, p);
+      if (!s) return false;
+      [size, p] = [s[0], p + s[1]];
+    }
+    if (p + size > data.length) return false;
+    if (type === 3) {
+      if (found || size < 1 || !(data[p] & 0x80)) return false;
+      found = true;
+    } else if (type !== 2 && type !== 15) {
+      return false;
+    }
+    if (!hasSize) break;
+    at = p + size;
+  }
+  return found;
+}
+
+export function codecOf(f: ParsedFrame): string | null {
+  if (f.codec === H264) return avcCodec(f.data);
+  if (f.codec === H265) return hevcCodec(f.data);
+  if (f.codec === AV1) return av1Codec(f.data) ?? AV1_DEFAULT;
+  return null;
+}
+
 export type DecoderStats = { decoded: number; dropped: number; errors: number; hardware: boolean | null };
 
 export class ScreenDecoder {
@@ -41,17 +235,17 @@ export class ScreenDecoder {
   private width = 0;
   private height = 0;
   private waitingKey = true;
+  private afterKey = false;
   private latest: VideoFrame | null = null;
   private raf = 0;
   private canvas: HTMLCanvasElement | null = null;
   private ctx: CanvasRenderingContext2D | null = null;
   private closed = false;
+  private readonly unsupported = new Set<string>();
   readonly stats: DecoderStats = { decoded: 0, dropped: 0, errors: 0, hardware: null };
 
-  // needKey：需要关键帧时调用，由调用方转给后端。onSize：画面尺寸变化，用于布局宽高比。
   constructor(private readonly needKey: () => void, private readonly onSize: (w: number, h: number) => void) {}
 
-  // 绑定绘制目标。画面切换承载位置时重新绑定，解码器不受影响。
   attach(canvas: HTMLCanvasElement | null) {
     this.canvas = canvas;
     this.ctx = canvas?.getContext("2d", { alpha: false, desynchronized: true }) ?? null;
@@ -65,17 +259,26 @@ export class ScreenDecoder {
     if (this.closed) return;
     const f = parseFrame(buf);
     if (!f) return;
-    if (f.codec !== H264) {
-      // 只协商出过 H.264。其他编码不解码，等对方回落。
+    if (f.codec !== H264 && f.codec !== H265 && f.codec !== AV1) {
       this.stats.dropped++;
       return;
     }
     if (f.key) {
-      const codec = avcCodec(f.data);
+      const codec = codecOf(f);
       if (codec && (codec !== this.codec || f.width !== this.width || f.height !== this.height || !this.decoder)) {
+        if (this.unsupported.has(codec)) {
+          this.stats.dropped++;
+          return;
+        }
         this.configure(codec, f.width, f.height);
       }
       this.waitingKey = false;
+      this.afterKey = true;
+    } else if (this.afterKey && f.codec === AV1 && av1ShowExisting(f.data)) {
+      this.stats.dropped++;
+      return;
+    } else {
+      this.afterKey = false;
     }
     if (this.waitingKey || !this.decoder || this.decoder.state !== "configured") {
       this.stats.dropped++;
@@ -102,7 +305,6 @@ export class ScreenDecoder {
       output: (vf) => {
         if (this.decoder !== dec) return vf.close();
         this.stats.decoded++;
-        // 只保留最新一帧，在下一个绘制周期画出，跟不上时跳过旧帧。
         this.latest?.close();
         this.latest = vf;
         this.raf ||= requestAnimationFrame(() => this.draw());
@@ -113,6 +315,13 @@ export class ScreenDecoder {
     });
     dec.configure({ codec, codedWidth: width, codedHeight: height, hardwareAcceleration: "prefer-hardware", optimizeForLatency: true });
     this.decoder = dec;
+    void VideoDecoder.isConfigSupported({ codec, codedWidth: width, codedHeight: height })
+      .then((s) => {
+        if (s.supported || this.decoder !== dec) return;
+        this.unsupported.add(codec);
+        this.fail(new Error(`不支持的编码 ${codec}`));
+      })
+      .catch(() => {});
     if (this.stats.hardware === null) {
       void VideoDecoder.isConfigSupported({ codec, codedWidth: width, codedHeight: height, hardwareAcceleration: "prefer-hardware" })
         .then((s) => { this.stats.hardware = Boolean(s.supported); })
@@ -129,11 +338,10 @@ export class ScreenDecoder {
     vf.close();
   }
 
-  // 解码出错：丢弃解码器，等关键帧重建。
   private fail(e: unknown) {
     console.warn("屏幕分享解码失败", e);
     this.stats.errors++;
-    try { this.decoder?.close(); } catch { /* 已关闭 */ }
+    try { this.decoder?.close(); } catch {}
     this.decoder = null;
     this.codec = "";
     this.waitingKey = true;
@@ -146,7 +354,7 @@ export class ScreenDecoder {
     this.raf = 0;
     this.latest?.close();
     this.latest = null;
-    try { this.decoder?.close(); } catch { /* 已关闭 */ }
+    try { this.decoder?.close(); } catch {}
     this.decoder = null;
     this.canvas = null;
     this.ctx = null;

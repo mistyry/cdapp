@@ -1,8 +1,3 @@
-//! 共享源的实际像素尺寸，直接向系统读取。
-//!
-//! SDK 的 `onLocalVideoSizeChanged` 报告的是缩放后的编码尺寸，改档后不再等于源尺寸，
-//! 不能用来换算编码尺寸。显示器读物理分辨率，窗口读 DWM 可见边框，不含阴影。
-
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Dwm::{DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute};
 use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, HMONITOR, MONITORINFO};
@@ -12,10 +7,8 @@ use windows::Win32::UI::HiDpi::{
 
 use super::bridge::{self, SourceKind};
 
-/// 缩略图上限，与选源对话框的 16:9 卡片对应，2 倍像素。
 pub const THUMB_MAX: (u32, u32) = (480, 270);
 
-/// 源缩略图，PNG 数据地址。源已不存在或格式不支持时返回 None。
 #[must_use]
 pub fn thumbnail(kind: SourceKind, id: u64) -> Option<String> {
     use base64::Engine;
@@ -27,7 +20,6 @@ pub fn thumbnail(kind: SourceKind, id: u64) -> Option<String> {
     ))
 }
 
-/// BGRA 编码为不透明 RGB 的 PNG。
 fn encode_png(w: u32, h: u32, bgra: &[u8]) -> Option<Vec<u8>> {
     let rgb: Vec<u8> = bgra
         .as_chunks::<4>()
@@ -45,18 +37,14 @@ fn encode_png(w: u32, h: u32, bgra: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// 源的物理像素尺寸。源已不存在时返回 None。
 #[must_use]
 pub fn size(kind: SourceKind, id: u64) -> Option<(u32, u32)> {
-    // 按物理像素读取。cdapp 进程已由 tao 设为 Per-Monitor V2，测试进程没有，在本线程临时设置。
-    // SAFETY: 设置并恢复当前线程的 DPI 感知，不影响其他线程。
     let prev = unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
     let rect = match kind {
         SourceKind::Screen => monitor(id),
         SourceKind::Window => window(id),
     };
     if !prev.is_invalid() {
-        // SAFETY: 恢复调用前的值。
         unsafe { SetThreadDpiAwarenessContext(prev) };
     }
     let r = rect?;
@@ -69,14 +57,12 @@ fn monitor(id: u64) -> Option<RECT> {
         cbSize: u32::try_from(std::mem::size_of::<MONITORINFO>()).unwrap_or(0),
         ..Default::default()
     };
-    // SAFETY: id 为 SDK 列源返回的 HMONITOR；无效时函数返回 FALSE，不访问无效内存。
     let ok = unsafe { GetMonitorInfoW(HMONITOR(id as *mut _), &raw mut mi) };
     ok.as_bool().then_some(mi.rcMonitor)
 }
 
 fn window(id: u64) -> Option<RECT> {
     let mut r = RECT::default();
-    // SAFETY: id 为 SDK 列源返回的 HWND；窗口已关闭时返回错误。
     unsafe {
         DwmGetWindowAttribute(
             HWND(id as *mut _),
@@ -101,7 +87,6 @@ mod tests {
 
     #[test]
     fn encodes_bgra_as_png() {
-        // 2×1：蓝、红。
         let png = encode_png(2, 1, &[255, 0, 0, 255, 0, 0, 255, 255]).unwrap();
         assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
         let dec = png::Decoder::new(std::io::Cursor::new(png));
@@ -111,7 +96,6 @@ mod tests {
         assert_eq!(&buf[..6], [0, 0, 255, 255, 0, 0]);
     }
 
-    /// 本机显示器的物理尺寸，需要 SDK 运行文件列源：`CDAPP_VOLC_BIN`。
     #[test]
     #[ignore = "需要 SDK 运行文件"]
     fn reads_monitor_sizes() {
@@ -129,14 +113,12 @@ mod tests {
             let (w, h, px) = bridge::thumbnail(s.kind, s.id, THUMB_MAX).unwrap();
             println!("{} 缩略图 {w}x{h}", s.name);
             assert!(w <= THUMB_MAX.0 && h <= THUMB_MAX.1 && w > 0 && h > 0);
-            // 屏幕内容不应全黑。
             assert!(px.iter().any(|&b| b > 16), "{} 缩略图全黑", s.name);
             assert!(
                 thumbnail(s.kind, s.id)
                     .unwrap()
                     .starts_with("data:image/png;base64,")
             );
-            // CDAPP_THUMB_DIR 时保存 PNG，供目测颜色。
             if let Some(dir) = std::env::var_os("CDAPP_THUMB_DIR") {
                 let name = s.name.trim_start_matches(['\\', '.']);
                 let png = encode_png(w, h, &px).unwrap();
@@ -147,8 +129,6 @@ mod tests {
         super::super::bridge::stop();
     }
 
-    /// 主屏显示红绿蓝三条竖带时，缩略图三条带中心的颜色正确；打印预览引擎下列源与缩略图耗时。
-    /// 需 `CDAPP_VOLC_BIN`，并先运行 poc 的 bands.py。
     #[test]
     #[ignore = "需要 SDK 运行文件与色带窗口"]
     fn thumbnail_colors_and_preview_timing() {
@@ -179,7 +159,6 @@ mod tests {
         let start = std::time::Instant::now();
         let (w, h, px) = bridge::thumbnail(screen.kind, screen.id, THUMB_MAX).unwrap();
         println!("主屏缩略图 {w}x{h}，{} ms", start.elapsed().as_millis());
-        // 三条色带中心，转换后 BGRA 依次为红、绿、蓝。
         let expect: [(u32, [u8; 3]); 3] = [(1, [0, 0, 255]), (3, [0, 255, 0]), (5, [255, 0, 0])];
         for (sixth, want) in expect {
             let at = ((h / 2 * w + w * sixth / 6) * 4) as usize;

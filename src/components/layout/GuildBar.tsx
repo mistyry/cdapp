@@ -9,17 +9,14 @@ import { GuildScreenMark, GuildVoiceMark } from "../common/icons";
 import Avatar from "../common/Avatar";
 import GuildIcon from "../common/GuildIcon";
 
-// 可点击的导航项以按钮语义暴露给键盘与读屏，Enter 与空格触发。
 const press = (f: () => void, hit = ".guild-btn, .me-entry, .folder-btn") => ({
   role: "button" as const, tabIndex: 0,
-  // 点击只在图标上生效；键盘在整项上触发。
   onClick: (e: MouseEvent) => (e.target as Element).closest(hit) && f(),
   onKeyDown: (e: KeyboardEvent) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), f()),
 });
 
 const count = (n: number) => (n > 99 ? "99+" : n);
 
-// 右下角状态，与官方优先级一致：本人分享、本人语音、他人分享。
 type Mark = "self-share" | "voice" | "screen" | null;
 function guildMark(ids: string[]): Mark {
   const vg = voiceActive() ? guildOfAny(voice.channelId)?.id ?? "" : "";
@@ -55,7 +52,6 @@ function GuildEntry(p: { id: string }) {
 
 export default function GuildBar() {
   const rail = createMemo(() => buildRail(session.guilds.map((g) => g.id), session.folders));
-  // 展开的文件夹按账号保存；切换账号时重新读取。
   const [open, setOpen] = createSignal<string[]>([]);
   let owner = "";
   createEffect(() => {

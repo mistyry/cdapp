@@ -1,6 +1,3 @@
-//! 语音 SDP 与 RTP 参数。
-//! 服务端以 mediasoup 传输参数描述连接，本模块据此构造 ice-lite 的推流应答与拉流 offer，并从本地 offer 取出推流参数。
-
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -8,12 +5,10 @@ use crate::error::{AppError, AppResult};
 
 pub const MID_URI: &str = "urn:ietf:params:rtp-hdrext:sdes:mid";
 pub const LEVEL_URI: &str = "urn:ietf:params:rtp-hdrext:ssrc-audio-level";
-/// RTP 头部扩展 ID，与推流参数中声明的一致。
 pub const MID_ID: u8 = 1;
 pub const LEVEL_ID: u8 = 2;
 pub const OPUS_PT: u8 = 111;
 
-/// quickJoin 返回的传输参数。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Transport {
@@ -32,7 +27,6 @@ pub struct IceParameters {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Candidate {
-    /// 服务端可能下发字符串或数字。
     pub foundation: Value,
     pub ip: String,
     pub port: u16,
@@ -53,7 +47,6 @@ pub struct Fingerprint {
     pub value: String,
 }
 
-/// 服务端下发的推流音频参数。
 #[derive(Debug, Clone, Deserialize)]
 pub struct AudioConfig {
     #[serde(default = "default_ptime")]
@@ -78,7 +71,6 @@ impl Default for AudioConfig {
     }
 }
 
-/// quickJoin 响应中的推流与拉流参数。
 #[derive(Debug, Clone)]
 pub struct JoinParams {
     pub send: Transport,
@@ -157,8 +149,6 @@ fn join(lines: &[String]) -> String {
     s
 }
 
-/// 构造推流连接的远端应答。
-///
 /// # Errors
 ///
 /// 缺少 sha-256 指纹时返回错误。
@@ -187,7 +177,6 @@ pub fn send_answer(t: &Transport, mid: &str) -> AppResult<String> {
     Ok(join(&l))
 }
 
-/// 服务端下发的拉流音轨。
 #[derive(Debug, Clone, PartialEq)]
 pub struct Consumer {
     pub id: String,
@@ -197,10 +186,8 @@ pub struct Consumer {
     pub payload_type: u8,
     pub clock_rate: u32,
     pub channels: u16,
-    /// 编码参数，按 `a=fmtp` 格式拼接。
     pub fmtp: String,
     pub cname: String,
-    /// 已关闭的音轨在 offer 中保留为 inactive，保持 mid 顺序。
     pub closed: bool,
 }
 
@@ -269,9 +256,6 @@ impl Consumer {
     }
 }
 
-/// 构造拉流连接的远端 offer，每个音轨一个媒体段。
-/// `version` 每次递增，作为 SDP 会话版本。
-///
 /// # Errors
 ///
 /// 没有音轨或缺少 sha-256 指纹时返回错误。
@@ -311,7 +295,6 @@ pub fn recv_offer(t: &Transport, consumers: &[Consumer], version: u64) -> AppRes
     Ok(join(&l))
 }
 
-/// 本地推流 offer 中的参数。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalOffer {
     pub mid: String,
@@ -320,8 +303,6 @@ pub struct LocalOffer {
 }
 
 impl LocalOffer {
-    /// 从本地 offer 读取 mid、SSRC 与 cname。
-    ///
     /// # Errors
     ///
     /// 缺少 mid 或 SSRC 时返回错误。
@@ -346,7 +327,6 @@ impl LocalOffer {
     }
 }
 
-/// initSpeaking 的推流 RTP 参数。
 #[must_use]
 pub fn rtp_parameters(o: &LocalOffer, audio: &AudioConfig) -> Value {
     json!({
@@ -368,7 +348,6 @@ pub fn rtp_parameters(o: &LocalOffer, audio: &AudioConfig) -> Value {
     })
 }
 
-/// initSpeaking 的 DTLS 参数。服务端只接受大写指纹。
 #[must_use]
 pub fn dtls(fingerprint: &str) -> Value {
     json!({
@@ -469,7 +448,6 @@ mod tests {
         assert!(o.contains("a=setup:actpass"));
         assert!(o.contains("a=rtpmap:100 opus/48000/2"));
         assert!(o.contains("a=fmtp:100 minptime=10;useinbandfec=1"));
-        // 已关闭的音轨保留为 inactive 段。
         assert_eq!(o.matches("a=inactive").count(), 1);
         assert_eq!(o.matches("a=sendonly").count(), 1);
         assert!(!o.contains("a=ssrc:11 "));

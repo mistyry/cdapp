@@ -17,13 +17,9 @@ test("基础权限为全体成员与本人角色的并集，未持有的角色�
 
 test("覆盖顺序：全体成员 → 本人角色（合并）→ 本人用户", () => {
   const a = g({ myRoles: [5, 6] });
-  // 全体成员拒绝查看，本人角色允许 → 可见。
   expect(has(channelPerms(a, "me", [{ roleId: 0, allow: 0, deny: Perm.VIEW }, { roleId: 5, allow: Perm.VIEW, deny: 0 }]), Perm.VIEW)).toBe(true);
-  // 角色之间：一个拒绝一个允许，允许优先。
   expect(has(channelPerms(a, "me", [{ roleId: 5, allow: 0, deny: Perm.SEND }, { roleId: 6, allow: Perm.SEND, deny: 0 }]), Perm.SEND)).toBe(true);
-  // 未持有的角色覆盖不生效。
   expect(has(channelPerms(a, "me", [{ roleId: 0, allow: 0, deny: Perm.VIEW }, { roleId: 9, allow: Perm.VIEW, deny: 0 }]), Perm.VIEW)).toBe(false);
-  // 用户覆盖最后应用，且只对本人生效。
   const ow = [{ roleId: 5, allow: Perm.SEND, deny: 0 }];
   expect(has(channelPerms(a, "me", ow, [{ userId: "me", allow: 0, deny: Perm.SEND }]), Perm.SEND)).toBe(false);
   expect(has(channelPerms(a, "me", ow, [{ userId: "x", allow: 0, deny: Perm.SEND }]), Perm.SEND)).toBe(true);

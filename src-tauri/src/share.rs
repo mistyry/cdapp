@@ -1,5 +1,3 @@
-//! 屏幕分享推流与观看，仅 Windows。
-
 pub mod agora_sdk;
 pub mod bridge;
 pub mod fit;

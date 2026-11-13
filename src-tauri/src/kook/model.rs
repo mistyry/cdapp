@@ -1,15 +1,13 @@
-//! 接口响应到客户端模型的转换边界。只保留界面实际使用的字段，缺少可选字段时取默认值。
-
 use serde::Serialize;
 use serde_json::Value;
 
-/// 频道类型。协议值 0 分组，1 文字，2 语音；其余值保留原值并降级显示。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChannelKind {
     Category,
     Text,
     Voice,
+    Radio,
     Unknown,
 }
 
@@ -19,29 +17,18 @@ pub struct Channel {
     pub id: String,
     pub name: String,
     pub kind: ChannelKind,
-    /// 协议中的原始类型值，用于诊断未知类型。
     pub raw_type: i64,
-    /// 所属分组 ID；顶层频道与分组本身为 `None`。
     pub parent_id: Option<String>,
-    /// 同级排序值，越小越靠前。不保证唯一。
     pub level: i64,
-    /// 语音人数上限，0 表示不限。
     pub limit: u64,
-    /// 角色覆盖（`role_id` 0 为 @全体成员）。`channel/list` 返回已生效的覆盖，同步分组的频道也带完整数组。
     pub overwrites: Vec<Overwrite>,
-    /// 用户覆盖。
     pub user_overwrites: Vec<UserOverwrite>,
-    /// 频道设有密码。服务端不返回密码本身。
     pub has_password: bool,
-    /// 与所属分组同步覆盖。服务端已把分组覆盖复制到本频道，客户端不再叠加父分组。
     pub permission_sync: bool,
-    /// 语音频道内的在线用户，来自 guild/view；`channel/list` 不提供，为空。
     pub users: Vec<VoiceUser>,
-    /// 最新消息的单行预览，形如 `昵称：内容`；最新消息被删除时为服务端给出的说明。
     pub preview: String,
 }
 
-/// 语音频道内用户的显示资料。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VoiceUser {
@@ -50,24 +37,20 @@ pub struct VoiceUser {
     pub nickname: String,
     pub identify_num: String,
     pub avatar: String,
-    /// 屏幕分享状态。未分享或字段缺失时为 `None`。
     pub live: Option<LiveInfo>,
 }
 
-/// 屏幕分享状态，来自成员的 `live_info`。只在 `in_live` 为真时构造。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LiveInfo {
     pub resolution: u32,
     pub frame_rate: u32,
-    /// 开播时间，毫秒。
     pub start_time: i64,
     pub audience_count: u32,
     pub audience_limit: u32,
 }
 
 impl LiveInfo {
-    /// 未分享、缺失或格式不符时返回 `None`。
     #[must_use]
     pub fn from_raw(v: Option<&Value>) -> Option<Self> {
         let v = v?;
@@ -94,7 +77,6 @@ impl LiveInfo {
 }
 
 impl VoiceUser {
-    /// 缺少 ID 时返回 `None`。
     #[must_use]
     pub fn from_raw(v: &Value) -> Option<Self> {
         let s = |k: &str| {
@@ -114,7 +96,6 @@ impl VoiceUser {
     }
 }
 
-/// 频道角色覆盖。角色 ID 为数字，0 表示 @全体成员（不能用 `id_of`，它把 0 视为缺失）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Overwrite {
@@ -165,28 +146,22 @@ fn overwrites_of(v: &Value) -> (Vec<Overwrite>, Vec<UserOverwrite>) {
     (roles, users)
 }
 
-/// 服务器角色。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Role {
     pub id: i64,
     pub name: String,
-    /// 0xRRGGBB，0 表示无颜色。
     pub color: u32,
-    /// 越小越靠前。
     pub position: i64,
-    /// 是否在成员列表中单独分组。
     pub hoist: bool,
     pub permissions: u64,
 }
 
-/// 当前账号在服务器中的权限依据，来自 `guild/view`（普通成员无权调用 `guild-role/list`）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GuildAccess {
     pub guild_id: String,
     pub owner_id: String,
-    /// 当前账号是否为服务器主。
     pub master: bool,
     pub my_roles: Vec<i64>,
     pub roles: Vec<Role>,
@@ -236,20 +211,17 @@ impl GuildAccess {
     }
 }
 
-/// 服务器成员（服务器维度：昵称、角色、颜色）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Member {
     pub id: String,
     pub username: String,
-    /// 服务器内昵称，可能为空。
     pub nickname: String,
     pub identify_num: String,
     pub avatar: String,
     pub online: bool,
     pub bot: bool,
     pub roles: Vec<i64>,
-    /// 0xRRGGBB，0 表示无颜色。
     pub color: u32,
 }
 
@@ -282,7 +254,6 @@ impl Member {
     }
 }
 
-/// 一页成员。服务端在线成员在前、离线在后；人数直接取服务端统计。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MemberPage {
@@ -322,13 +293,11 @@ impl MemberPage {
     }
 }
 
-/// 公开的 ID 读取，规则同 `id_of`。
 #[must_use]
 pub fn id_str(v: Option<&Value>) -> Option<String> {
     id_of(v)
 }
 
-/// 字符串或数字形式的 ID 统一为字符串；空串、"0" 与 0 视为缺失。
 fn id_of(v: Option<&Value>) -> Option<String> {
     let s = match v? {
         Value::String(s) => s.clone(),
@@ -348,7 +317,6 @@ fn int_of(v: Option<&Value>) -> Option<i64> {
 }
 
 impl Channel {
-    /// 缺少 ID 的条目无法引用，返回 `None` 由调用方记录。
     #[must_use]
     pub fn from_raw(v: &Value) -> Option<Self> {
         let id = id_of(v.get("id"))?;
@@ -359,6 +327,7 @@ impl Channel {
             _ if category => ChannelKind::Category,
             1 => ChannelKind::Text,
             2 => ChannelKind::Voice,
+            5 => ChannelKind::Radio,
             _ => ChannelKind::Unknown,
         };
         let (overwrites, user_overwrites) = overwrites_of(v);
@@ -394,7 +363,6 @@ impl Channel {
     }
 }
 
-/// 一页频道列表。`data` 为 `{items, meta: {page, page_total}}`。
 pub struct Page {
     pub items: Vec<Value>,
     pub page_total: u32,
@@ -420,7 +388,6 @@ impl Page {
     }
 }
 
-/// 展开 guild/view 的嵌套频道：分组后紧跟其子频道，子频道缺少 `parent_id` 时以所在分组补齐。
 #[must_use]
 pub fn flatten_view_channels(top: &[Value]) -> Vec<Value> {
     let mut out = Vec::new();
@@ -449,7 +416,6 @@ pub fn flatten_view_channels(top: &[Value]) -> Vec<Value> {
     out
 }
 
-/// 合并各页条目：按 ID 去重（翻页期间列表变化可能产生重复），跳过无 ID 条目并返回其数量。
 #[must_use]
 pub fn merge_channels(pages: impl IntoIterator<Item = Vec<Value>>) -> (Vec<Channel>, usize) {
     let mut seen = std::collections::HashSet::new();
@@ -465,7 +431,6 @@ pub fn merge_channels(pages: impl IntoIterator<Item = Vec<Value>>) -> (Vec<Chann
     (out, skipped)
 }
 
-/// 一页历史消息，按时间从旧到新。`end` 表示没有更早的消息。
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct History {
     pub items: Vec<Value>,
@@ -473,9 +438,6 @@ pub struct History {
 }
 
 impl History {
-    /// v2 历史接口：有数据时返回数组；没有更早消息、空频道或游标无效时返回 HTTP 204（此处为 `Null`）。
-    /// 条数少于页大小同样视为结束。缺少 ID 的条目跳过，按时间升序整理。
-    ///
     /// # Errors
     ///
     /// 响应既不是数组也不是空响应时返回描述，不当作空历史。
@@ -500,7 +462,6 @@ impl History {
     }
 }
 
-/// 私信会话的对方用户。`system` 为官方或系统会话（`is_sys`）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DmUser {
@@ -514,14 +475,11 @@ pub struct DmUser {
     pub system: bool,
 }
 
-/// 私信会话。`code` 为 32 位十六进制 `chat_code`，双方相同；它既不是用户 ID 也不是频道 ID。
-/// 对方用户 ID 在 `target.id`。时间均为毫秒。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DmChat {
     pub code: String,
     pub target: DmUser,
-    /// 最近消息摘要（`last_msg_content`）。
     pub preview: String,
     pub latest_at: i64,
     pub read_at: i64,
@@ -529,7 +487,6 @@ pub struct DmChat {
 }
 
 impl DmChat {
-    /// 缺少 `code` 或对方 ID 的会话无法打开，返回 `None`。
     #[must_use]
     pub fn from_raw(v: &Value) -> Option<Self> {
         let code = v
@@ -569,7 +526,6 @@ impl DmChat {
     }
 }
 
-/// 一页私信会话，按最近消息时间从新到旧。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DmPage {
@@ -601,8 +557,6 @@ impl DmPage {
 }
 
 impl History {
-    /// v3 私信历史：`{items}`，没有 meta，条目 ID 为 `id`（无 `rong_id`）。条数少于页大小视为没有更早消息。
-    ///
     /// # Errors
     ///
     /// 响应不含 `items` 数组时返回描述。
@@ -621,8 +575,6 @@ impl History {
     }
 }
 
-/// 已上传的资源。`url` 位于 KOOK 资源域名，发送图片或文件时作为消息内容。
-/// 资源不绑定频道或用户，同一内容重复上传返回相同地址。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Asset {
@@ -630,8 +582,6 @@ pub struct Asset {
 }
 
 impl Asset {
-    /// `/api/v3/asset/create` 的 data（`{url, media_id}`）。
-    ///
     /// # Errors
     ///
     /// 缺少地址或地址不是 https 时返回描述。
@@ -647,7 +597,6 @@ impl Asset {
     }
 }
 
-/// 私信发送结果。`code` 为会话的 `chat_code`，`id` 为消息 ID（编辑、删除、回应与网关事件的 `rong_id`）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DmSent {
@@ -657,8 +606,6 @@ pub struct DmSent {
 }
 
 impl DmSent {
-    /// `/api/v3/direct-message/create` 的 data（`{code, msg_id, msg_timestamp, nonce}`）。
-    ///
     /// # Errors
     ///
     /// 缺少消息 ID 时返回描述（请求已被处理，结果按不确定对待）。
@@ -672,7 +619,6 @@ impl DmSent {
     }
 }
 
-/// 被查找消息的位置。`id` 为 `rong_id`。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MessageLocation {
@@ -682,8 +628,6 @@ pub struct MessageLocation {
 }
 
 impl MessageLocation {
-    /// `/api/v3/message/view` 的 data。
-    ///
     /// # Errors
     ///
     /// 缺少消息 ID 或频道 ID 时返回描述。
@@ -698,7 +642,6 @@ impl MessageLocation {
     }
 }
 
-/// 单个频道的未读状态。`unread` 只表示是否有未读（服务端计数最大为 1）；`mentions` 为提及条数。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChannelUnread {
@@ -706,13 +649,9 @@ pub struct ChannelUnread {
     pub channel_id: String,
     pub unread: bool,
     pub mentions: u32,
-    /// 最后已读消息时间（毫秒），0 表示未知。
     pub read_at: i64,
 }
 
-/// `GET /api/v2/messages/unread`：`{服务器ID: {id, channels: {频道ID: {...}}}}`，覆盖全部已加入服务器。
-/// 只返回有未读或提及的频道；缺少 ID 的条目跳过。
-///
 /// # Errors
 ///
 /// 响应不是对象时返回描述，不当作“没有未读”。
@@ -839,10 +778,15 @@ mod tests {
         assert_eq!(c.parent_id.as_deref(), Some("9"));
         assert_eq!((c.level, c.limit), (3, 5));
 
-        // 只有 id：其余取默认值，未知类型降级。
         let c = Channel::from_raw(&json!({"id": 7})).unwrap();
         assert_eq!(c.id, "7");
         assert_eq!(c.kind, ChannelKind::Unknown);
+        assert_eq!(
+            Channel::from_raw(&json!({"id": 8, "type": 5}))
+                .unwrap()
+                .kind,
+            ChannelKind::Radio
+        );
         assert_eq!(
             (c.name.as_str(), c.parent_id, c.level, c.limit),
             ("", None, 0, 0)

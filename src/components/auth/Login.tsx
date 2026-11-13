@@ -15,13 +15,12 @@ const TEXT = {
 type Status = keyof typeof TEXT;
 
 const POLL_MS = 1000;
-const QR_TTL_MS = 180_000;
+const QR_TTL_MS = 300_000;
 
 export default function Login() {
   const [content, setContent] = createSignal("");
   const [status, setStatus] = createSignal<Status>("loading");
   const [error, setError] = createSignal("");
-  // 每次刷新或卸载递增，旧轮询在下一次检查时自行退出。轮询串行执行，不会重叠。
   let run = 0;
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -58,12 +57,10 @@ export default function Login() {
       }
       try {
         const { status: s } = await api.loginQrPoll(code);
-        // 后端在确认时已保存凭据，即使本轮已被刷新或卸载也必须进入，不能丢弃。
         if (s === "confirmed" && session.phase === "login") {
           run++;
           setStatus("confirmed");
           await enter();
-          // 取得凭据但进入失败时，enter 已在登录页留下原因，此处允许重新扫码。
           if ((session.phase as string) !== "ready") setStatus("failed");
           return;
         }
@@ -74,7 +71,6 @@ export default function Login() {
         if (s === "unknown") return;
       } catch (e) {
         if (my !== run) return;
-        // 临时网络错误继续轮询；连续失败后停止，交由用户刷新。
         setError(`查询扫码状态失败：${errorText(e)}`);
         if (++failures >= 5) {
           setStatus("failed");

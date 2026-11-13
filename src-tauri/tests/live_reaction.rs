@@ -1,8 +1,3 @@
-//! 真实账号个人表情回应验证。默认忽略：
-//! `CDAPP_LIVE_TOKEN=... CDAPP_LIVE_CHANNEL=<测试频道 ID> cargo test --test live_reaction -- --ignored --nocapture`
-//! 在测试频道发送一条消息，经客户端接口用个人表情添加、重复添加、取消、重复取消回应，并读回核对。
-//! 消息保留，回应全部撤销。只输出结论。
-
 use cdapp_lib::kook::api::Api;
 
 #[tokio::test]

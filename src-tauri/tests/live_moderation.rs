@@ -1,9 +1,3 @@
-//! 成员管理的真实环境测试。主号须对副号有语音管理、闭麦、静音权限：
-//! `CDAPP_LIVE_TOKEN=主号 CDAPP_LIVE_TOKEN2=副号 CDAPP_LIVE_GUILD=... CDAPP_LIVE_VOICE=... CDAPP_LIVE_VOICE2=...
-//!  cargo test --features test-media --test live_moderation -- --ignored --nocapture --test-threads=1`
-//!
-//! 副号用客户端语音会话加入，主号依次闭麦、静音、移动、踢出，检查副号会话收到的事件与结束原因。
-
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -87,7 +81,6 @@ async fn server_mute_deafen_move_kick() {
         "副号未连接"
     );
 
-    // 闭麦
     m.guild_mute(&guild, &alt_id, 1, true).await.unwrap();
     assert!(
         wait(&log, 8, |e| me_patch(e, &alt_id, |p| p.server_mute
@@ -106,7 +99,6 @@ async fn server_mute_deafen_move_kick() {
     );
     println!("闭麦与取消通过");
 
-    // 静音
     m.guild_mute(&guild, &alt_id, 2, true).await.unwrap();
     assert!(
         wait(&log, 8, |e| me_patch(e, &alt_id, |p| p.server_deafen
@@ -127,13 +119,11 @@ async fn server_mute_deafen_move_kick() {
     assert!(!a.contains(&alt_id) && !b.contains(&alt_id));
     println!("静音与取消通过");
 
-    // 移动：服务端不迁移语音连接，只经主网关通知，副号会话保持连接。
     m.voice_move(&voice2, &alt_id).await.unwrap();
     tokio::time::sleep(Duration::from_secs(3)).await;
     assert!(!s.is_finished(), "移动后会话不应结束");
     println!("移动请求通过，会话保持");
 
-    // 踢出：目标频道错误时无效果。
     m.voice_kick(&voice2, &alt_id).await.unwrap();
     tokio::time::sleep(Duration::from_secs(3)).await;
     assert!(!s.is_finished(), "踢出其他频道不应影响");
@@ -155,7 +145,6 @@ async fn server_mute_deafen_move_kick() {
             .filter(|e| matches!(e, VoiceEvent::State { .. }))
             .collect::<Vec<_>>()
     );
-    // 不应重连
     tokio::time::sleep(Duration::from_secs(5)).await;
     let reconnecting = log
         .lock()

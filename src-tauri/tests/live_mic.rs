@@ -1,8 +1,3 @@
-//! 麦克风推流的真实环境测试：
-//! `CDAPP_LIVE_TOKEN=... CDAPP_LIVE_VOICE=... cargo test --features test-media --test live_mic -- --ignored --nocapture`
-//! 默认推送合成音，设置 `CDAPP_LIVE_MIC=device` 时使用系统默认麦克风。
-//! 验证开始采集、静音后释放设备且不再发送、取消静音后恢复发送与退出后释放设备。
-
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -89,7 +84,6 @@ async fn push_mute_resume_leave() {
         MicPrefs {
             muted: false,
             source,
-            // 不打开扬声器。
             output: cdapp_lib::audio::output::Sink::Null,
             ..MicPrefs::default()
         },

@@ -1,8 +1,3 @@
-// 启动加载动画：按 logo 光盘建模渲染。
-// 盘面为同心刻槽，镜面项用 Kajiya-Kay 各向异性高光，切线取刻槽方向。两盏固定方向光，正交相机。
-// 光源与相机不动，画面变化只来自盘面位姿：斜向正弦漂移，以及随之起伏的俯仰、偏转与横滚。
-// 静止位姿对应 logo 的 rotate(-16) scale(1 .84)，此时画面与 icon.svg 的盘面一致。
-
 const D2R = Math.PI / 180;
 const REST = { roll: -16, pitch: Math.acos(0.84) / D2R, yaw: 0 };
 
@@ -19,16 +14,13 @@ function poseMatrix(roll: number, pitch: number, yaw: number): M3 {
   return mul(mul(rz, ry), rx);
 }
 
-// 列主序，供 GLSL mat3 使用。
 const cols = (m: M3) => [m[0][0], m[1][0], m[2][0], m[0][1], m[1][1], m[2][1], m[0][2], m[1][2], m[2][2]];
 const apply = (m: M3, v: number[]) => m.map((row) => row[0] * v[0] + row[1] * v[1] + row[2] * v[2]);
 
-// 由 logo 静止画面反推的光照：静止盘面局部坐标中，两条亮带轴向分别为 -103° 与 -138°。
 const M0 = poseMatrix(REST.roll, REST.pitch, REST.yaw);
 const hLocal = (deg: number) => [Math.cos(deg * D2R) * 0.6, Math.sin(deg * D2R) * 0.6, 0.8];
 const HA = apply(M0, hLocal(-103));
 const HB = apply(M0, hLocal(-138));
-// 光强衰减方向，固定在世界空间。
 const DIR_A = [Math.cos(-103 * D2R), Math.sin(-103 * D2R)];
 const DIR_B = [Math.cos(42 * D2R), Math.sin(42 * D2R)];
 
@@ -61,10 +53,8 @@ void main() {
   float aa = fwidth(r);
   float aT = 1.0 - smoothstep(R - aa, R + aa, r);
   float aB = 1.0 - smoothstep(R - aa, R + aa, rb);
-  // 表情印在反光面上，只按顶面坐标镂空
   float face = mix(1.0, mask(lt), aT);
 
-  // 世界空间中的固定照明场，以静止盘面坐标表示
   vec3 W = vec3(g - 256.0, P.z);
   vec2 gr = vec2(dot(W, uRest[0]), dot(W, uRest[1]));
   float d = length(gr + 256.0 - vec2(179.4, 144.6)) / 348.0;
@@ -114,7 +104,6 @@ export interface DiscFrame {
 
 export const AMP = 1.0;
 
-// 位姿随时间变化，t 为秒，amp 为姿态摆幅倍数。
 export function pose(t: number, amp = AMP) {
   const tau = Math.PI * 2;
   const ph1 = (t * tau) / 3.2;
@@ -139,8 +128,6 @@ function loadFace(): Promise<HTMLImageElement> {
   });
 }
 
-// 在 canvas 上绘制光盘。onFrame 回传每帧漂移量，用于同步阴影。
-// 返回停止函数；WebGL2 不可用或初始化失败时返回 null，由调用方显示静态图标。
 export async function startDisc(
   canvas: HTMLCanvasElement,
   opts: { still: boolean; onFrame?: (f: DiscFrame) => void },

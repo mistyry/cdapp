@@ -9,7 +9,6 @@ import { disconnectVoice, isSpeaking, mic, micFailed, output, setPeerVolume, tog
 import { HeadphoneOffIcon, MicOffIcon, SpeakerOffMark, VoiceIcon } from "../common/icons";
 import { DeviceMenu, VolumeTrack, setVolumeOf, volumeOf, type AudioKind } from "./AudioPanel";
 
-// 语音舞台：在语音频道中时，在所有服务器与私信页面顶部显示语音频道与成员卡片。参照 Oopz 网页端。
 export const stageShown = () => voiceActive() && voice.phase !== "connecting" && voice.me !== null;
 
 function channelOf(id: string) {
@@ -17,8 +16,6 @@ function channelOf(id: string) {
   return undefined;
 }
 
-// 与语音栏一致：悬停或键盘聚焦时在按钮上方显示竖向音量条，拖动期间保持显示，离开 150 ms 后隐藏。
-// 舞台可滚动，音量条渲染到 body 并按按钮位置固定定位，不被裁剪。
 function HoverVolume(p: { label: string; value: () => number; set: (v: number) => void; children: JSX.Element; onContextMenu?: (e: MouseEvent) => void }) {
   const [at, setAt] = createSignal<{ x: number; y: number } | null>(null);
   const [dragging, setDragging] = createSignal(false);
@@ -61,19 +58,15 @@ function HoverVolume(p: { label: string; value: () => number; set: (v: number) =
 function Card(p: { peer: VoicePeer }) {
   const self = () => p.peer.id === voice.me?.id;
   const name = () => p.peer.name || "未知用户";
-  // 他人的屏幕分享状态来自频道成员列表，本人以推流状态为准。
   const live = () => (self() ? share.phase === "live" : Boolean(liveOf(voice.channelId, p.peer.id)));
-  // 本人服务器闭麦与静音优先于本地开关。
   const micOff = () => p.peer.serverMute || mic.muted || micFailed();
   const headsetOff = () => Boolean(p.peer.serverDeafen) || output.deafened;
   const speaking = () => isSpeaking(p.peer.id) && !p.peer.serverMute && !(self() ? mic.muted : p.peer.micOff);
   const peerMuted = () => peerVolume(p.peer.id) === 0;
-  // 右键麦克风或耳机打开设备菜单，以按钮为中心定位。
   const [menu, setMenu] = createSignal<{ kind: AudioKind; x: number; y: number } | null>(null);
   const openMenu = (kind: AudioKind) => (e: MouseEvent) => {
     e.preventDefault();
     const r = (e.currentTarget as Element).getBoundingClientRect();
-    // 菜单宽 232px，靠近窗口边缘时向内收。
     const half = Math.min(232, window.innerWidth - 24) / 2;
     const x = Math.max(8 + half, Math.min(window.innerWidth - 8 - half, r.left + r.width / 2));
     setMenu((m) => (m?.kind === kind ? null : { kind, x, y: window.innerHeight - r.top }));

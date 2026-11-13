@@ -1,8 +1,6 @@
 import { Show, createSignal } from "solid-js";
 import { keyboardFocus } from "./Tip";
 
-// 水平音量滑块，步长 1。拖动、点击轨道或方向键调节。
-// 数值只在悬停手柄、拖动或键盘聚焦时以手柄上方的提示显示。
 export default function RangeSlider(p: {
   value: number;
   min?: number;

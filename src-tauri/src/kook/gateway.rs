@@ -1,14 +1,3 @@
-//! 主网关。下行帧为 zlib 压缩 JSON，信令与开放平台 Bot 网关一致。
-//!
-//! 生命周期：
-//! - 新会话：请求 `gateway/index` 取一次性 URL，hello 成功后上报 [`ReadyKind::New`]（之前有过会话时为
-//!   [`ReadyKind::Rebuilt`]），上层须重新激活服务器并补拉消息。
-//! - 续传：网络类断开保留会话，用原 URL 追加 `resume=1&sn&session_id` 重连，收到 `s:6` 上报
-//!   [`ReadyKind::Resumed`]；限定时间内未收到 `s:6` 按重建处理。
-//! - 续传失败：服务端拒绝 hello 或 HTTP 握手被拒时丢弃会话，立即改开新会话。
-//! - 凭据失效：取地址返回 401 时上报 [`GatewayEvent::Expired`] 并停止，不再重试。
-//! - 主动停止：`stop` 置为 true 后立即退出，不再重连。
-
 use std::future::Future;
 use std::io::Read;
 use std::sync::Arc;
@@ -24,17 +13,12 @@ use tokio_tungstenite::tungstenite::{self, Message};
 
 use crate::error::{AppError, AppResult};
 
-/// 网关超时与退避参数。
 #[derive(Debug, Clone)]
 pub struct Config {
-    /// 建立 WebSocket（含 TLS 握手）的上限。
     pub connect_timeout: Duration,
-    /// 连接后等待 hello 的上限。
     pub hello_timeout: Duration,
     pub heartbeat: Duration,
-    /// 发出心跳后等待 `s:3` 的上限。
     pub pong_timeout: Duration,
-    /// 续传连接后等待 `s:6` 的上限，超时按重建处理。
     pub resume_timeout: Duration,
     pub min_backoff: Duration,
     pub max_backoff: Duration,
@@ -57,28 +41,16 @@ impl Default for Config {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReadyKind {
-    /// 本次运行的首个会话。
     New,
-    /// 续传成功，断线期间的事件已补发。
     Resumed,
-    /// 续传失败或超时后的新会话，断线期间的事件可能丢失，上层须补偿。
     Rebuilt,
 }
 
-/// 网关向上层投递的内容。
 #[derive(Debug, Clone, PartialEq)]
 pub enum GatewayEvent {
-    Ready {
-        session_id: String,
-        kind: ReadyKind,
-    },
+    Ready { session_id: String, kind: ReadyKind },
     Event(Value),
-    /// 连接断开，`retry_in` 后重连（可被唤醒提前）。
-    Disconnected {
-        reason: String,
-        retry_in: Duration,
-    },
-    /// 凭据被服务端确认失效，网关已停止。
+    Disconnected { reason: String, retry_in: Duration },
     Expired(String),
 }
 
@@ -110,7 +82,6 @@ fn decode(msg: Message) -> Option<Value> {
     }
 }
 
-/// 错误及其来源链。reqwest 等错误的 Display 不含底层原因。
 fn chain(e: &dyn std::error::Error) -> String {
     let mut s = e.to_string();
     let mut cur = e.source();
@@ -137,15 +108,12 @@ async fn until(t: Option<Instant>) {
     }
 }
 
-/// 按 sn 排序投递事件：重复或已处理的序号丢弃，跳号时先缓冲等待缺失的序号。
 #[derive(Default)]
 struct Reorder {
     buf: std::collections::BTreeMap<u64, Value>,
-    /// 上次心跳时缓冲区是否已有积压。
     stale: bool,
 }
 
-/// 缓冲上限，超过时放弃等待缺口。
 const REORDER_LIMIT: usize = 256;
 
 impl Reorder {
@@ -153,7 +121,6 @@ impl Reorder {
         if n <= *sn || self.buf.contains_key(&n) {
             return;
         }
-        // 新会话尚无序号时以首个事件为起点。
         if *sn == 0 && self.buf.is_empty() {
             *sn = n - 1;
         }
@@ -192,20 +159,14 @@ impl Reorder {
     }
 }
 
-/// 单次连接的结束方式（除错误外的附加信息）。
 #[derive(Default)]
 struct Outcome {
-    /// 握手完成时刻，用于记录连接持续时长。
     opened: Option<Instant>,
-    /// 最后收到任意帧的时刻。
     last_frame: Option<Instant>,
-    /// 收到过心跳回应或续传完成，连接确认可用，退避回到基线。
     stable: bool,
-    /// 续传被拒或服务端要求重连，应立即开新会话而不等待退避。
     immediate: bool,
 }
 
-/// 运行网关直到 `stop` 置为 true 或凭据失效。`wake` 可在退避等待中提前重连。
 pub async fn run<U, Fut, F>(
     mut fetch_url: U,
     cfg: Config,
@@ -220,7 +181,6 @@ pub async fn run<U, Fut, F>(
     let mut session: Option<Session> = None;
     let mut had_session = false;
     let mut backoff = cfg.min_backoff;
-    // 上次是否已立即重连。连续的立即重连改走退避，避免服务端反复要求重连时空转。
     let mut last_immediate = false;
     while !*stop.borrow() {
         let mut out = Outcome::default();
@@ -268,7 +228,6 @@ pub async fn run<U, Fut, F>(
         let waited = std::time::Instant::now();
         tokio::select! {
             () = tokio::time::sleep(delay) => {
-                // 实际等待远超计划，通常是系统睡眠或节能暂停了计时器。
                 let real = waited.elapsed();
                 if real > delay + Duration::from_secs(5) {
                     log::warn!("网关退避计划 {}ms，实际 {}ms", delay.as_millis(), real.as_millis());
@@ -315,7 +274,6 @@ where
     {
         Err(_) => return Err(AppError::Other("连接网关超时".into())),
         Ok(Err(e)) => {
-            // 服务端以 HTTP 响应拒绝握手：URL 或会话已不可用，改开新会话。网络类错误保留会话以便续传。
             if matches!(e, tungstenite::Error::Http(_)) && resuming {
                 *session = None;
                 out.immediate = true;
@@ -346,7 +304,6 @@ where
         .unwrap_or(0);
     log::debug!("网关 hello：{hello}");
     if hello.get("s").and_then(Value::as_i64) != Some(1) || code != 0 {
-        // 续传被拒（例如会话过期）时立即重新取地址开新会话；新会话被拒走正常退避。
         *session = None;
         out.immediate = resuming;
         return Err(AppError::Other(if resuming {
@@ -387,7 +344,6 @@ where
     pump((tx, rx), cfg, session, resume_deadline, out, emit).await
 }
 
-/// 会话 ID 只记录前缀，便于对照又不完整暴露。
 fn short(id: &str) -> &str {
     id.get(..8).unwrap_or(id)
 }
@@ -399,7 +355,6 @@ type Parts = (
     futures_util::stream::SplitStream<Ws>,
 );
 
-/// 已连接后的心跳与事件循环，直到断开。
 async fn pump<F: FnMut(GatewayEvent)>(
     (mut tx, mut rx): Parts,
     cfg: &Config,
@@ -412,7 +367,6 @@ async fn pump<F: FnMut(GatewayEvent)>(
     ticker.tick().await;
     let mut pong_deadline: Option<Instant> = None;
     let mut ping_at: Option<Instant> = None;
-    // 使用墙钟：tokio 的 Instant 在系统睡眠期间可能不前进。
     let mut last_tick = std::time::Instant::now();
     let mut order = Reorder::default();
     loop {
@@ -423,7 +377,6 @@ async fn pump<F: FnMut(GatewayEvent)>(
                 if gap > cfg.heartbeat + cfg.heartbeat / 2 {
                     log::warn!("网关心跳计时延迟：间隔 {}ms，计划 {}ms", gap.as_millis(), cfg.heartbeat.as_millis());
                 }
-                // 缺失的序号一个心跳周期内仍未到达，放弃等待，按序投递已缓冲事件。
                 if let Some(s) = session.as_mut() {
                     order.flush_stale(&mut s.sn, emit);
                 }
@@ -442,7 +395,6 @@ async fn pump<F: FnMut(GatewayEvent)>(
                 return Err(AppError::Other(format!("心跳超时，距上次心跳 {}ms", since.as_millis())));
             }
             () = until(resume_deadline) => {
-                // 续传迟迟未完成：保留连接，但按重建通知上层补偿可能缺失的事件。
                 resume_deadline = None;
                 log::warn!("续传 {}ms 内未收到 s:6，按重建补偿", cfg.resume_timeout.as_millis());
                 let id = session.as_ref().map(|s| s.id.clone()).unwrap_or_default();

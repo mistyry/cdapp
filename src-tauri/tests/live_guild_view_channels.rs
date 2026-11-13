@@ -1,7 +1,3 @@
-//! 真实账号频道来源对比（只读）。默认忽略：
-//! `CDAPP_LIVE_TOKEN=... cargo test --test live_guild_view_channels -- --ignored --nocapture`
-//! `channels` 改由 guild/view 读取，与 channel/list 分页结果逐个服务器比较 ID、顺序与字段。只输出数量与耗时。
-
 use cdapp_lib::kook::api::Api;
 use cdapp_lib::kook::model::{Page, merge_channels};
 use std::time::Instant;
@@ -44,7 +40,6 @@ async fn view_matches_pages() {
         }
         let tl = t.elapsed();
         let (mut list, _) = merge_channels(pages);
-        // 语音在线用户只由 guild/view 提供，比较前清除。
         let mut v: Vec<_> = view
             .iter()
             .cloned()

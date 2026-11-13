@@ -1,6 +1,5 @@
 .app { display: flex; height: 100%; padding-top: 12px; }
 
-/* 窗口标题栏：高 36px。macOS 红绿灯占左侧 12–72px，标识从 84px 起；Windows 标识从 12px 起，右侧为窗口按钮 */
 .app.titled { padding-top: 36px; }
 .titlebar { position: absolute; top: 0; left: 0; right: 0; height: 36px; display: flex; align-items: center; gap: 8px; padding-left: 84px;
   font-size: 13px; font-weight: 600; color: var(--c-text-2); pointer-events: none; user-select: none; z-index: 25; }
@@ -13,12 +12,10 @@
 .win-btn.close:hover { background: #c42b1c; color: #fff; }
 .win-btn:focus-visible { outline: 2px solid var(--c-brand); outline-offset: -2px; }
 
-/* ── 服务器栏 80px ── */
 .guildbar { width: 80px; flex: none; display: flex; flex-direction: column; }
 .guild-scroll { flex: 1; overflow-x: hidden; overflow-y: auto; scrollbar-width: none; }
 .guild-scroll::-webkit-scrollbar { display: none; }
 .guild-item { position: relative; height: 64px; display: flex; align-items: center; justify-content: center; }
-/* 只有图标本身响应指针。clip-path 裁掉的圆角外区域不参与命中，悬停提示与点击都以可见形状为准。 */
 .guild-item { pointer-events: none; }
 .guild-item .guild-btn, .guild-item .folder-btn { pointer-events: auto; }
 .guild-btn {
@@ -38,14 +35,12 @@
 .guild-item.unread:not(.active)::before { height: 8px; background: var(--c-text); }
 .guild-item:not(.active):hover::before { height: 20px; background: var(--c-text); }
 .guild-item .badge { position: absolute; right: 10px; bottom: 6px; }
-/* 右下角状态角标：本人语音、本人分享、他人分享。有角标时提及数移到右上角。 */
 .guild-mark {
   position: absolute; right: 10px; bottom: 6px; width: 20px; height: 20px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center; color: #fff;
-  background: var(--c-good); box-shadow: 0 0 0 3px var(--c-app-solid); pointer-events: none;
+  background: var(--c-brand); box-shadow: 0 0 0 3px var(--c-app-solid); pointer-events: none;
 }
-.guild-mark.screen { background: var(--c-brand); }
-.guild-mark.self-share { background: var(--c-danger); }
+.guild-mark.screen { background: #323438; }
 .guild-mark ~ .badge { bottom: auto; top: 6px; }
 .folder.open { margin: 0 12px 4px; border-radius: 16px; background: var(--folder-bg); }
 .folder.open .guild-item::before { left: -12px; }
@@ -69,15 +64,11 @@
 .avatar .status { position: absolute; right: -2px; bottom: -2px; width: 14px; height: 14px; border-radius: 50%;
   background: #6cbf00; border: 3px solid var(--c-app-solid); }
 
-/* ── 主面板 ── */
-/* 主面板与窗口圆角同心：macOS 26 起窗口圆角 16px，四周留 4px，面板圆角 16 − 4 = 12px */
 .shell {
   position: relative; flex: 1; min-width: 0; display: flex; gap: 4px; margin: 0 4px 4px 0; color: var(--c-text);
 }
-/* 主体由频道栏、文字频道、成员栏与语音舞台组成，各自为独立圆角板块，板块间距等于主体与窗口边缘的间距。 */
 .sidebar, .chat, .members, .voice-stage { background: var(--c-panel); border-radius: 12px; overflow: clip; }
 
-/* ── 频道栏 290px ── */
 .sidebar { width: 290px; flex: none; display: flex; flex-direction: column; min-height: 0; }
 .sidebar-top { padding: 12px 24px 16px; margin-top: 11px; }
 .sidebar-title { position: relative; display: flex; align-items: center; height: 24px; padding-right: 32px; font-weight: 700; line-height: 24px; }
@@ -112,16 +103,12 @@
 .voice-member { display: flex; align-items: center; gap: 8px; height: 36px; margin: 0 8px 0 38px; font-size: 14px; color: var(--c-text-2); }
 
 .voice-member .voice-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* 右侧与频道人数右对齐。 */
 .voice-member > span[role="img"] { display: flex; color: var(--c-text-2); }
 .voice-member { cursor: default; }
-/* 说话时整行淡绿底，右侧绿色麦克风。圆角底色向左右各延伸 6px，不移动内容。 */
-/* 悬停整行高亮，形状与说话时一致；说话的绿底优先。 */
 .voice-member:not(.elsewhere):hover { background: var(--c-hover); border-radius: 8px; margin-left: 32px; margin-right: 2px; padding: 0 6px; }
 .voice-member.speaking, .voice-member.speaking:hover { background: color-mix(in srgb, var(--c-good) 12%, transparent); border-radius: 8px; margin-left: 32px; margin-right: 2px; padding: 0 6px; }
 .voice-member > span.voice-speaking { color: var(--c-good); }
 .voice-member > span.server-off { color: var(--c-danger); }
-/* 成员菜单：每行左右内边距 10px，右侧控件统一占 20px 宽的列，与滑条喇叭、复选框、箭头对齐。 */
 .member-menu { position: fixed; z-index: 20; display: flex; flex-direction: column; width: 200px; padding: 4px; background: var(--c-float); border-radius: 10px; box-shadow: 0 4px 16px rgba(15, 23, 42, 0.12); }
 .member-menu .audio-head { padding: 4px 8px 2px; }
 .member-menu .audio-item { min-height: 30px; padding: 0 8px; font-size: 13px; }
@@ -163,14 +150,13 @@
 .voice-member.elsewhere { opacity: .5; }
 .latency-bars { display: flex; align-items: flex-end; gap: 2px; width: 18px; height: 14px; flex-shrink: 0; }
 .latency-bars > span { flex: 1; border-radius: 1px; background: var(--c-line); }
-.latency-bars.l4 > .on, .latency-bars.l3 > .on { background: var(--c-good); }
+.latency-bars.l3 > .on { background: var(--c-good); }
 .latency-bars.l2 > .on { background: var(--c-fair); }
 .latency-bars.l1 > .on { background: var(--c-poor); }
 .latency-bars.disconnected > span { background: var(--c-poor); opacity: .5; }
 .link-btn { margin-left: 6px; padding: 0; font-size: 12px; color: var(--c-brand-text); text-decoration: underline; background: none; }
 .rejoin-btn { padding: 2px 8px; font-size: 12px; color: #fff; background: var(--c-good); border-radius: 6px; }
 
-/* ── 消息区 ── */
 .chat { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .room-header { flex: none; display: flex; align-items: center; height: 70px; margin: 0 24px; line-height: 22px; }
 .room-header .hash { margin-right: 8px; }
@@ -178,7 +164,6 @@
 .room-header .topic { flex: 1; min-width: 0; margin-left: 12px; font-size: 12px; color: var(--c-text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .room-header .tools { display: flex; gap: 8px; margin-left: 12px; }
 
-/* ── 语音舞台：连接语音后显示在同服务器文字频道顶部，横跨聊天区与成员栏，参照 Oopz ── */
 .stage-col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .stage-row { flex: 1; min-height: 0; display: flex; gap: 4px; }
 .voice-stage { flex: none; padding: 10px 10px 0; }
@@ -186,10 +171,8 @@
 .stage-icon { display: flex; color: var(--c-text-2); }
 .stage-title { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .stage-count { font-size: 12px; color: var(--c-text-3); font-variant-numeric: tabular-nums; }
-/* 卡片固定宽度，单行排列，超出时水平滚动。 */
 .stage-grid { display: flex; gap: 10px; padding-bottom: 10px; overflow-x: auto; }
 .stage-grid > .stage-card { flex: none; width: 240px; }
-/* 卡片：圆角矩形头像在上，控制台在下。卡片 3px 内边距在不说话时作为留白，说话时整张卡片以品牌色描边 3px。 */
 .stage-card { padding: 3px; border-radius: 14px; background: var(--c-fill); box-shadow: inset 0 0 0 3px transparent; transition: box-shadow .12s; }
 .stage-card.speaking { box-shadow: inset 0 0 0 3px var(--c-brand); }
 .stage-art {
@@ -199,7 +182,6 @@
 }
 .stage-art img { width: 100%; height: 100%; object-fit: cover; }
 .stage-initial { font-size: 48px; font-weight: 700; color: var(--c-text-2); }
-/* 屏幕分享标记：右上角 LIVE，左下角状态文字。画面上的文字用深色底，亮暗头像上都可读。 */
 .stage-live {
   position: absolute; top: 6px; right: 6px; padding: 1px 6px; border-radius: 4px;
   background: var(--c-danger); color: #fff; font-size: 11px; font-weight: 700; letter-spacing: .5px; line-height: 16px;
@@ -208,7 +190,6 @@
   position: absolute; left: 6px; bottom: 6px; padding: 2px 6px; border-radius: 4px;
   background: rgba(0, 0, 0, .55); color: #fff; font-size: 11px; line-height: 16px;
 }
-/* 悬停或键盘聚焦卡片时出现观看按钮。 */
 .stage-watch {
   position: absolute; inset: 0; margin: auto; width: fit-content; height: 32px; padding: 0 12px;
   display: flex; align-items: center; gap: 6px; border: 0; border-radius: 8px;
@@ -217,21 +198,17 @@
 }
 .stage-card:hover .stage-watch, .stage-watch:focus-visible { opacity: 1; }
 .stage-watch:hover { background: rgba(0, 0, 0, .8); }
-/* 观看屏幕共享：舞台整块显示分享画面。高度只占窗口一部分，给文字频道留出空间；画面在这块区域内按原始宽高比
-   完整显示，任何宽高比都不裁切，空白处为黑色。 */
 .voice-stage.watching { padding-bottom: 10px; }
 .screen-view {
   position: relative; height: clamp(200px, 42vh, 460px); border-radius: 12px; overflow: hidden; background: #000;
 }
 .screen-canvas { width: 100%; height: 100%; object-fit: contain; display: block; }
-/* 等待画面：深色底上的转圈，不加文字。 */
 .screen-wait {
   position: absolute; inset: 0; margin: auto; width: 28px; height: 28px; border-radius: 50%;
   border: 3px solid rgba(255, 255, 255, .25); border-top-color: #fff; animation: screen-spin .9s linear infinite;
 }
 @keyframes screen-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .screen-wait { animation: none; } }
-/* 控制台浮在画面底部，悬停画面或键盘聚焦其中按钮时显示。 */
 .screen-bar {
   position: absolute; left: 0; right: 0; bottom: 0; height: 44px; padding: 0 8px 0 14px;
   display: flex; align-items: center; gap: 4px; color: #fff;
@@ -245,12 +222,9 @@
   display: flex; align-items: center; justify-content: center; cursor: pointer;
 }
 .screen-btn:hover { background: rgba(255, 255, 255, .18); }
-/* 软件内全屏与全屏：铺满窗口，盖住其余界面。标题栏留给拖动与窗口按钮；全屏时没有标题栏。 */
 .screen-overlay { position: fixed; inset: 0; z-index: 30; background: #000; }
 .app.titled .screen-overlay { top: 36px; }
 .screen-view.expanded { height: 100%; border-radius: 0; }
-/* 全屏时控制台常驻底部渐变，画面以外没有其他界面。 */
-/* 悬浮窗页面：整窗为画面，按钮在右上角，悬停显示。 */
 :root[data-pip], :root[data-pip] body, :root[data-pip] #root { height: 100%; margin: 0; background: #000; overflow: hidden; }
 .pip { position: relative; width: 100%; height: 100%; background: #000; }
 .pip .screen-canvas { position: absolute; inset: 0; }
@@ -271,11 +245,9 @@
 }
 .stage-btn:hover:not(:disabled) { background: var(--c-hover); color: var(--c-text); }
 .stage-btn.leave { color: var(--c-danger); }
-/* 舞台中的音量条与设备菜单渲染到 body，以零尺寸锚点固定定位，沿用语音栏的弹层样式。 */
 .stage-vol-anchor, .stage-menu-anchor { position: fixed; width: 0; height: 0; z-index: 60; }
 
 .message-box { flex: 1; overflow-y: auto; position: relative; padding-bottom: 8px; }
-/* 消息只放开正文，按钮、回应、状态标记与时间不可选。 */
 .msg-content { -webkit-user-select: text; user-select: text; }
 .msg-content button, .msg-content .reactions, .msg-content .msg-edited, .msg-content .msg-pending, .msg-content .react-error { -webkit-user-select: none; user-select: none; }
 .msg { position: relative; margin: 0 16px; }
@@ -343,7 +315,6 @@ button.quote:hover { background: var(--c-fill); }
 .send-wrap textarea::placeholder { color: var(--c-placeholder); }
 .send-wrap .right { display: flex; gap: 8px; margin-left: 8px; }
 
-/* ── 成员栏 241px ── */
 .members { width: 241px; flex: none; overflow-y: auto; padding-bottom: 12px; }
 .member-title { padding: 16px 0 0 24px; margin-bottom: 2px; font-size: 14px; line-height: 18px; }
 .member { display: flex; align-items: center; margin: 0 4px 2px 12px; padding: 8px 12px; border-radius: 6px; cursor: pointer; }
@@ -368,11 +339,9 @@ button.quote:hover { background: var(--c-fill); }
 .storage-problem { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
 .storage-problem p { margin: 0; }
 .storage-problem .storage-path { max-width: 480px; font-size: 12px; color: var(--c-text-2); overflow-wrap: anywhere; -webkit-user-select: text; user-select: text; }
-/* 启动画面为品牌蓝底，铺满含标题栏在内的整个窗口 */
 .app.booting { background: #45A6F7; }
 .app.booting .win-btn { color: rgba(255, 255, 255, 0.85); }
 .app.booting .win-btn:hover { background: rgba(255, 255, 255, 0.16); color: #fff; }
-/* 参照官方加载页：500px 宽的整组在窗口内垂直居中，句子左对齐，出处右对齐，状态居中 */
 .boot-screen { width: min(500px, calc(100% - 48px)); display: flex; flex-direction: column; color: #fff; user-select: none; }
 .boot-art { height: min(330px, 40vh); margin: 0 auto 40px; display: flex; align-items: center; justify-content: center; }
 .boot-disc { position: relative; pointer-events: none; }
@@ -416,7 +385,6 @@ button.quote:hover { background: var(--c-fill); }
 .outgoing.uncertain .state { color: var(--c-mention); }
 .outgoing .state button { margin-left: 8px; padding: 0; border: 0; background: none; color: var(--c-brand-text); font-size: 12px; cursor: pointer; }
 
-/* 设置页：网页端“个人设置”实测值 */
 .me-entry { cursor: pointer; border-radius: 50%; }
 .guild-item:focus-visible, .me-entry:focus-visible { outline: 2px solid var(--c-brand); outline-offset: -2px; }
 .settings { position: fixed; inset: 0; z-index: 20; background: var(--c-app-solid); --st-w: 680px; --st-nav: 208px; --st-gap: 32px; --st-left: max(calc(50% - var(--st-w) / 2), calc(var(--st-nav) + var(--st-gap) + 24px)); }
@@ -434,7 +402,6 @@ button.quote:hover { background: var(--c-fill); }
 
 .channel.unsupported { opacity: 0.5; cursor: default; }
 
-/* 窗口化消息列表 */
 .message-wrap { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
 .message-box { overflow-anchor: none; }
 .history-head { display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--c-text-3); }
@@ -445,7 +412,6 @@ button.quote:hover { background: var(--c-fill); }
   padding: 6px 12px; border: 0; border-radius: 16px; background: var(--c-brand); color: #fff; font-size: 13px; cursor: pointer;
   box-shadow: var(--shadow); }
 
-/* 网关连接状态条 */
 .conn-bar { position: absolute; top: 0; left: 50%; transform: translateX(-50%); border-radius: 0 0 8px 8px; white-space: nowrap; z-index: 5; padding: 4px 12px; font-size: 12px; line-height: 18px; text-align: center; background: var(--c-brand); color: #fff; }
 .conn-bar.warn { background: var(--c-danger); }
 .conn-bar.ok { background: var(--c-brand); }
@@ -453,7 +419,6 @@ button.quote:hover { background: var(--c-fill); }
 .member-note { padding: 12px 24px; font-size: 13px; color: var(--c-text-2); }
 .member .bot-tag { margin-left: 6px; padding: 0 4px; border-radius: 4px; font-size: 11px; line-height: 16px; background: var(--c-hover); color: var(--c-text-2); }
 
-/* 附件 */
 .chat.dropping { outline: 2px dashed var(--c-mention); outline-offset: -6px; }
 .staged { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 0; font-size: 13px; }
 .staged .chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 8px; border-radius: 6px; background: var(--c-fill); }
@@ -506,7 +471,6 @@ button.quote:hover { background: var(--c-fill); }
 .share-opt[aria-checked="true"] .audio-radio { border: 4px solid var(--c-brand); }
 .access-note { padding: 12px 16px; color: var(--c-text-2); font-size: 13px; }
 
-/* 麦克风与耳机：悬停音量条与右键设备菜单 */
 .voice-box .voice-ctrls { position: relative; }
 .voice-box .ctrl-wrap { position: relative; display: flex; }
 .vol-pop { position: absolute; left: 50%; bottom: calc(100% + 6px); z-index: 5; display: flex; flex-direction: column; align-items: center; gap: 6px; width: 36px; padding: 12px 0; transform: translateX(-50%); background: var(--c-float); border-radius: 18px; box-shadow: 0 4px 16px rgba(15, 23, 42, 0.14); }
@@ -531,10 +495,8 @@ button.quote:hover { background: var(--c-fill); }
 .audio-note.warn { color: var(--c-danger); }
 .audio-line { flex: none; height: 1px; margin: 4px 8px; background: var(--c-line); }
 
-/* ── 表情 ── */
-/* 单个表情：Unicode 50px；自定义表情 120px，原图更小时按原图尺寸（与官方网页端一致）。 */
 .kmd-jumbo .kmd-p { font-size: 50px; line-height: 60px; }
-.kmd-jumbo .emoji { width: min(120px, var(--emoji-natural, 120px)); height: min(120px, var(--emoji-natural, 120px)); vertical-align: bottom; }
+.kmd-jumbo .emoji { width: min(120px, var(--emoji-natural, 120px)); height: auto; max-height: 300px; vertical-align: bottom; }
 .composer-input { flex: 1; min-width: 0; margin: 3px 0; max-height: 220px; overflow-y: auto; outline: 0; color: var(--c-text);
   font: 16px/22px var(--font); white-space: pre-wrap; overflow-wrap: anywhere; cursor: text; }
 .composer-input.empty::before { content: attr(data-placeholder); float: left; height: 0; color: var(--c-placeholder); pointer-events: none; }
@@ -575,7 +537,6 @@ button.quote:hover { background: var(--c-fill); }
 .tip.below::after { top: auto; bottom: 100%; border-top-color: transparent; border-bottom-color: rgba(46, 48, 58, 0.92); }
 .tip.right::after { left: auto; right: 100%; top: 50%; margin: -5px 0 0; border-top-color: transparent; border-right-color: rgba(46, 48, 58, 0.92); }
 
-/* 设置页 */
 .st-nav { position: absolute; top: 0; bottom: 0; z-index: 2; left: calc(var(--st-left) - var(--st-gap) - var(--st-nav)); width: var(--st-nav); padding: 48px 0 40px; overflow-y: auto; }
 .st-nav-inner { display: flex; flex-direction: column; gap: 2px; }
 .st-nav-group { padding: 12px 12px 6px; font-size: 12px; font-weight: 600; color: var(--c-text-3); }
@@ -636,7 +597,6 @@ button.quote:hover { background: var(--c-fill); }
 .st-meter { flex: 1; height: 8px; border-radius: 4px; background: var(--c-fill); overflow: hidden; }
 .st-meter-fill { height: 100%; background: linear-gradient(to right, var(--c-good) 70%, var(--c-fair) 88%, var(--c-danger)); transition: clip-path 60ms linear; }
 .st-slider { width: 260px; }
-/* 水平音量滑块 */
 .range { position: relative; height: 20px; cursor: pointer; touch-action: none; }
 .range-rail, .range-fill { position: absolute; left: 0; top: 50%; height: 4px; margin-top: -2px; border-radius: 2px; }
 .range-rail { right: 0; background: var(--c-fill); }

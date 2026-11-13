@@ -1,8 +1,3 @@
-//! 真实账号频道门禁验证（只读）。默认忽略：
-//! `CDAPP_LIVE_TOKEN=... CDAPP_LIVE_CHANNELS=<名称=ID,...> cargo test --test live_gate -- --ignored --nocapture`
-//! 读取频道所在服务器的权限依据与频道列表，输出命令边界对读取、发送、加入的判断，
-//! 并以历史接口抽样对照读取结论。不发送消息，不申请语音令牌。只输出名称与结论。
-
 use cdapp_lib::kook::api::Api;
 use cdapp_lib::kook::gate::{Gate, Need};
 
@@ -55,8 +50,6 @@ async fn gate_matches_server() {
     }
 }
 
-/// 密码频道不带密码申请令牌，应得到 40310 业务错误而不是 HTTP 错误。
-/// `CDAPP_LIVE_PW_CHANNEL=<ID>`。服务端已记住密码时返回地址，不建立连接。
 #[tokio::test]
 #[ignore = "需要真实账号"]
 async fn password_channel_reports_40310() {

@@ -19,7 +19,6 @@ pub async fn me(state: State<'_, Mutex<AppState>>) -> AppResult<Value> {
 pub async fn guilds(state: State<'_, Mutex<AppState>>) -> AppResult<Value> {
     let token = token_of(&state)?;
     let list = with_api(&state, move |a| async move { a.guilds().await }).await?;
-    // 已退出的服务器不再保留权限依据。
     if let Some(items) = list.as_array() {
         let ids = items
             .iter()
@@ -48,7 +47,6 @@ pub async fn channels(
     Ok(list)
 }
 
-/// 当前账号在服务器中的角色与权限依据。
 #[tauri::command]
 pub async fn guild_access(
     guild_id: String,
@@ -63,7 +61,6 @@ pub async fn guild_access(
     Ok(access)
 }
 
-/// 一页服务器成员，可按频道过滤。
 #[tauri::command]
 pub async fn members(
     guild_id: String,
@@ -77,7 +74,6 @@ pub async fn members(
     .await
 }
 
-/// 订阅当前频道成员区间的在线状态推送；`start`、`end` 为 -1 时取消。须在网关就绪后调用。
 #[tauri::command]
 pub async fn subscribe_members(
     channel_id: String,
@@ -94,7 +90,6 @@ pub async fn subscribe_members(
     .map(|_| ())
 }
 
-/// 激活服务器以接收其频道消息推送。须在网关就绪后调用。
 #[tauri::command]
 pub async fn activate_guild(
     guild_id: String,
@@ -112,7 +107,6 @@ pub async fn activate_guild(
     .await
 }
 
-/// 当前账号可见的服务器表情与个人表情。
 #[tauri::command]
 pub async fn emojis(state: State<'_, Mutex<AppState>>) -> AppResult<crate::kook::emoji::EmojiSet> {
     with_api(&state, move |a| async move { a.emojis().await }).await

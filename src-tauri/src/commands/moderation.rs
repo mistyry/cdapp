@@ -1,5 +1,3 @@
-//! 服务器与语音频道的成员管理。权限由前端按频道权限预先判断，服务端仍会校验。
-
 use std::sync::Mutex;
 
 use tauri::State;
@@ -7,7 +5,6 @@ use tauri::State;
 use super::{AppState, with_api};
 use crate::error::AppResult;
 
-/// 服务器闭麦或静音。`kind` 为 `mute` 或 `deafen`。
 #[tauri::command]
 pub async fn guild_mute(
     guild_id: String,
@@ -27,7 +24,6 @@ pub async fn guild_mute(
     .await
 }
 
-/// 服务器中被闭麦与静音的用户。
 #[derive(serde::Serialize)]
 pub struct GuildMutes {
     pub mute: Vec<String>,

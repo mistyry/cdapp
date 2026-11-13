@@ -1,7 +1,6 @@
 import { Show, createSignal, onCleanup } from "solid-js";
 import { cancelPassword, enterVoice, pwPrompt } from "../../stores/session";
 
-// 语音频道密码。密码只用于本次加入请求，关闭后清空，不保存。
 export default function PasswordPrompt() {
   const [value, setValue] = createSignal("");
   const [busy, setBusy] = createSignal(false);
@@ -20,12 +19,10 @@ export default function PasswordPrompt() {
       setBusy(false);
     }
   };
-  // 打开时记录触发位置，关闭后把焦点还回去。
   const Dialog = () => {
     const back = document.activeElement as HTMLElement | null;
     onCleanup(() => back?.isConnected && back.focus());
     let box!: HTMLDivElement;
-    // Tab 在对话框内循环。
     const trap = (e: KeyboardEvent) => {
       if (e.key === "Escape") return close();
       if (e.key !== "Tab") return;

@@ -3,10 +3,8 @@ import { api, type Saying } from "../../lib/api";
 import { startDisc } from "../../lib/discLoader";
 import { bootLabel } from "../../stores/sounds";
 
-// 图形区参照官方 420×330，光盘略小于区域高度；矮窗口时按高度收小。
 const MAX = 300;
 
-// 启动加载动画。WebGL2 不可用时显示静态应用标识。
 export default function BootLoader() {
   let canvas!: HTMLCanvasElement;
   let shadow!: SVGEllipseElement;
@@ -28,7 +26,6 @@ export default function BootLoader() {
     void startDisc(canvas, {
       still,
       onFrame: ({ dx, dy }) => {
-        // 盘升高时阴影缩小变淡
         const lift = (dy + 9) / 18;
         shadow.setAttribute("transform", `translate(${dx} 0) translate(256 300) scale(${1 - lift * 0.15} 1) translate(-256 -300)`);
         shadow.setAttribute("opacity", (0.2 - lift * 0.08).toFixed(3));

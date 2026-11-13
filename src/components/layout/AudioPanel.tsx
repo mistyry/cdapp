@@ -10,9 +10,6 @@ export type AudioKind = "input" | "output";
 export const volumeOf = (k: AudioKind) => (k === "input" ? output.gain : output.master);
 export const setVolumeOf = (k: AudioKind, v: number) => void (k === "input" ? setMicGain(v) : setMasterVolume(v));
 
-// 悬停在麦克风、耳机或成员音量按钮上时显示的竖向音量条。拖动、点击轨道或方向键调节，双击恢复 100%。
-// 百分比只在悬停手柄或拖动时以提示显示。
-// 只改变音量，不改变静音与耳机状态。
 export function VolumePop(p: { kind: AudioKind; onDrag: (dragging: boolean) => void }) {
   return <VolumeTrack label={p.kind === "input" ? "麦克风音量" : "扬声器音量"} value={() => volumeOf(p.kind)} set={(v) => setVolumeOf(p.kind, v)} onDrag={p.onDrag} />;
 }
@@ -86,8 +83,6 @@ export function VolumeTrack(p: { label: string; value: () => number; set: (v: nu
   );
 }
 
-// 右键麦克风或耳机按钮打开的设备菜单。只读取设备列表，不打开设备，不改变静音状态。
-// 降噪模型菜单。与设置页共用 denoiseMode，任一处修改两处同步。
 export function DenoiseMenu(p: { x: number; onClose: (refocus: boolean) => void }) {
   let root!: HTMLDivElement;
   onMount(() => (root.querySelector<HTMLElement>("[aria-checked=true]") ?? root.querySelector<HTMLElement>("button"))?.focus());

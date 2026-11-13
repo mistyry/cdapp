@@ -1,12 +1,9 @@
-//! 加入流程与单次连接的资源释放。
-
 use super::{
     Api, AppError, AppResult, Capture, Ctl, EndReason, Inbound, JoinParams, MEDIA_CLOSE_TIMEOUT,
     Media, MediaEvent, Outcome, Peer, Playback, Prefs, REMOTE_QUEUE, RemotePacket, Signal, Sink,
     Value, VoiceEvent, failed_join, json, mpsc, offline_ctl, prefs_get, run, sdp,
 };
 
-/// 单次连接持有的资源。
 #[derive(Default)]
 pub(super) struct Slots {
     pub(super) signal: Option<Signal>,
@@ -16,11 +13,8 @@ pub(super) struct Slots {
 }
 
 impl Slots {
-    /// 释放全部资源。先结束信令，再停止设备与媒体连接，设备卡住时不会推迟 exit。
-    /// `exit` 为 true 时发送 exit，否则只关闭连接。
     pub(super) async fn release(&mut self, exit: bool) {
         self.end_signal(exit);
-        // 三者互不依赖，并发释放，总耗时不超过单项超时。
         let (capture, playback, media) =
             (self.capture.take(), self.playback.take(), self.media.take());
         tokio::join!(
@@ -46,7 +40,6 @@ impl Slots {
         );
     }
 
-    /// 结束信令。`exit` 为 true 时发送 exit，否则只关闭连接。
     pub(super) fn end_signal(&mut self, exit: bool) {
         if let Some(s) = self.signal.take() {
             if exit {
@@ -63,17 +56,13 @@ pub(super) struct Live {
     pub(super) media_rx: mpsc::UnboundedReceiver<MediaEvent>,
     pub(super) params: JoinParams,
     pub(super) producer_id: String,
-    /// 服务端是否允许发言。
     pub(super) say: bool,
     pub(super) me_id: String,
-    /// 加入时服务端记录的麦克风是否已暂停。
     pub(super) paused: bool,
     pub(super) remote: mpsc::Receiver<RemotePacket>,
-    /// 已告知服务端的耳机状态。
     pub(super) headset: bool,
 }
 
-/// 获取信令地址，完成 quickJoin 与 initSpeaking，建立推流连接。
 pub(super) async fn join(
     api: &Api,
     channel_id: &str,
@@ -94,7 +83,6 @@ pub(super) async fn join(
         .await?;
     let params = JoinParams::parse(&joined)?;
     let (media_tx, media_rx) = mpsc::unbounded_channel();
-    // 队列满时丢弃新包，不阻塞媒体接收。
     let (remote_tx, remote) = mpsc::channel(REMOTE_QUEUE);
     let media = slots
         .media
@@ -117,7 +105,6 @@ pub(super) async fn join(
         .ok_or_else(|| AppError::Format("initSpeaking 响应缺少 peer".into()))?;
     let say = me.permission_say;
     let me_id = me.id.clone();
-    // 加入时的麦克风状态以服务端为准。
     let paused = me.mic_off;
     let producer_id = init
         .pointer("/producer/id")
@@ -163,7 +150,6 @@ pub(super) async fn attempt(
     let mut slots = Slots::default();
     let started = std::time::Instant::now();
     log::info!("语音加入开始");
-    // 加入期间仍处理控制命令，收到退出时中止加入。
     let joined = {
         let p = prefs_get(prefs);
         let password = p.password.clone().unwrap_or_default();
@@ -211,8 +197,6 @@ pub(super) async fn attempt(
         }
     };
     let (outcome, server_ended) = run(live, &mut slots, ctl, sink, prefs).await;
-    // 服务端已关闭连接时不再发送 exit。
-    // 其余情况发送 exit 后释放。
     slots.release(!server_ended).await;
     outcome
 }
@@ -242,7 +226,6 @@ mod tests {
             ..Slots::default()
         };
         let release = tokio::spawn(async move { slots.release(true).await });
-        // 设备停止卡住时，exit 仍应立即发出。
         let exit = tokio::time::timeout(Duration::from_millis(1000), async {
             loop {
                 if let Some(Ok(tokio_tungstenite::tungstenite::Message::Text(t))) =
@@ -256,5 +239,20 @@ mod tests {
         .expect("exit 未及时发送");
         assert_eq!(exit["method"], "exit");
         release.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn release_of_stuck_devices_fits_leave_timeout() {
+        let mut slots = Slots {
+            capture: Some(crate::audio::capture::Capture::stuck()),
+            playback: Some(crate::audio::output::Playback::stuck()),
+            ..Slots::default()
+        };
+        let t = std::time::Instant::now();
+        slots.release(true).await;
+        let took = t.elapsed();
+        assert!(took >= Duration::from_millis(1900), "{took:?}");
+        assert!(took < super::super::LEAVE_TIMEOUT, "{took:?}");
+        assert!(MEDIA_CLOSE_TIMEOUT < super::super::LEAVE_TIMEOUT);
     }
 }

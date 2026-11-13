@@ -36,8 +36,6 @@ export default function App() {
   });
   const unwatch = watchWindow();
   onCleanup(() => void unwatch.then((f) => f(), () => {}));
-  // 窗口重新获得焦点或变为可见、关闭设置页时，补标当前频道已读。
-  // 同时节流刷新当前服务器的权限依据，覆盖变化不保证有推送。
   const back = (e?: Event) => {
     if (e?.type === "visibilitychange") diag(`窗口${document.hidden ? "隐藏" : "可见"}`);
     readCurrent();
@@ -54,7 +52,6 @@ export default function App() {
     <div class={`app ${titleInset() ? "titled" : ""} ${session.phase === "boot" && storage.info?.status !== "ready" && storage.info ? "" : session.phase === "boot" || soundsPending() ? "booting" : ""}`}>
       <Show when={titleInset()}>
         <div class="titlebar">
-          {/* 加载页与数据目录异常页不显示应用标识。 */}
           <Show when={!(storage.info && storage.info.status !== "ready") && session.phase !== "boot" && !soundsPending()}>
             <img src="/icon.svg" alt="" width={20} height={20} draggable={false} />
             <span>cdapp</span>
@@ -80,7 +77,6 @@ export default function App() {
           <div class="shell">
             <ConnectionBar />
             <ChannelSidebar />
-            {/* 语音舞台横跨聊天区与成员栏。只要在语音中，服务器与私信页面都显示。私信没有成员栏。 */}
             <div class="stage-col">
               <Show when={stageShown()}><VoiceStage /></Show>
               <div class="stage-row">
@@ -92,7 +88,6 @@ export default function App() {
           <Show when={ui.settings}><Settings /></Show>
           <PasswordPrompt />
           <ScreenSharePicker />
-          {/* 软件内全屏与全屏：画面铺满窗口，盖住其余界面，控制台仍浮在画面上。 */}
           <Show when={watching() && (watch.mode === "app" || watch.mode === "screen")}>
             <div class="screen-overlay"><ScreenView /></div>
           </Show>
@@ -101,7 +96,6 @@ export default function App() {
       <Show when={session.error}>
         <div class="toast" onClick={() => setSession("error", null)}>{session.error}</div>
       </Show>
-      {/* 拖拽层覆盖标题栏，位于设置页与对话框之上，任何页面都能拖动窗口。窗口按钮在拖拽层之上。 */}
       <Show when={titleInset()}><div class="title-drag" data-tauri-drag-region={dragRegion()} /></Show>
       <Show when={isWindows && titleInset()}><WindowControls /></Show>
     </div>

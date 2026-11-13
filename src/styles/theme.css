@@ -1,7 +1,5 @@
-/* 默认亮色主题；深色主题沿用 KOOK 网页端实测值，见 docs/前端设计.md。品牌色取自应用图标主色。 */
 :root {
   color-scheme: light;
-  /* 冷灰色调，参考 KOOK 亮色界面；正文色取自官方加载页实测 #2e303a。 */
   --c-app: #e8ebf0;
   --c-app-solid: #e8ebf0;
   --c-panel: #f7f8fa;
@@ -17,7 +15,6 @@
   --c-brand-text: #1677d2;
   --c-mention: #ff8f19;
   --c-danger: #ff4d42;
-  /* 连接与延迟状态色。 */
   --c-good: #6cc28a;
   --c-fair: #e3b35c;
   --c-poor: #e58a8a;
@@ -47,7 +44,6 @@
   --c-strong: rgba(255, 255, 255, 0.87);
   --shadow: 0 2px 8px rgba(0, 0, 0, 0.24);
 }
-/* 窗口透明且底层有系统材质时：macOS 为侧栏材质，Windows 11 为 Mica。应用底色保留 50% 不透明度，透出少量桌面颜色。主面板与浮层保持不透明。 */
 :root[data-backdrop] { --c-app: rgba(232, 235, 240, 0.5); }
 :root[data-backdrop][data-theme="dark"] { --c-app: rgba(23, 24, 26, 0.5); }
 
@@ -57,7 +53,6 @@ body {
   background: var(--c-app); color: var(--c-text); font: 16px/18px var(--font);
   overflow: hidden; -webkit-user-select: none; user-select: none; -webkit-font-smoothing: antialiased; cursor: default;
 }
-/* 界面元素默认不可选中与拖动，消息正文、输入框与路径另行放开选择。 */
 img, svg, a { -webkit-user-drag: none; }
 input, textarea, [contenteditable="true"] { -webkit-user-select: text; user-select: text; }
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
@@ -72,5 +67,4 @@ svg { display: block; flex: none; }
 }
 .icon-btn:hover { color: var(--c-text); background: var(--c-hover); }
 .icon-btn.on { color: var(--c-brand-text); }
-/* 指针操作后不绘制焦点框，键盘导航时保留。 */
 :root:not([data-keyboard]) :focus-visible { outline: none; }

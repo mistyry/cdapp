@@ -7,7 +7,6 @@ const size = (n: number) => {
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 };
 
-// 数据存储：数据位置、迁移与缓存。登录凭据保存在系统应用目录，不随数据迁移。
 export default function StorageSettings() {
   const [confirm, setConfirm] = createSignal<null | "move" | "reset" | "clear">(null);
   onMount(() => void loadStorage());

@@ -13,7 +13,6 @@ import { reactionOf } from "../../lib/emoji";
 import { ui } from "../../stores/ui";
 import { titleTop } from "../../stores/window";
 
-// 图片只接受 http/https 地址，不发送 Referer，否则 KOOK CDN 防盗链会拒绝 tauri 来源；加载失败时显示说明与可点击的原地址，并保持固定高度。
 function Picture(p: { src: string; alt?: string }) {
   const [broken, setBroken] = createSignal(false);
   const url = () => safeUrl(p.src);
@@ -83,7 +82,6 @@ function Body(p: { msg: Message }) {
   );
 }
 
-// Unicode 表情直接显示字符；服务器表情（ID 含 /）按图片显示，失败时显示名称。
 function ReactionIcon(p: { r: Reaction }) {
   const [broken, setBroken] = createSignal(false);
   return (
@@ -118,7 +116,6 @@ export default function MessageItem(p: { msg: Message; first: boolean }) {
   const [menu, setMenu] = createSignal<"" | "more" | "picker">("");
   const ch = () => currentMsgKey();
   const busy = () => Boolean(p.msg.pending);
-  // 删除需二次确认：首次点击变为“确认删除”。
   const [confirming, setConfirming] = createSignal(false);
   const remove = () => {
     if (!confirming()) return setConfirming(true);
@@ -126,15 +123,12 @@ export default function MessageItem(p: { msg: Message; first: boolean }) {
     setConfirming(false);
     void deleteMessage(ch(), p.msg.id);
   };
-  // 回应选择器用固定定位，避免被消息列表裁剪；下方空间不足时显示在上方，并保持在窗口内。
   let reactBtn: HTMLButtonElement | undefined;
   const [pickerPos, setPickerPos] = createSignal<Record<string, string>>({});
-  // 在按钮左侧打开，上沿与按钮对齐；空间不足时贴边，始终保持在窗口内。
   const place = (el: HTMLElement) => {
     const r = el.getBoundingClientRect();
     const w = 360, h = 320, m = 8;
     const left = Math.max(m, Math.min(r.left - w - m, window.innerWidth - w - m));
-    // 上沿不进入窗口标题栏。
     const top = Math.max(titleTop() + m, Math.min(r.top, window.innerHeight - h - m));
     setPickerPos({ left: `${left}px`, top: `${top}px` });
   };
@@ -142,9 +136,7 @@ export default function MessageItem(p: { msg: Message; first: boolean }) {
     place(reactBtn ?? el);
     setMenu("picker");
   };
-  // 列表滚动（含新消息自动滚到底部）或窗口缩放时跟随按钮；消息行已被回收时关闭。
   const reflow = () => (reactBtn?.isConnected ? place(reactBtn) : setMenu(""));
-  // 回应结果：请求期间按钮显示进行中；失败时回滚并在消息下方提示，几秒后消失。
   const [reactError, setReactError] = createSignal("");
   let errTimer: ReturnType<typeof setTimeout> | undefined;
   onCleanup(() => clearTimeout(errTimer));
@@ -159,12 +151,10 @@ export default function MessageItem(p: { msg: Message; first: boolean }) {
       errTimer = setTimeout(() => setReactError(""), 4000);
     });
   };
-  // 消息自带的作者资料优先（服务器内为服务器昵称），没有时取已知用户。
   const author = () => {
     const u = session.users[p.msg.author];
     return { id: p.msg.author, online: u?.online ?? false, color: u?.color, name: p.msg.name || u?.name || "未知用户", avatar: p.msg.avatar ?? u?.avatar };
   };
-  // 服务器内的系统消息只显示内容；私信中的系统消息按普通消息显示。
   const plain = () => Boolean(p.msg.system) && ui.target.kind === "channel";
   const reply = () => {
     if (!currentKey()) return;

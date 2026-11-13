@@ -1,6 +1,3 @@
-// 火山 RTC SDK 桥接。SDK 在缓存目录中，启动时下载后按完整路径加载，因此链接为延迟加载。
-// 全部 SDK 调用在专用线程执行，该线程运行消息循环。SDK 回调在其内部线程触发，只转发给调用方。
-// 只用 Win32 原语，不引入 C++ 运行库依赖，cdapp.exe 保持单文件运行。
 #include "volc_bridge.h"
 
 #include <windows.h>
@@ -18,9 +15,6 @@ SRWLOCK g_lock = SRWLOCK_INIT;
 HANDLE g_thread = nullptr;
 DWORD g_thread_id = 0;
 
-// 以下只在 SDK 线程写入。g_video 另由推音频线程在 g_engine_lock 读锁下读取。
-// 引擎为进程内单例，推流、观看与预览共用，三者都结束后才销毁。推流须用 go-live 的 appId，
-// 观看取到的 appId 与推流相同，实测确认。
 IRTCVideo* g_video = nullptr;
 IRTCRoom* g_room = nullptr;
 ScreenVideoEncoderConfig g_enc{};
@@ -28,21 +22,16 @@ MediaStreamType g_media = kMediaStreamTypeVideo;
 bool g_published = false;
 bool g_timer = false;
 bool g_audio = false;
-// 选源对话框保留了预览引擎。
 bool g_preview = false;
 char g_log_dir[MAX_PATH * 3] = {0};
-// 引擎以哪个 appId 创建。预览为占位值，推流或观看前须换成 go-live 的 appId。
 char g_app_id[64] = {0};
 
-// 观看状态，只在 SDK 线程写入。
 IRTCRoom* g_watch_room = nullptr;
 char g_watch_room_id[128] = {0};
 char g_liver[64] = {0};
 
-// 推音频与销毁引擎互斥。推音频持读锁，销毁持写锁。
 SRWLOCK g_engine_lock = SRWLOCK_INIT;
 
-// 回调目标。SDK 内部线程读取，SDK 线程在创建引擎前写入、销毁引擎后清空。
 SRWLOCK g_cb_lock = SRWLOCK_INIT;
 volc_event_fn g_cb = nullptr;
 void* g_user = nullptr;
@@ -60,7 +49,6 @@ void set_cb(volc_event_fn cb, void* user) {
     ReleaseSRWLockExclusive(&g_cb_lock);
 }
 
-// 观看回调目标，与推流分开。SDK 内部线程读取，SDK 线程在进房前写入、离房后清空。
 SRWLOCK g_wcb_lock = SRWLOCK_INIT;
 volc_event_fn g_wcb = nullptr;
 volc_frame_fn g_wframe = nullptr;
@@ -80,13 +68,11 @@ void set_wcb(volc_event_fn cb, volc_frame_fn frame, void* user) {
     ReleaseSRWLockExclusive(&g_wcb_lock);
 }
 
-// 是否为当前观看的分享者在观看房间中的屏幕流。只读 g_watch_room_id 与 g_liver，二者在设置回调前写入、清空回调后才改。
 bool is_watched(const char* room, const char* uid, StreamIndex index) {
     return index == kStreamIndexScreen && uid && room && lstrcmpA(uid, g_liver) == 0 &&
            lstrcmpA(room, g_watch_room_id) == 0;
 }
 
-// 编码后的远端帧。SDK 内部线程触发。
 struct EncodedObserver : IRemoteEncodedVideoFrameObserver {
     void onRemoteEncodedVideoFrame(const RemoteStreamKey& k, const IEncodedVideoFrame& f) override {
         AcquireSRWLockShared(&g_wcb_lock);
@@ -97,7 +83,6 @@ struct EncodedObserver : IRemoteEncodedVideoFrameObserver {
     }
 } g_encoded_observer;
 
-// 处理器的生命周期须长于引擎，因此为静态对象。
 struct VideoHandler : IRTCVideoEventHandler {
     void onError(int err) override { emit(VOLC_EV_ERROR, err); }
     void onFirstLocalVideoFrameCaptured(StreamIndex index, VideoFrameInfo info) override {
@@ -125,7 +110,6 @@ struct RoomHandler : IRTCRoomEventHandler {
     }
 } g_room_handler;
 
-// 观看房间的事件，只上报当前分享者的屏幕流。
 struct WatchRoomHandler : IRTCRoomEventHandler {
     void onRoomStateChanged(const char*, const char*, int state, const char*) override {
         wemit(VOLC_WEV_ROOM_STATE, state);
@@ -140,18 +124,14 @@ struct WatchRoomHandler : IRTCRoomEventHandler {
     void onRemoteStreamStats(const RemoteStreamStats& s) override {
         const RemoteVideoStats& v = s.video_stats;
         if (!v.is_screen || !s.uid || lstrcmpA(s.uid, g_liver) != 0) return;
-        wemit(VOLC_WEV_STATS, v.received_kbitrate, v.width, v.height, v.stall_count);
+        wemit(VOLC_WEV_STATS, v.received_kbitrate, v.width, v.height, v.stall_duration);
     }
 } g_watch_handler;
 
-// 推流期间的系统窗口事件钩子，在 SDK 线程注册，回调经该线程的消息循环触发。
 HWINEVENTHOOK g_hook_destroy = nullptr;
 HWINEVENTHOOK g_hook_show = nullptr;
-// 窗口共享时的目标窗口，显示器共享为空。只在 SDK 线程读写。
 HWND g_source_window = nullptr;
 
-// SDK 的采集边框是本进程的分层窗口，固定透明度 128，HighlightConfig 没有对应设置。
-// 只改透明度为不透明，透明色与标志沿用 SDK 的设置，边框内部仍然透明。
 void make_opaque(HWND hwnd) {
     wchar_t cls[64];
     if (!GetClassNameW(hwnd, cls, ARRAYSIZE(cls)) || lstrcmpW(cls, L"ByteRTCTransparentWindow") != 0) return;
@@ -179,7 +159,6 @@ void CALLBACK on_win_event(HWINEVENTHOOK hook, DWORD event, HWND hwnd, LONG obj,
     }
 }
 
-// 开始采集后在 SDK 线程调用。边框窗口可能已在采集调用中创建，先处理一遍已有窗口。
 void hook_windows(HWND source) {
     g_source_window = source;
     if (source) {
@@ -200,7 +179,6 @@ void unhook_windows() {
     g_source_window = nullptr;
 }
 
-// 投递到 SDK 线程的调用。
 struct Call {
     void (*fn)(void*);
     void* ctx;
@@ -209,7 +187,6 @@ struct Call {
 
 DWORD WINAPI sdk_thread(LPVOID ready) {
     MSG msg;
-    // 先建立消息队列，再通知启动方可以投递。
     PeekMessageW(&msg, nullptr, WM_USER, WM_USER, PM_NOREMOVE);
     SetEvent(static_cast<HANDLE>(ready));
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
@@ -232,7 +209,6 @@ DWORD sdk_thread_id() {
     return tid;
 }
 
-// 在 SDK 线程执行并等待返回。线程未启动时返回 false。
 bool run_on_sdk(void (*fn)(void*), void* ctx) {
     DWORD tid = sdk_thread_id();
     if (tid == 0) return false;
@@ -248,7 +224,6 @@ bool run_on_sdk(void (*fn)(void*), void* ctx) {
     return ok;
 }
 
-// 以 lambda 形式在 SDK 线程执行。lambda 不捕获需要析构的对象。
 template <class F>
 bool on_sdk(F& f) {
     return run_on_sdk([](void* p) { (*static_cast<F*>(p))(); }, &f);
@@ -270,7 +245,6 @@ void apply_log() {
     setLogConfig(lc);
 }
 
-// 销毁引擎，只在 SDK 线程调用。等进行中的推音频结束，之后推音频看到空引擎直接返回。
 void destroy_engine() {
     if (!g_video) return;
     AcquireSRWLockExclusive(&g_engine_lock);
@@ -281,13 +255,10 @@ void destroy_engine() {
     g_app_id[0] = 0;
 }
 
-// 推流、观看与预览都已结束时销毁引擎，只在 SDK 线程调用。
 void release_engine() {
     if (!g_room && !g_watch_room && !g_preview) destroy_engine();
 }
 
-// 取得以 app_id 创建的引擎，只在 SDK 线程调用。已有引擎的 appId 不同时：无人使用则重建，
-// 推流或观看中则失败。引擎创建后注册编码帧观察者，观看时由它交出画面。
 IRTCVideo* engine_for(const char* app_id) {
     if (g_video && lstrcmpA(g_app_id, app_id) != 0) {
         if (g_room || g_watch_room) return nullptr;
@@ -303,7 +274,6 @@ IRTCVideo* engine_for(const char* app_id) {
     return g_video;
 }
 
-// 停止推流的全部步骤，只在 SDK 线程调用。观看不受影响。
 void teardown() {
     unhook_windows();
     if (g_room) {
@@ -327,7 +297,6 @@ void teardown() {
     release_engine();
 }
 
-// 停止观看，只在 SDK 线程调用。推流不受影响。
 void watch_teardown() {
     if (g_watch_room) {
         g_watch_room->leaveRoom();
@@ -341,7 +310,6 @@ void watch_teardown() {
 }
 
 void load_on_sdk(const wchar_t* dir, int32_t& rc, DWORD& err) {
-    // 只从系统目录与显式添加的目录查找，附属 DLL 也从 SDK 目录找到。
     if (!SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS | LOAD_LIBRARY_SEARCH_USER_DIRS) ||
         !AddDllDirectory(dir)) {
         err = GetLastError();
@@ -358,7 +326,6 @@ void load_on_sdk(const wchar_t* dir, int32_t& rc, DWORD& err) {
     }
     CopyMemory(dll, dir, n * sizeof(wchar_t));
     CopyMemory(dll + n, kName, sizeof kName);
-    // 按完整路径加载，之后延迟加载按模块名找到这个已加载的模块。
     if (!LoadLibraryExW(dll, nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS)) {
         err = GetLastError();
         rc = VOLC_ERR_LOAD;
@@ -367,17 +334,14 @@ void load_on_sdk(const wchar_t* dir, int32_t& rc, DWORD& err) {
     rc = VOLC_OK;
 }
 
-// 列源与缩略图用的预览引擎不进房，appId 不校验。已有引擎时直接沿用。
 constexpr char kPreviewAppId[] = "000000000000000000000000";
 
-// 释放预览引擎，只在 SDK 线程调用。推流或观看中的引擎不受影响。
 void close_preview() {
     if (!g_preview) return;
     g_preview = false;
     release_engine();
 }
 
-// 在 SDK 线程中以引擎执行 f。已有引擎时直接使用；否则建临时引擎，用完销毁。
 template <class F>
 bool with_engine(F& f) {
     bool temp = g_video == nullptr;
@@ -389,15 +353,11 @@ bool with_engine(F& f) {
 
 uint8_t clamp8(int v) { return static_cast<uint8_t>(v < 0 ? 0 : (v > 255 ? 255 : v)); }
 
-// 视频帧转为紧凑 BGRA。支持 I420、RGBA、ARGB、BGRA，其余返回 false。
-// 实测 3.58 缩略图报 ARGB，内存字节为 B、G、R、A，即小端的 0xAARRGGBB，与 BGRA 相同。
-// RGBA 未实测，按 32 位整数 0xAABBGGRR 小端处理，字节为 R、G、B、A。
 bool to_bgra(IVideoFrame* fr, uint8_t* out, int32_t w, int32_t h) {
     switch (fr->pixelFormat()) {
         case kVideoPixelFormatBGRA:
         case kVideoPixelFormatRGBA:
         case kVideoPixelFormatARGB: {
-            // 源像素中 B、G、R 的字节位置。
             int b = 0, g = 1, r = 2;
             if (fr->pixelFormat() == kVideoPixelFormatRGBA) {
                 b = 2;
@@ -422,7 +382,6 @@ bool to_bgra(IVideoFrame* fr, uint8_t* out, int32_t w, int32_t h) {
             const uint8_t* pu = fr->getPlaneData(1);
             const uint8_t* pv = fr->getPlaneData(2);
             const int sy = fr->getPlaneStride(0), su = fr->getPlaneStride(1), sv = fr->getPlaneStride(2);
-            // BT.601 有限范围，缩略图精度足够。
             for (int32_t y = 0; y < h; y++) {
                 uint8_t* d = out + static_cast<size_t>(y) * w * 4;
                 for (int32_t x = 0; x < w; x++, d += 4) {
@@ -442,7 +401,7 @@ bool to_bgra(IVideoFrame* fr, uint8_t* out, int32_t w, int32_t h) {
     }
 }
 
-}  // namespace
+}
 
 extern "C" int32_t volc_start(void) {
     AcquireSRWLockExclusive(&g_lock);
@@ -568,7 +527,6 @@ extern "C" int32_t volc_thumbnail(int32_t kind, uint64_t id, int32_t max_w, int3
 extern "C" int32_t volc_preview_open(void) {
     int32_t rc = VOLC_ERR_NOT_STARTED;
     auto f = [&] {
-        // 已有推流或观看引擎时沿用，否则以占位 appId 创建。
         if (!g_video && !engine_for(kPreviewAppId)) {
             rc = VOLC_ERR_ENGINE;
             return;
@@ -593,10 +551,8 @@ extern "C" int32_t volc_live_start(const volc_live* live, volc_event_fn cb, void
             rc = VOLC_ERR_STATE;
             return;
         }
-        // 推流须用 go-live 的 appId。预览引擎用的是占位值，先释放。
         close_preview();
         set_cb(cb, user);
-        // 实测默认计时器精度下 SDK 内部采集只有约 22 帧，提高到 1 ms 后为 30 帧。推流期间生效，停止时恢复。
         timeBeginPeriod(1);
         g_timer = true;
         if (!engine_for(live->app_id)) {
@@ -631,7 +587,6 @@ extern "C" int32_t volc_live_start(const volc_live* live, volc_event_fn cb, void
         g_enc.frame_rate = live->frame_rate;
         g_enc.max_bitrate = live->max_kbps;
         g_enc.min_bitrate = 0;
-        // 默认为清晰优先，会把帧率压到 15。
         g_enc.encoder_preference = kScreenVideoEncodePreferenceFramerate;
         raw = g_video->setScreenVideoEncoderConfig(g_enc);
         if (raw != 0) {
@@ -654,7 +609,6 @@ extern "C" int32_t volc_live_start(const volc_live* live, volc_event_fn cb, void
         src.source_id = reinterpret_cast<view_t>(live->source_id);
         ScreenCaptureParameters p;
         p.capture_mouse_cursor = kMouseCursorCaptureStateOn;
-        // 采集边框由 SDK 绘制，设为黄色。
         p.highlight_config.enable_highlight = true;
         p.highlight_config.border_color = 0xFFFFD700;
         raw = g_video->startScreenVideoCapture(src, p);
@@ -730,8 +684,6 @@ extern "C" void volc_live_stop(void) {
     on_sdk(f);
 }
 
-// 推音频不经 SDK 线程：每 10 ms 一次，投递开销与延迟都不合适。SDK 文档未限定调用线程，
-// 探测程序在独立线程调用已验证可用。与销毁引擎用读写锁互斥。
 extern "C" int32_t volc_push_audio(const int16_t* pcm, int32_t frames, int32_t* sdk_rc) {
     int32_t rc = VOLC_ERR_STATE;
     int32_t raw = 0;
@@ -759,7 +711,7 @@ extern "C" int32_t volc_push_audio(const int16_t* pcm, int32_t frames, int32_t* 
 
 namespace {
 RemoteStreamKey watch_key() { return RemoteStreamKey{g_watch_room_id, g_liver, kStreamIndexScreen}; }
-}  // namespace
+}
 
 extern "C" int32_t volc_watch_start(const volc_watch* w, volc_event_fn cb, volc_frame_fn frame, void* user,
                                     int32_t* sdk_rc) {
@@ -770,14 +722,12 @@ extern "C" int32_t volc_watch_start(const volc_watch* w, volc_event_fn cb, volc_
             rc = VOLC_ERR_STATE;
             return;
         }
-        // 预览引擎用的是占位 appId，先释放。
         close_preview();
         if (!engine_for(w->app_id)) {
             release_engine();
             rc = VOLC_ERR_ENGINE;
             return;
         }
-        // 先写入房间与分享者，再设置回调，回调线程据此过滤。
         lstrcpynA(g_watch_room_id, w->room, sizeof g_watch_room_id);
         lstrcpynA(g_liver, w->liver, sizeof g_liver);
         set_wcb(cb, frame, user);
@@ -788,7 +738,6 @@ extern "C" int32_t volc_watch_start(const volc_watch* w, volc_event_fn cb, volc_
             return;
         }
         g_watch_room->setRTCRoomEventHandler(&g_watch_handler);
-        // 订阅前设置：画面不经 SDK 解码，编码帧交给观察者；声音照常由 SDK 播放。
         raw = g_video->setVideoDecoderConfig(watch_key(), kVideoDecoderConfigEncode);
         if (raw != 0) {
             watch_teardown();
