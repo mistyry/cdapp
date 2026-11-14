@@ -1,58 +1,19 @@
-import { For, type JSX, Show, createSignal, onCleanup } from "solid-js";
+import { For, Show, createSignal } from "solid-js";
 import { Portal } from "solid-js/web";
-import { Headphones, LogOut, Mic, MonitorPlay, Volume2 } from "lucide-solid";
+import { ChevronDown, ChevronUp, Headphones, LogOut, Mic, MonitorPlay, ScreenShare, Volume2 } from "lucide-solid";
 import { dropSelfFromVoice, liveOf, session } from "../../stores/session";
 import { share } from "../../stores/share";
-import { startWatch, watch, watching } from "../../stores/watch";
+import { selfWatchable, startWatch, watch, watching } from "../../stores/watch";
 import ScreenView from "./ScreenView";
 import { disconnectVoice, isSpeaking, mic, micFailed, output, setPeerVolume, toggleDeafen, toggleMic, togglePeerMute, voice, voiceActive, volumeOf as peerVolume, type VoicePeer } from "../../stores/voice";
 import { HeadphoneOffIcon, MicOffIcon, SpeakerOffMark, VoiceIcon } from "../common/icons";
-import { DeviceMenu, VolumeTrack, setVolumeOf, volumeOf, type AudioKind } from "./AudioPanel";
+import { DeviceMenu, HoverVolume, setVolumeOf, volumeOf, type AudioKind } from "./AudioPanel";
 
 export const stageShown = () => voiceActive() && voice.phase !== "connecting" && voice.me !== null;
 
 function channelOf(id: string) {
   for (const g of session.guilds) for (const grp of g.groups) for (const c of grp.channels) if (c.id === id) return c;
   return undefined;
-}
-
-function HoverVolume(p: { label: string; value: () => number; set: (v: number) => void; children: JSX.Element; onContextMenu?: (e: MouseEvent) => void }) {
-  const [at, setAt] = createSignal<{ x: number; y: number } | null>(null);
-  const [dragging, setDragging] = createSignal(false);
-  let wrap!: HTMLDivElement;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  onCleanup(() => clearTimeout(timer));
-  const show = () => {
-    clearTimeout(timer);
-    const r = wrap.getBoundingClientRect();
-    setAt({ x: r.left + r.width / 2, y: window.innerHeight - r.top });
-  };
-  const hide = () => {
-    clearTimeout(timer);
-    timer = setTimeout(() => !dragging() && setAt(null), 150);
-  };
-  return (
-    <div
-      ref={wrap}
-      class="stage-ctrl-wrap"
-      onPointerEnter={show}
-      onPointerLeave={hide}
-      onFocusIn={show}
-      onFocusOut={(e) => !wrap.contains(e.relatedTarget as Node) && setAt(null)}
-      onContextMenu={(e) => { setAt(null); p.onContextMenu?.(e); }}
-    >
-      {p.children}
-      <Show when={at()}>
-        {(a) => (
-          <Portal>
-            <div class="stage-vol-anchor" style={{ left: `${a().x}px`, bottom: `${a().y}px` }} onPointerEnter={show} onPointerLeave={hide}>
-              <VolumeTrack label={p.label} value={p.value} set={p.set} onDrag={(d) => { setDragging(d); if (!d) hide(); }} />
-            </div>
-          </Portal>
-        )}
-      </Show>
-    </div>
-  );
 }
 
 function Card(p: { peer: VoicePeer }) {
@@ -80,7 +41,7 @@ function Card(p: { peer: VoicePeer }) {
         <Show when={live()}>
           <span class="stage-live">LIVE</span>
           <span class="stage-sharing">正在屏幕共享</span>
-          <Show when={!self()}>
+          <Show when={self() ? selfWatchable() : true}>
             <button class="stage-watch" onClick={() => void startWatch(voice.channelId, p.peer.id)}>
               <MonitorPlay size={18} />观看屏幕共享
             </button>
@@ -132,19 +93,30 @@ function Card(p: { peer: VoicePeer }) {
 export default function VoiceStage() {
   const peers = () => (voice.me ? [voice.me, ...voice.peers] : voice.peers);
   const ch = () => channelOf(voice.channelId);
+  const [collapsed, setCollapsed] = createSignal(false);
+  const anyLive = () => share.phase === "live" || voice.peers.some((p) => liveOf(voice.channelId, p.id));
   return (
-    <section class={`voice-stage ${watching() && watch.mode === "stage" ? "watching" : ""}`} aria-label="语音频道">
+    <section class={`voice-stage ${watching() && watch.mode === "stage" ? "watching" : ""} ${collapsed() ? "collapsed" : ""}`} aria-label="语音频道">
       <div class="stage-head">
         <span class="stage-icon"><VoiceIcon /></span>
         <span class="stage-title">{ch()?.name ?? "语音频道"}</span>
         <span class="stage-count">{peers().length}{ch()?.limit ? ` / ${ch()!.limit}` : ""}</span>
+        <Show when={anyLive()}>
+          <span class="stage-live-mark" data-tip="正在屏幕共享" aria-label="正在屏幕共享" role="img"><ScreenShare size={16} /></span>
+        </Show>
+        <span class="stage-gap" />
+        <button class="icon-btn stage-fold" aria-expanded={!collapsed()} data-tip={collapsed() ? "展开" : "折叠"} aria-label={collapsed() ? "展开" : "折叠"} onClick={() => setCollapsed(!collapsed())}>
+          {collapsed() ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
+        </button>
       </div>
-      <Show when={watching() && watch.mode === "stage"} fallback={
-        <div class="stage-grid">
-          <For each={peers()}>{(peer) => <Card peer={peer} />}</For>
-        </div>
-      }>
-        <ScreenView />
+      <Show when={!collapsed()}>
+        <Show when={watching() && watch.mode === "stage"} fallback={
+          <div class="stage-grid">
+            <For each={peers()}>{(peer) => <Card peer={peer} />}</For>
+          </div>
+        }>
+          <ScreenView />
+        </Show>
       </Show>
     </section>
   );

@@ -159,6 +159,8 @@ pub fn run() {
             #[cfg(windows)]
             commands::watch_key_frame,
             #[cfg(windows)]
+            commands::watch_volume,
+            #[cfg(windows)]
             commands::watch_redirect,
             #[cfg(windows)]
             commands::watch_pip_open,

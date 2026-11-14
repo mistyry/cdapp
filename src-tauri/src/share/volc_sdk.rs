@@ -227,9 +227,9 @@ async fn prepare() -> AppResult<PathBuf> {
 }
 
 fn load(dir: &Path) -> AppResult<String> {
-    super::bridge::start().map_err(|e| AppError::Other(e.to_string()))?;
-    super::bridge::load(dir).map_err(|e| AppError::Other(e.to_string()))?;
-    Ok(super::bridge::version())
+    super::bridge::volc::start().map_err(|e| AppError::Other(e.to_string()))?;
+    super::bridge::volc::load(dir).map_err(|e| AppError::Other(e.to_string()))?;
+    Ok(super::bridge::volc::version())
 }
 
 pub async fn sync() -> Status {

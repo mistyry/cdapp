@@ -28,7 +28,7 @@ fn volc_bridge() -> PathBuf {
     }
 
     let native = manifest.join("native");
-    for f in ["volc_bridge.cpp", "volc_bridge.h"] {
+    for f in ["volc_bridge.cpp", "volc_bridge.h", "share_bridge.h"] {
         println!("cargo:rerun-if-changed={}", native.join(f).display());
     }
     println!(
@@ -61,7 +61,7 @@ fn agora_bridge(native: &Path) {
     let include =
         std::env::var_os(AGORA_ENV).map_or_else(|| manifest.join(AGORA_DEFAULT), PathBuf::from);
     require(&include.join("IAgoraRtcEngine.h"), &include, AGORA_HINT);
-    for f in ["agora_bridge.cpp", "agora_bridge.h"] {
+    for f in ["agora_bridge.cpp", "agora_bridge.h", "share_bridge.h"] {
         println!("cargo:rerun-if-changed={}", native.join(f).display());
     }
 

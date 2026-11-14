@@ -12,8 +12,9 @@ mock.module("@tauri-apps/api/core", () => ({
     if (hold.has(cmd)) return new Promise((resolve) => pending.push({ cmd, args, resolve }));
     return Promise.resolve(auto[cmd]?.(args) ?? null);
   },
+  Channel: class { onmessage: ((b: unknown) => void) | null = null; },
 }));
-mock.module("@tauri-apps/api/event", () => ({ listen: async () => () => {} }));
+mock.module("@tauri-apps/api/event", () => ({ listen: async () => () => {}, emit: async () => {} }));
 
 const { retryAccess, enterVoice, voiceBlock, visible, pwPrompt, cancelPassword, session, setSession, selectGuild, selectChannel, openDm, send, canSend, logout, enter, retry, verify, discard, boot, skipRestore, loadGuilds, loadOlder, loadHistory, onGatewayStatus, onEvent, reconnectNow, ensureMembers, loadMoreMembers, refreshMembers, sendBlock, loadAccess, jumpTo, loadNewer, jumpLatest, plainContent, editMessage, deleteMessage, toggleReaction, isReacting, reactFailed, canEdit, canDelete, canReact, stageFiles, submit, cancelUpload, unstage, onUploadProgress, cardFileSrcs, loadDms, selectDm, openDmWith, loadDmOlder, loadDmHistory, dmKey, dmUnreadTotal, readCurrent, msgKey, liveOf } = await import("../session");
 const { ui, setUi, currentKey } = await import("../ui");

@@ -1,12 +1,13 @@
 import { For, type JSX, Show, createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
 import { anyMod, banFromGuild, kickFromGuild, kickFromVoice, modPerms, moveTargets, moveToVoice, setServerMute } from "../../stores/moderation";
 import { Portal } from "solid-js/web";
-import { AudioLines, Check, ChevronRight, Volume2, CircleHelp, Headphones, HeadphoneOff, Menu, Mic, MicOff, Monitor, PhoneOff, Settings, UserPlus, X } from "lucide-solid";
+import { AudioLines, Check, ChevronRight, Volume2, CircleHelp, Headphones, HeadphoneOff, Menu, Mic, MicOff, Monitor, PhoneOff, ScreenShare, Settings, UserPlus, X } from "lucide-solid";
 import type { Channel } from "../../stores/types";
-import { accessState, dropSelfFromVoice, enterVoice, loadDms, permsOf, retryAccess, selectChannel, selectDm, session, visible, voiceBlock } from "../../stores/session";
-import { canGoLive, canRejoin, denoise, setDenoise, dismissVoice, isSpeaking, disconnectVoice, latencyLevel, mic, micFailed, output, peerDenoised, setPeerDenoise, setPeerVolume, toggleDeafen, togglePeerMute, toggleMic, voice, voiceActive, voiceStatusText, volumeOf, type VoicePeer } from "../../stores/voice";
+import { accessState, dropSelfFromVoice, enterVoice, liveOf, loadDms, permsOf, retryAccess, selectChannel, selectDm, session, visible, voiceBlock } from "../../stores/session";
+import { canGoLive, canRejoin, denoise, setDenoise, dismissVoice, isSpeaking, disconnectVoice, latencyLevel, mic, micFailed, output, peerDenoised, setPeerDenoise, setPeerVolume, shareVolumeOf, toggleDeafen, togglePeerMute, toggleMic, voice, voiceActive, voiceStatusText, volumeOf, type VoicePeer } from "../../stores/voice";
 import { shareSdkReady } from "../../stores/sounds";
 import { share, sharing, stopShare } from "../../stores/share";
+import { setShareVolume, toggleShareMute } from "../../stores/watch";
 
 const shareStatus = () => (share.phase === "live" && share.fps ? `${share.width}×${share.height}，${share.fps} 帧` : undefined);
 import { DM_VIEW, currentChannelId, currentChatCode, ui, setUi } from "../../stores/ui";
@@ -60,6 +61,15 @@ function MemberMenu(p: { peer: VoicePeer; self: boolean; name: string; x: number
                 {volumeOf(p.peer.id) === 0 ? <SpeakerOffMark size={18} /> : <Volume2 size={18} />}
               </button>
             </div>
+            <Show when={liveOf(voice.channelId, p.peer.id)}>
+              <div class="member-volume-head">屏幕共享音量</div>
+              <div class="member-volume-row">
+                <RangeSlider value={shareVolumeOf(p.peer.id)} max={200} label={`${p.name} 的屏幕共享音量`} onInput={(v) => void setShareVolume(p.peer.id, v)} />
+                <button class="icon-btn menu-trail" aria-pressed={shareVolumeOf(p.peer.id) === 0} data-tip={shareVolumeOf(p.peer.id) === 0 ? "取消静音屏幕共享" : "静音屏幕共享"} aria-label={shareVolumeOf(p.peer.id) === 0 ? "取消静音屏幕共享" : "静音屏幕共享"} onClick={() => void toggleShareMute(p.peer.id)}>
+                  {shareVolumeOf(p.peer.id) === 0 ? <SpeakerOffMark size={18} /> : <Volume2 size={18} />}
+                </button>
+              </div>
+            </Show>
             {toggleItem("降噪", peerDenoised(p.peer.id), () => void setPeerDenoise(p.peer.id, !peerDenoised(p.peer.id)))}
             <ModSection peer={p.peer} onDone={p.onClose} toggleItem={toggleItem} />
           </div>
@@ -173,6 +183,10 @@ function ModSection(p: { peer: VoicePeer; onDone: () => void; toggleItem: Toggle
   );
 }
 
+function LiveMark() {
+  return <span class="voice-speaking live-mark" data-tip="正在屏幕共享" aria-label="正在屏幕共享" role="img"><ScreenShare size={14} /></span>;
+}
+
 function RoomMember(p: { peer: VoicePeer }) {
   const user = () => ({ id: p.peer.id, name: p.peer.name || "未知用户", avatar: p.peer.avatar || undefined, online: true });
   const [menu, setMenu] = createSignal<{ x: number; y: number } | null>(null);
@@ -189,6 +203,7 @@ function RoomMember(p: { peer: VoicePeer }) {
         <Avatar user={user()} size={24} />
         <span class="voice-name">{user().name}</span>
         <Show when={isSpeaking(p.peer.id) && !micOff() && !p.peer.serverMute}><span class="voice-speaking" aria-label="正在说话" role="img"><Mic size={14} /></span></Show>
+        <Show when={self() ? share.phase === "live" : liveOf(voice.channelId, p.peer.id)}><LiveMark /></Show>
         <Show when={p.peer.serverMute} fallback={<Show when={micOff()}><span data-tip="已关闭麦克风" aria-label="已关闭麦克风" role="img"><MicOff size={14} /></span></Show>}>
           <span class="server-off" data-tip="已被服务器闭麦" aria-label="已被服务器闭麦" role="img"><MicOff size={14} /></span>
         </Show>
@@ -263,7 +278,8 @@ function ChannelItem(p: { c: Channel }) {
             return (
               <div class="voice-member" classList={{ elsewhere: elsewhere() }} data-tip={elsewhere() ? "已在其他设备连接" : undefined}
                 aria-label={elsewhere() ? `${u.name} 已在其他设备连接` : undefined}>
-                <Avatar user={u} size={24} />{u.name}
+                <Avatar user={u} size={24} /><span class="voice-name">{u.name}</span>
+                <Show when={u.live}><LiveMark /></Show>
               </div>
             );
           }}
@@ -327,7 +343,7 @@ function VoiceBox() {
     for (const g of session.guilds) for (const grp of g.groups) for (const c of grp.channels) if (c.id === voice.channelId) return c.name;
     return "语音频道";
   };
-  const [menu, setMenu] = createSignal<{ kind: AudioKind | "denoise"; x: number } | null>(null);
+  const [menu, setMenu] = createSignal<{ kind: AudioKind | "denoise"; x: number; y: number } | null>(null);
   const [hover, setHover] = createSignal<AudioKind | null>(null);
   const [dragging, setDragging] = createSignal(false);
   let leaveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -355,15 +371,13 @@ function VoiceBox() {
     voice.phase === "connecting" || voice.phase === "reconnecting" ? { text: "连接中", cls: "pending" }
       : justConnected() ? { text: "已连接", cls: "done" }
         : null;
-  let ctrls!: HTMLDivElement;
   const openMenu = (e: MouseEvent, kind: AudioKind | "denoise") => {
     e.preventDefault();
     setHover(null);
-    const box = ctrls.getBoundingClientRect();
     const btn = (e.currentTarget as Element).getBoundingClientRect();
     const half = Math.min(232, window.innerWidth - 24) / 2;
-    const center = Math.max(8 + half, Math.min(window.innerWidth - 8 - half, btn.left + btn.width / 2));
-    setMenu((m) => (m?.kind === kind ? null : { kind, x: center - box.left }));
+    const x = Math.max(8 + half, Math.min(window.innerWidth - 8 - half, btn.left + btn.width / 2));
+    setMenu((m) => (m?.kind === kind ? null : { kind, x, y: window.innerHeight - btn.top }));
   };
   let dnBtn: HTMLButtonElement | undefined;
   let inBtn: HTMLButtonElement | undefined;
@@ -399,7 +413,7 @@ function VoiceBox() {
           </Show>
         </div>
       </Show>
-      <div class="voice-ctrls" ref={ctrls}>
+      <div class="voice-ctrls">
         <button class="mode" disabled data-tip="持续开麦" aria-label="语音感应" aria-description="持续开麦">语音感应</button>
         <div class="ctrls">
           <button
@@ -446,7 +460,13 @@ function VoiceBox() {
         <Show when={menu()} keyed>
           {(m) => {
             const close = (refocus: boolean) => { const b = m.kind === "denoise" ? dnBtn : m.kind === "input" ? inBtn : outBtn; setMenu(null); if (refocus) b?.focus(); };
-            return m.kind === "denoise" ? <DenoiseMenu x={m.x} onClose={close} /> : <DeviceMenu kind={m.kind} x={m.x} onClose={close} />;
+            return (
+              <Portal>
+                <div class="pop-anchor" style={{ left: `${m.x}px`, bottom: `${m.y}px` }}>
+                  {m.kind === "denoise" ? <DenoiseMenu x={0} onClose={close} /> : <DeviceMenu kind={m.kind} x={0} onClose={close} />}
+                </div>
+              </Portal>
+            );
           }}
         </Show>
       </div>

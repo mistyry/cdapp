@@ -1,5 +1,6 @@
 #pragma once
 
+#include "share_bridge.h"
 #include "volc_bridge.h"
 
 #ifdef __cplusplus
@@ -18,6 +19,8 @@ int32_t agora_watch_rejoin(int32_t* sdk_rc);
 
 int32_t agora_watch_token(const char* token, int32_t* sdk_rc);
 
+int32_t agora_watch_volume(int32_t volume, int32_t* sdk_rc);
+
 void agora_watch_stop(void);
 
 int32_t agora_live_start(const volc_live* live, volc_event_fn cb, void* user, int32_t* sdk_rc);
@@ -28,9 +31,17 @@ int32_t agora_encoder(int32_t width, int32_t height, int32_t frame_rate, int32_t
 
 int32_t agora_token(const char* token, int32_t* sdk_rc);
 
+int32_t agora_pause(int32_t paused, int32_t* sdk_rc);
+
 void agora_live_stop(void);
 
 int32_t agora_push_audio(const int16_t* pcm, int32_t frames, int32_t* sdk_rc);
+
+int32_t agora_own_start(volc_event_fn cb, volc_frame_fn frame, void* user, int32_t* sdk_rc);
+
+int32_t agora_own_key_frame(void);
+
+void agora_own_stop(void);
 
 #ifdef __cplusplus
 }

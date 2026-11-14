@@ -70,6 +70,7 @@ pub enum ShareEvent {
     Live {
         width: u32,
         height: u32,
+        watchable: bool,
     },
     Tier {
         resolution: u32,
@@ -99,6 +100,19 @@ const RESUME_STABLE: Duration = Duration::from_secs(60);
 const REBUILD_GRACE: Duration = Duration::from_secs(5);
 
 pub(super) type Voice = futures_util::future::Fuse<VoiceEnded>;
+
+static LIVE_VENDOR: std::sync::Mutex<Option<Vendor>> = std::sync::Mutex::new(None);
+
+fn set_live_vendor(v: Option<Vendor>) {
+    if let Ok(mut g) = LIVE_VENDOR.lock() {
+        *g = v;
+    }
+}
+
+#[must_use]
+pub fn live_vendor() -> Option<Vendor> {
+    LIVE_VENDOR.lock().ok().and_then(|g| *g)
+}
 
 fn voice_gone() -> AppError {
     AppError::Other("已退出语音频道".into())
@@ -324,6 +338,9 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> 
 
 async fn release(push: &mut Push) {
     let (sound, live) = (push.sound.take(), push.live.take());
+    if live.is_some() {
+        set_live_vendor(None);
+    }
     let _ = tauri::async_runtime::spawn_blocking(move || {
         drop(sound);
         drop(live);
@@ -390,7 +407,11 @@ async fn live(
         req.tier.frame_rate,
         push.kbps
     );
-    sink(ShareEvent::Live { width, height });
+    sink(ShareEvent::Live {
+        width,
+        height,
+        watchable: true,
+    });
 
     let mut refresh = tokio::time::interval(REFRESH_EVERY);
     refresh.tick().await;
@@ -490,6 +511,15 @@ async fn on_event(
             error,
         }) => return Err(AppError::Other(format!("屏幕采集已停止：{error}"))),
         Some(Event::SourceGone) => return Err(AppError::Other("共享的窗口已关闭".into())),
+        Some(Event::Paused(paused)) => {
+            if let Err(e) = push.call(move |l| l.pause(paused)).await {
+                log::warn!("切换屏幕分享暂停状态失败：{e}");
+            } else if paused {
+                log::info!("共享的窗口已最小化，暂停屏幕分享");
+            } else {
+                log::info!("共享的窗口已恢复，继续屏幕分享");
+            }
+        }
         Some(Event::RoomState(code)) => match room_action(code) {
             RoomAction::Ignore => {}
             RoomAction::Renew => {
@@ -583,6 +613,7 @@ async fn begin(
     push.encode(fit::fit(req.tier.resolution, source), req.tier.frame_rate)
         .await?;
     push.call(Live::publish).await?;
+    set_live_vendor(Some(vendor));
     if req.audio {
         push.sound = Some(Loopback::start(req.audio_scope(), move |pcm| {
             if let Err(e) = bridge::push_audio(vendor, pcm)
@@ -610,6 +641,14 @@ mod tests {
         .unwrap();
         assert_eq!(v["kind"], "tier");
         assert_eq!(v["frameRate"], 60);
+        let v = serde_json::to_value(ShareEvent::Live {
+            width: 1280,
+            height: 720,
+            watchable: true,
+        })
+        .unwrap();
+        assert_eq!(v["kind"], "live");
+        assert_eq!(v["watchable"], true);
     }
 
     fn fused(f: impl std::future::Future<Output = ()> + Send + 'static) -> Voice {
@@ -760,6 +799,16 @@ mod tests {
             .recover(broken(), &mut rebuilt, &mut voice, &mut stop, |_, _| {})
             .await;
         assert_eq!(r.unwrap_err().to_string(), broken().to_string());
+    }
+
+    #[tokio::test]
+    async fn release_clears_live_vendor_only_with_live() {
+        set_live_vendor(Some(Vendor::Agora));
+        let mut push = Push::default();
+        release(&mut push).await;
+        assert_eq!(live_vendor(), Some(Vendor::Agora));
+        set_live_vendor(None);
+        assert_eq!(live_vendor(), None);
     }
 
     #[test]

@@ -149,8 +149,8 @@ async fn prepare() -> AppResult<PathBuf> {
 }
 
 fn load(dir: &Path) -> AppResult<String> {
-    super::bridge::agora_load(dir).map_err(|e| AppError::Other(e.to_string()))?;
-    Ok(super::bridge::agora_version())
+    super::bridge::agora::load(dir).map_err(|e| AppError::Other(e.to_string()))?;
+    Ok(super::bridge::agora::version())
 }
 
 pub async fn sync() {

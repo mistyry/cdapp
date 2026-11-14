@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use cdapp_lib::kook::api::Api;
-use cdapp_lib::share::sdk::{self, Status};
+use cdapp_lib::share::volc_sdk::{self, Status};
 use cdapp_lib::share::watch::{Request, Session, StateSink, WatchState};
 
 fn env(key: &str) -> String {
@@ -42,10 +42,10 @@ fn watches_live_share() {
         .build()
         .unwrap();
     rt.block_on(async {
-        let s = sdk::sync().await;
+        let s = volc_sdk::sync().await;
         assert!(matches!(s, Status::Ready { .. }), "{s:?}");
-        cdapp_lib::share::bridge::set_log_dir(&dir.join("sdklog")).unwrap();
-        cdapp_lib::share::bridge::agora_log(&dir.join("sdklog").join("agorasdk.log")).unwrap();
+        cdapp_lib::share::bridge::volc::log(&dir.join("sdklog")).unwrap();
+        cdapp_lib::share::bridge::agora::log(&dir.join("sdklog").join("agorasdk.log")).unwrap();
 
         let t0 = Instant::now();
         let got: Arc<Mutex<Got>> = Arc::default();
@@ -81,6 +81,7 @@ fn watches_live_share() {
                 channel_id: env("CDAPP_LIVE_VOICE"),
                 user_id: env("CDAPP_LIVE_USER"),
                 liver: env("CDAPP_LIVE_LIVER"),
+                volume: 100,
             },
             1,
             sink,
@@ -142,7 +143,7 @@ fn watches_live_share() {
         let last = states.lock().unwrap().last().cloned().unwrap_or_default();
         assert!(last.contains("Ended { message: None }"), "{last}");
     });
-    cdapp_lib::share::bridge::stop();
+    cdapp_lib::share::bridge::volc::stop();
     let token = env("CDAPP_LIVE_TOKEN");
     for f in std::fs::read_dir(dir.join("sdklog"))
         .into_iter()

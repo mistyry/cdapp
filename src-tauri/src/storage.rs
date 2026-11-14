@@ -16,7 +16,14 @@ const CREDENTIALS: &str = "credentials.json";
 const VERSION: u64 = 1;
 const CACHE_LIMIT: u64 = 512 * 1024 * 1024;
 const ACCOUNT_LIMIT: usize = 256 * 1024;
-const ACCOUNT_KEYS: &[&str] = &["emojiRecent", "openFolders", "peerVolumes", "peerDenoise"];
+const ACCOUNT_KEYS: &[&str] = &[
+    "emojiRecent",
+    "openFolders",
+    "peerVolumes",
+    "peerDenoise",
+    "shareVolumes",
+    "shareBeforeMute",
+];
 
 #[derive(Default, Serialize, Deserialize)]
 struct Location {

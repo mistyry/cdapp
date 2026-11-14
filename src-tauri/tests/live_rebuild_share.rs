@@ -8,9 +8,9 @@ use cdapp_lib::audio::output::Sink as Out;
 use cdapp_lib::kook::api::Api;
 use cdapp_lib::kook::golive::{Tier, Vendor};
 use cdapp_lib::kook::voice::{Fault, MicPrefs, Phase, Sink, VoiceEvent, VoiceSession};
-use cdapp_lib::share::bridge::{self, SourceKind};
-use cdapp_lib::share::sdk::{self, Status};
-use cdapp_lib::share::session::{Request, Session, ShareEvent};
+use cdapp_lib::share::bridge::{SourceKind, volc};
+use cdapp_lib::share::push::{Request, Session, ShareEvent};
+use cdapp_lib::share::volc_sdk::{self, Status};
 
 fn env(key: &str) -> String {
     std::env::var(key)
@@ -106,7 +106,7 @@ fn quiet_call_with_share_does_not_rebuild() {
         .build()
         .unwrap();
     rt.block_on(async {
-        let s = sdk::sync().await;
+        let s = volc_sdk::sync().await;
         assert!(matches!(s, Status::Ready { .. }), "{s:?}");
         let channel = env("CDAPP_LIVE_VOICE");
         let user = env("CDAPP_LIVE_USER");
@@ -124,7 +124,7 @@ fn quiet_call_with_share_does_not_rebuild() {
         if vendor == Vendor::Agora {
             cdapp_lib::share::agora_sdk::sync().await;
         }
-        let screen = bridge::sources()
+        let screen = volc::sources()
             .unwrap()
             .into_iter()
             .find(|s| s.kind == SourceKind::Screen && s.primary)
@@ -173,7 +173,7 @@ fn quiet_call_with_share_does_not_rebuild() {
         share.stop().await;
         a.leave().await;
         b.leave().await;
-        bridge::stop();
+        volc::stop();
         assert!(ra == 0 && rb == 0 && alive);
     });
 }
@@ -191,7 +191,7 @@ fn watch_survives_voice_rebuild() {
         .build()
         .unwrap();
     rt.block_on(async {
-        let s = sdk::sync().await;
+        let s = volc_sdk::sync().await;
         assert!(matches!(s, Status::Ready { .. }), "{s:?}");
         let (token, channel, user, liver) = (
             env("CDAPP_LIVE_TOKEN"),
@@ -237,6 +237,7 @@ fn watch_survives_voice_rebuild() {
                 channel_id: channel,
                 user_id: user,
                 liver,
+                volume: 100,
             },
             1,
             sink,
@@ -276,7 +277,7 @@ fn watch_survives_voice_rebuild() {
         let alive = !watch.is_finished() && after > 100;
         watch.stop().await;
         voice.leave().await;
-        bridge::stop();
+        volc::stop();
         assert!(back && alive, "语音重建后观看未恢复");
     });
 }
@@ -296,10 +297,10 @@ fn share_survives_voice_rebuild() {
         .build()
         .unwrap();
     rt.block_on(async {
-        let s = sdk::sync().await;
+        let s = volc_sdk::sync().await;
         assert!(matches!(s, Status::Ready { .. }), "{s:?}");
-        bridge::set_log_dir(&dir.join("sdklog")).unwrap();
-        let screen = bridge::sources()
+        volc::log(&dir.join("sdklog")).unwrap();
+        let screen = volc::sources()
             .unwrap()
             .into_iter()
             .find(|s| s.kind == SourceKind::Screen && s.primary)
@@ -344,7 +345,7 @@ fn share_survives_voice_rebuild() {
         let slog: Arc<Mutex<Vec<(Instant, ShareEvent)>>> = Arc::default();
         let l = slog.clone();
         let t0 = Instant::now();
-        let ssink: cdapp_lib::share::session::Sink = Arc::new(move |e: ShareEvent| {
+        let ssink: cdapp_lib::share::push::Sink = Arc::new(move |e: ShareEvent| {
             if !matches!(e, ShareEvent::Stats { .. }) {
                 println!("{:>6.1}s 分享 {e:?}", t0.elapsed().as_secs_f64());
             }
@@ -420,7 +421,7 @@ fn share_survives_voice_rebuild() {
         let survived = !share.is_finished() && stats_after > 5;
         share.stop().await;
         voice.leave().await;
-        bridge::stop();
+        volc::stop();
         assert!(back, "语音未重建");
         assert!(survived, "语音重建后分享结束：{ended_msg:?}");
     });

@@ -5,11 +5,11 @@ use std::time::Duration;
 
 use cdapp_lib::kook::api::Api;
 use cdapp_lib::kook::golive::{Tier, Vendor};
-use cdapp_lib::share::bridge::{self, SourceKind};
+use cdapp_lib::share::bridge::{SourceKind, agora, volc};
 #[cfg(feature = "test-media")]
 use cdapp_lib::share::fit::fit;
-use cdapp_lib::share::sdk::{self, Status};
-use cdapp_lib::share::session::{Request, Session, ShareEvent, Sink};
+use cdapp_lib::share::push::{Request, Session, ShareEvent, Sink};
+use cdapp_lib::share::volc_sdk::{self, Status};
 
 fn env(key: &str) -> String {
     std::env::var(key)
@@ -161,12 +161,12 @@ fn pushes_primary_screen() {
         .build()
         .unwrap();
     rt.block_on(async {
-        let s = sdk::sync().await;
+        let s = volc_sdk::sync().await;
         assert!(matches!(s, Status::Ready { .. }), "{s:?}");
-        bridge::set_log_dir(&dir.join("sdklog")).unwrap();
+        volc::log(&dir.join("sdklog")).unwrap();
         let want_window = std::env::var("CDAPP_LIVE_WINDOW").ok();
         let want = std::env::var("CDAPP_LIVE_SCREEN").ok();
-        let screen = bridge::sources()
+        let screen = volc::sources()
             .unwrap()
             .into_iter()
             .find(|s| match &want_window {
@@ -208,7 +208,7 @@ fn pushes_primary_screen() {
         if vendor == Vendor::Agora {
             cdapp_lib::share::agora_sdk::sync().await;
             assert!(cdapp_lib::share::agora_sdk::ready(), "Agora 组件不可用");
-            bridge::agora_log(&dir.join("sdklog").join("agorasdk.log")).unwrap();
+            agora::log(&dir.join("sdklog").join("agorasdk.log")).unwrap();
         }
         let session = Session::start(
             api,
@@ -296,7 +296,7 @@ fn pushes_primary_screen() {
             "{events:?}"
         );
     });
-    bridge::stop();
+    volc::stop();
     let token = env("CDAPP_LIVE_TOKEN");
     for f in std::fs::read_dir(dir.join("sdklog"))
         .into_iter()

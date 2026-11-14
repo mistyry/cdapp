@@ -18,12 +18,13 @@ type State = {
   kbps: number;
   fps: number;
   updating: boolean;
+  watchable: boolean;
 };
 
 const IDLE: State = {
   phase: "idle", generation: 0, channelId: "", source: null,
   resolution: 720, frameRate: 30, audio: false,
-  width: 0, height: 0, kbps: 0, fps: 0, updating: false,
+  width: 0, height: 0, kbps: 0, fps: 0, updating: false, watchable: false,
 };
 
 export const [share, setShare] = createStore<State>({ ...IDLE });
@@ -53,7 +54,7 @@ function onShareEvent(p: Payload) {
   const e = p.event;
   switch (e.kind) {
     case "live":
-      setShare({ phase: "live", width: e.width, height: e.height });
+      setShare({ phase: "live", width: e.width, height: e.height, watchable: e.watchable });
       break;
     case "tier":
       setShare({ resolution: e.resolution, frameRate: e.frameRate, width: e.width, height: e.height });

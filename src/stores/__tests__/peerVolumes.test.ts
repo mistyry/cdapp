@@ -9,8 +9,9 @@ mock.module("@tauri-apps/api/core", () => ({
     if (cmd === "account_state") return Promise.resolve(stored);
     return Promise.resolve(null);
   },
+  Channel: class { onmessage: ((b: unknown) => void) | null = null; },
 }));
-mock.module("@tauri-apps/api/event", () => ({ listen: async () => () => {} }));
+mock.module("@tauri-apps/api/event", () => ({ listen: async () => () => {}, emit: async () => {} }));
 
 const { parseVolumes, loadPeerVolumes, setPeerVolume, resetVoice, volumeOf } = await import("../voice");
 const { forgetAccountCache } = await import("../../lib/accountState");
@@ -81,6 +82,45 @@ test("成员降噪按账号保存并在登录后恢复", async () => {
   await flush();
   const w = calls.filter((c) => c.cmd === "set_account_state" && c.args.key === "peerDenoise").pop()!;
   expect(w.args.value).toEqual(["u7"]);
+});
+
+test("屏幕共享音量按账号保存并在登录后恢复", async () => {
+  const { shareVolumeOf, storeShareVolume } = await import("../voice");
+  stored = { shareVolumes: { u8: 30 } };
+  await loadPeerVolumes("me");
+  expect(shareVolumeOf("u8")).toBe(30);
+  expect(shareVolumeOf("u9")).toBe(100);
+  expect(storeShareVolume("u9", 300)).toBe(200);
+  await flush();
+  const w = calls.filter((c) => c.cmd === "set_account_state" && c.args.key === "shareVolumes").pop()!;
+  expect(w.args.value).toEqual({ u8: 30, u9: 200 });
+  resetVoice();
+  expect(shareVolumeOf("u8")).toBe(100);
+});
+
+test("屏幕共享静音前音量按分享者保存并在重启后恢复", async () => {
+  const { shareMuteTarget, shareVolumeOf, storeShareVolume } = await import("../voice");
+  await loadPeerVolumes("me");
+  storeShareVolume("u8", 40);
+  expect(shareMuteTarget("u8")).toBe(0);
+  storeShareVolume("u8", 0);
+  await flush();
+  const saved = calls.filter((c) => c.cmd === "set_account_state" && c.args.key === "shareBeforeMute").pop()!;
+  expect(saved.args.value).toEqual({ u8: 40 });
+  expect(calls.filter((c) => c.cmd === "set_account_state" && c.args.key === "shareVolumes").pop()!.args.value).toEqual({ u8: 0 });
+  resetVoice();
+  forgetAccountCache();
+  stored = { shareVolumes: { u8: 0 }, shareBeforeMute: { u8: 40 } };
+  await loadPeerVolumes("me");
+  expect(shareVolumeOf("u8")).toBe(0);
+  expect(shareMuteTarget("u8")).toBe(40);
+  await flush();
+  expect(calls.filter((c) => c.cmd === "set_account_state" && c.args.key === "shareBeforeMute").pop()!.args.value).toEqual({});
+  resetVoice();
+  forgetAccountCache();
+  stored = { shareVolumes: { u8: 0 } };
+  await loadPeerVolumes("other");
+  expect(shareMuteTarget("u8")).toBe(100);
 });
 
 test("所选设备不可用时显示为系统默认，保存的选择不变", async () => {

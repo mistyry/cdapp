@@ -81,7 +81,7 @@ export type ShareSource = {
   width: number; height: number; name: string; application: string;
 };
 export type ShareEvent =
-  | { kind: "live"; width: number; height: number }
+  | { kind: "live"; width: number; height: number; watchable: boolean }
   | { kind: "tier"; resolution: number; frameRate: number; width: number; height: number }
   | { kind: "stats"; kbps: number; fps: number; width: number; height: number }
   | { kind: "ended"; message: string | null };
@@ -93,6 +93,7 @@ export type WatchEvent =
   | { kind: "waiting" }
   | { kind: "playing" }
   | { kind: "stats"; kbps: number; width: number; height: number; stalls: number }
+  | { kind: "paused"; paused: boolean }
   | { kind: "ended"; message: string | null };
 
 export const api = {
@@ -117,10 +118,11 @@ export const api = {
   shareStop: () => invoke<void>("share_stop"),
   shareUpdate: (generation: number, resolution: number, frameRate: number) =>
     invoke<void>("share_update", { generation, resolution, frameRate }),
-  watchStart: (channelId: string, liver: string, frames: Channel<ArrayBuffer>) =>
-    invoke<number>("watch_start", { channelId, liver, frames }),
+  watchStart: (channelId: string, liver: string, volume: number, frames: Channel<ArrayBuffer>) =>
+    invoke<number>("watch_start", { channelId, liver, volume, frames }),
   watchStop: () => invoke<void>("watch_stop"),
   watchKeyFrame: (generation: number) => invoke<void>("watch_key_frame", { generation }),
+  watchVolume: (generation: number, percent: number) => invoke<void>("watch_volume", { generation, percent }),
   watchRedirect: (generation: number, frames: Channel<ArrayBuffer>) =>
     invoke<void>("watch_redirect", { generation, frames }),
   watchPipOpen: (generation: number) => invoke<void>("watch_pip_open", { generation }),

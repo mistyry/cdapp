@@ -1,5 +1,5 @@
 import { createEffect, createRoot, createSignal } from "solid-js";
-import { createStore, produce } from "solid-js/store";
+import { createStore, produce, reconcile } from "solid-js/store";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { api, errorText, type DenoiseMode, type InputDevice } from "../lib/api";
 import { Effect, applyEffectPrefs, playEffect, playJoin } from "./effects";
@@ -111,12 +111,14 @@ type Out = {
   busy: boolean;
   speaking: string[];
   volumes: Record<string, number>;
+  shares: Record<string, number>;
+  shareBeforeMute: Record<string, number>;
   denoised: Record<string, boolean>;
   master: number;
   gain: number;
 };
 const OUT_IDLE = { active: false, device: null, message: null, busy: false, speaking: [] as string[] };
-export const [output, setOutput] = createStore<Out>({ deafened: false, ...OUT_IDLE, volumes: {}, denoised: {}, master: 100, gain: 100 });
+export const [output, setOutput] = createStore<Out>({ deafened: false, ...OUT_IDLE, volumes: {}, shares: {}, shareBeforeMute: {}, denoised: {}, master: 100, gain: 100 });
 const SELF_SPEAK_LEVEL = 23;
 const SELF_SPEAK_HOLD_MS = 300;
 const [selfSpeaking, setSelfSpeaking] = createSignal(false);
@@ -295,7 +297,7 @@ export function resetVoice() {
   selfJoinPending = false;
   setVoice({ ...IDLE });
   setMic({ muted: false, ...MIC_IDLE });
-  setOutput({ deafened: false, ...OUT_IDLE, volumes: {}, denoised: {} });
+  setOutput({ deafened: false, ...OUT_IDLE, volumes: {}, shares: {}, shareBeforeMute: {}, denoised: {} });
   volumeOwner = "";
   for (const k of Object.keys(beforeMute)) delete beforeMute[k];
   micBeforeDeaf = null;
@@ -402,8 +404,14 @@ export function parseDenoised(v: unknown): string[] {
 
 export async function loadPeerVolumes(me: string) {
   volumeOwner = me;
-  const [rawVol, rawDn] = await Promise.all([readAccount(me, "peerVolumes"), readAccount(me, "peerDenoise")]);
+  const [rawVol, rawDn, rawShare, rawShareMute] = await Promise.all([readAccount(me, "peerVolumes"), readAccount(me, "peerDenoise"), readAccount(me, "shareVolumes"), readAccount(me, "shareBeforeMute")]);
   if (volumeOwner !== me) return;
+  for (const [id, v] of Object.entries(parseVolumes(rawShare))) {
+    if (!(id in output.shares)) setOutput("shares", id, v);
+  }
+  for (const [id, v] of Object.entries(parseVolumes(rawShareMute))) {
+    if (v > 0 && !(id in output.shareBeforeMute)) setOutput("shareBeforeMute", id, v);
+  }
   const stored = parseVolumes(rawVol);
   for (const id of parseDenoised(rawDn)) {
     if (id in output.denoised) continue;
@@ -452,6 +460,31 @@ export async function setPeerVolume(id: string, percent: number) {
 }
 
 export const clampVolume = (percent: number) => Math.max(0, Math.min(200, Math.round(Number.isFinite(percent) ? percent : 100)));
+
+export const shareVolumeOf = (id: string) => output.shares[id] ?? 100;
+
+export function storeShareVolume(id: string, percent: number) {
+  const v = clampVolume(percent);
+  setOutput("shares", id, v);
+  if (volumeOwner) writeAccount(volumeOwner, "shareVolumes", parseVolumes({ ...output.shares }));
+  return v;
+}
+
+export function shareMuteTarget(id: string) {
+  const v = shareVolumeOf(id);
+  const shares = { ...output.shareBeforeMute };
+  let target: number;
+  if (v > 0) {
+    shares[id] = v;
+    target = 0;
+  } else {
+    target = shares[id] ?? 100;
+    delete shares[id];
+  }
+  setOutput("shareBeforeMute", reconcile(shares));
+  if (volumeOwner) writeAccount(volumeOwner, "shareBeforeMute", parseVolumes(shares));
+  return target;
+}
 
 let masterSeq = 0, masterOkSeq = 0;
 let masterOk = 100;

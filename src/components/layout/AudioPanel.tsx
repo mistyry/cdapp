@@ -1,4 +1,5 @@
-import { For, Show, createSignal, onCleanup, onMount } from "solid-js";
+import { For, type JSX, Show, createSignal, onCleanup, onMount } from "solid-js";
+import { Portal } from "solid-js/web";
 import { setUi } from "../../stores/ui";
 import {
   DENOISE_MODES, clampVolume, defaultName, denoiseMode, deviceOptions, inputs, kookFallback, loadInputs, loadOutputs, output, outputs, setDenoiseMode,
@@ -79,6 +80,45 @@ export function VolumeTrack(p: { label: string; value: () => number; set: (v: nu
           <div class="vol-tip" style={{ bottom: `${pct()}%` }}>{value()}%</div>
         </Show>
       </div>
+    </div>
+  );
+}
+
+export function HoverVolume(p: { label: string; value: () => number; set: (v: number) => void; children: JSX.Element; onContextMenu?: (e: MouseEvent) => void }) {
+  const [at, setAt] = createSignal<{ x: number; y: number } | null>(null);
+  const [dragging, setDragging] = createSignal(false);
+  let wrap!: HTMLDivElement;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => clearTimeout(timer));
+  const show = () => {
+    clearTimeout(timer);
+    const r = wrap.getBoundingClientRect();
+    setAt({ x: r.left + r.width / 2, y: window.innerHeight - r.top });
+  };
+  const hide = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => !dragging() && setAt(null), 150);
+  };
+  return (
+    <div
+      ref={wrap}
+      class="stage-ctrl-wrap"
+      onPointerEnter={show}
+      onPointerLeave={hide}
+      onFocusIn={show}
+      onFocusOut={(e) => !wrap.contains(e.relatedTarget as Node) && setAt(null)}
+      onContextMenu={(e) => { setAt(null); p.onContextMenu?.(e); }}
+    >
+      {p.children}
+      <Show when={at()}>
+        {(a) => (
+          <Portal>
+            <div class="stage-vol-anchor" style={{ left: `${a().x}px`, bottom: `${a().y}px` }} onPointerEnter={show} onPointerLeave={hide}>
+              <VolumeTrack label={p.label} value={p.value} set={p.set} onDrag={(d) => { setDragging(d); if (!d) hide(); }} />
+            </div>
+          </Portal>
+        )}
+      </Show>
     </div>
   );
 }

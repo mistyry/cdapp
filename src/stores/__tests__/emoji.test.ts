@@ -14,8 +14,9 @@ mock.module("@tauri-apps/api/core", () => ({
     if (cmd === "emojis") return new Promise((resolve, reject) => pending.push({ cmd, resolve, reject }));
     return Promise.resolve(null);
   },
+  Channel: class { onmessage: ((b: unknown) => void) | null = null; },
 }));
-mock.module("@tauri-apps/api/event", () => ({ listen: async () => () => {} }));
+mock.module("@tauri-apps/api/event", () => ({ listen: async () => () => {}, emit: async () => {} }));
 const store = new Map<string, string>();
 (globalThis as any).localStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => store.set(k, v), removeItem: (k: string) => store.delete(k) };
 

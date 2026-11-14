@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { AV1, AV1_DEFAULT, ScreenDecoder, VP8, VP9, VP9_DEFAULT, av1Codec, av1ShowExisting, avcCodec, codecOf, hevcCodec, parseFrame } from "../screenDecoder";
+import { AV1, AV1_DEFAULT, I420, ScreenDecoder, VP8, VP9, VP9_DEFAULT, av1Codec, av1ShowExisting, avcCodec, codecOf, hevcCodec, parseFrame } from "../screenDecoder";
 
 function frame(key: boolean, w: number, h: number, ts: bigint, data: number[], codec = 1) {
   const buf = new ArrayBuffer(14 + data.length);
@@ -164,5 +164,28 @@ describe("ScreenDecoder", () => {
     d.push(frame(false, 1280, 720, 2n, [2], VP8));
     expect(decoded.map((c) => c.timestamp)).toEqual([1, 2]);
     expect(configs).toEqual([{ codec: "vp8", codedWidth: 1280, codedHeight: 720, optimizeForLatency: true }]);
+  });
+
+  test("I420 原始帧直接成帧，不经过解码器", () => {
+    const saved = { VideoFrame: g.VideoFrame, raf: g.requestAnimationFrame };
+    const made: Array<Record<string, unknown>> = [];
+    g.VideoFrame = class {
+      constructor(_d: Uint8Array, init: Record<string, unknown>) {
+        made.push(init);
+      }
+      close() {}
+    };
+    g.requestAnimationFrame = () => 1;
+    const sizes: Array<[number, number]> = [];
+    const d = new ScreenDecoder(() => {}, (w, h) => sizes.push([w, h]));
+    d.push(frame(true, 4, 2, 7n, new Array(12).fill(0), I420));
+    d.push(frame(true, 4, 2, 8n, new Array(11).fill(0), I420));
+    d.push(frame(true, 3, 2, 9n, new Array(9).fill(0), I420));
+    g.VideoFrame = saved.VideoFrame;
+    g.requestAnimationFrame = saved.raf;
+    expect(made).toEqual([{ format: "I420", codedWidth: 4, codedHeight: 2, timestamp: 7 }]);
+    expect(sizes).toEqual([[4, 2]]);
+    expect(decoded).toEqual([]);
+    expect([d.stats.decoded, d.stats.dropped]).toEqual([1, 2]);
   });
 });

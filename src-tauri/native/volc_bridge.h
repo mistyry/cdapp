@@ -2,43 +2,15 @@
 
 #include <stdint.h>
 
+#include "share_bridge.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 enum {
-    VOLC_OK = 0,
-    VOLC_ERR_NOT_STARTED = -1,
     VOLC_ERR_THREAD = -2,
-    VOLC_ERR_LOAD = -3,
-    VOLC_ERR_ENGINE = -4,
-    VOLC_ERR_SOURCE = -5,
-    VOLC_ERR_STATE = -6,
-    VOLC_ERR_JOIN = -10,
-    VOLC_ERR_ENCODER = -11,
-    VOLC_ERR_CAPTURE = -12,
-    VOLC_ERR_PUBLISH = -13,
-    VOLC_ERR_TOKEN = -14,
-    VOLC_ERR_AUDIO = -15,
     VOLC_ERR_SUBSCRIBE = -16,
-};
-
-enum {
-    VOLC_EV_ROOM_STATE = 1,
-    VOLC_EV_FIRST_FRAME = 2,
-    VOLC_EV_SIZE_CHANGED = 3,
-    VOLC_EV_TOKEN_WILL_EXPIRE = 4,
-    VOLC_EV_STATS = 5,
-    VOLC_EV_ERROR = 6,
-    VOLC_EV_VIDEO_STATE = 7,
-    VOLC_EV_SOURCE_GONE = 8,
-};
-
-enum {
-    VOLC_WEV_ROOM_STATE = 1,
-    VOLC_WEV_PUBLISH = 2,
-    VOLC_WEV_TOKEN_WILL_EXPIRE = 3,
-    VOLC_WEV_STATS = 4,
 };
 
 typedef void (*volc_frame_fn)(void* user, const uint8_t* data, int32_t size, int32_t codec, int32_t key, int32_t width,
@@ -96,6 +68,8 @@ int32_t volc_encoder(int32_t width, int32_t height, int32_t frame_rate, int32_t 
 
 int32_t volc_token(const char* token, int32_t* sdk_rc);
 
+int32_t volc_pause(int32_t paused, int32_t* sdk_rc);
+
 void volc_live_stop(void);
 
 int32_t volc_push_audio(const int16_t* pcm, int32_t frames, int32_t* sdk_rc);
@@ -106,6 +80,7 @@ typedef struct {
     const char* uid;
     const char* token;
     const char* liver;
+    int32_t volume;
 } volc_watch;
 
 int32_t volc_watch_start(const volc_watch* watch, volc_event_fn cb, volc_frame_fn frame, void* user, int32_t* sdk_rc);
@@ -116,7 +91,15 @@ int32_t volc_watch_key_frame(int32_t* sdk_rc);
 
 int32_t volc_watch_token(const char* token, int32_t* sdk_rc);
 
+int32_t volc_watch_volume(int32_t volume, int32_t* sdk_rc);
+
 void volc_watch_stop(void);
+
+int32_t volc_own_start(volc_event_fn cb, volc_frame_fn frame, void* user);
+
+int32_t volc_own_key_frame(int32_t* sdk_rc);
+
+void volc_own_stop(void);
 
 #ifdef __cplusplus
 }

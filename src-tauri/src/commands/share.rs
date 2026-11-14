@@ -11,7 +11,7 @@ pub enum ShareSdk {
 pub async fn share_sdk_sync() -> ShareSdk {
     #[cfg(windows)]
     {
-        let s = crate::share::sdk::sync().await;
+        let s = crate::share::volc_sdk::sync().await;
         if matches!(s, ShareSdk::Ready { .. }) {
             tauri::async_runtime::spawn(crate::share::agora_sdk::sync());
         }
@@ -36,8 +36,8 @@ mod win {
     use super::super::{AppState, VoiceState, api, lock};
     use crate::error::{AppError, AppResult};
     use crate::kook::golive::Tier;
-    use crate::share::bridge::{self, Source, SourceKind};
-    use crate::share::session::{Request, Session, ShareEvent, Sink};
+    use crate::share::bridge::{self, Source, SourceKind, volc};
+    use crate::share::push::{Request, Session, ShareEvent, Sink};
 
     #[derive(Default)]
     pub struct ShareSlot {
@@ -70,8 +70,8 @@ mod win {
     }
 
     fn ready() -> AppResult<()> {
-        match crate::share::sdk::status() {
-            Some(crate::share::sdk::Status::Ready { .. }) => Ok(()),
+        match crate::share::volc_sdk::status() {
+            Some(crate::share::volc_sdk::Status::Ready { .. }) => Ok(()),
             _ => Err(AppError::Other("屏幕分享组件不可用".into())),
         }
     }
@@ -79,7 +79,7 @@ mod win {
     #[tauri::command]
     pub async fn share_preview_open() -> AppResult<()> {
         ready()?;
-        tauri::async_runtime::spawn_blocking(bridge::preview_open)
+        tauri::async_runtime::spawn_blocking(volc::preview_open)
             .await
             .map_err(|e| AppError::Other(e.to_string()))?
             .map_err(|e| AppError::Other(e.to_string()))
@@ -88,7 +88,7 @@ mod win {
     #[tauri::command]
     pub async fn share_preview_close() -> AppResult<()> {
         ready()?;
-        tauri::async_runtime::spawn_blocking(bridge::preview_close)
+        tauri::async_runtime::spawn_blocking(volc::preview_close)
             .await
             .map_err(|e| AppError::Other(e.to_string()))
     }
@@ -96,7 +96,7 @@ mod win {
     #[tauri::command]
     pub async fn share_sources() -> AppResult<Vec<Source>> {
         ready()?;
-        tauri::async_runtime::spawn_blocking(bridge::sources)
+        tauri::async_runtime::spawn_blocking(volc::sources)
             .await
             .map_err(|e| AppError::Other(e.to_string()))?
             .map_err(|e| AppError::Other(e.to_string()))
@@ -251,23 +251,27 @@ mod win {
     }
 
     #[tauri::command]
+    #[allow(clippy::too_many_arguments)]
     pub async fn watch_start(
         channel_id: String,
         liver: String,
+        volume: u16,
         frames: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
         app: AppHandle,
         state: State<'_, Mutex<AppState>>,
         voice: State<'_, VoiceState>,
         watch: State<'_, WatchState>,
     ) -> AppResult<u64> {
-        watch_start_inner(channel_id, liver, frames, app, state, voice, watch)
+        watch_start_inner(channel_id, liver, volume, frames, app, state, voice, watch)
             .await
             .inspect_err(|e| log::warn!("观看屏幕分享失败：{e}"))
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn watch_start_inner(
         channel_id: String,
         liver: String,
+        volume: u16,
         frames: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
         app: AppHandle,
         state: State<'_, Mutex<AppState>>,
@@ -280,9 +284,6 @@ mod win {
         super::super::check_loaded(&state, &api, &channel_id, crate::kook::gate::Need::Connect)
             .await?;
         let me = lock(&state)?.gate.me.clone().ok_or(AppError::NotLoggedIn)?;
-        if me == liver {
-            return Err(AppError::Other("不能观看自己的屏幕分享".into()));
-        }
         let (voice_ended, rebuilt) = {
             let slot = voice.0.lock().await;
             match slot
@@ -323,6 +324,7 @@ mod win {
                 channel_id,
                 user_id: me,
                 liver,
+                volume: volume.min(crate::audio::mixer::MAX_VOLUME),
             },
             generation,
             sink,
@@ -352,6 +354,22 @@ mod win {
         {
             s.key_frame();
         }
+        Ok(())
+    }
+
+    #[tauri::command]
+    pub async fn watch_volume(
+        generation: u64,
+        percent: u16,
+        watch: State<'_, WatchState>,
+    ) -> AppResult<()> {
+        let slot = watch.0.lock().await;
+        let s = slot
+            .session
+            .as_ref()
+            .filter(|s| s.generation == generation && !s.is_finished())
+            .ok_or_else(|| AppError::Other("观看已结束".into()))?;
+        s.set_volume(percent.min(crate::audio::mixer::MAX_VOLUME));
         Ok(())
     }
 
@@ -395,7 +413,7 @@ mod win {
                     f64::from(p.y) / s + f64::from(z.height) / s - PIP_H - 72.0,
                 )
             });
-        WebviewWindowBuilder::new(
+        let pip = WebviewWindowBuilder::new(
             &app,
             PIP_LABEL,
             WebviewUrl::App(format!("index.html?pip={generation}").into()),
@@ -411,6 +429,13 @@ mod win {
         .focused(false)
         .build()
         .map_err(|e| AppError::Other(e.to_string()))?;
+        let handle = app.clone();
+        pip.on_window_event(move |e| {
+            if matches!(e, tauri::WindowEvent::Destroyed) {
+                use tauri::Emitter;
+                let _ = handle.emit_to("main", PIP_CLOSED_EVENT, generation);
+            }
+        });
         Ok(())
     }
 
@@ -424,6 +449,7 @@ mod win {
     }
 
     pub const PIP_LABEL: &str = "pip";
+    const PIP_CLOSED_EVENT: &str = "watch://pip-closed";
     const PIP_W: f64 = 480.0;
     const PIP_H: f64 = 270.0;
 }

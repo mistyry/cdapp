@@ -81,8 +81,7 @@ export default function App() {
               <Show when={stageShown()}><VoiceStage /></Show>
               <div class="stage-row">
                 <ChatPane />
-                <Show when={ui.showMembers && ui.view !== DM_VIEW}><MemberPane /></Show>
-              </div>
+                <Show when={ui.showMembers && ui.view !== DM_VIEW}><MemberPane /></Show>              </div>
             </div>
           </div>
           <Show when={ui.settings}><Settings /></Show>

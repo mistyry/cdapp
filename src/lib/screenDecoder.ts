@@ -6,6 +6,7 @@ export const H265 = 2;
 export const AV1 = 3;
 export const VP8 = 4;
 export const VP9 = 5;
+export const I420 = 6;
 export const AV1_DEFAULT = "av01.0.08M.08";
 export const VP9_DEFAULT = "vp09.00.40.08";
 
@@ -264,6 +265,10 @@ export class ScreenDecoder {
     if (this.closed) return;
     const f = parseFrame(buf);
     if (!f) return;
+    if (f.codec === I420) {
+      this.raw(f);
+      return;
+    }
     if (f.codec < H264 || f.codec > VP9) {
       this.stats.dropped++;
       return;
@@ -294,6 +299,35 @@ export class ScreenDecoder {
     } catch (e) {
       this.fail(e);
     }
+  }
+
+  private raw(f: ParsedFrame) {
+    const { width, height } = f;
+    if (!width || !height || width % 2 || height % 2 || f.data.length !== (width * height * 3) / 2) {
+      this.stats.dropped++;
+      return;
+    }
+    if (width !== this.width || height !== this.height) {
+      this.width = width;
+      this.height = height;
+      this.onSize(width, height);
+      if (this.canvas) {
+        this.canvas.width = width;
+        this.canvas.height = height;
+      }
+    }
+    let vf: VideoFrame;
+    try {
+      vf = new VideoFrame(f.data, { format: "I420", codedWidth: width, codedHeight: height, timestamp: f.ts });
+    } catch (e) {
+      this.stats.errors++;
+      console.warn("屏幕分享画面无法显示", e);
+      return;
+    }
+    this.stats.decoded++;
+    this.latest?.close();
+    this.latest = vf;
+    this.raf ||= requestAnimationFrame(() => this.draw());
   }
 
   private configure(codec: string, width: number, height: number) {
