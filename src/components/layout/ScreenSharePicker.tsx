@@ -2,7 +2,7 @@ import { For, Show, createResource, createSignal, onCleanup } from "solid-js";
 import { Check, Monitor, X } from "lucide-solid";
 import type { ShareSource } from "../../lib/api";
 import { api } from "../../lib/api";
-import { FRAME_RATES, RESOLUTIONS, loadSources, share, sharing, startShare, updateShare } from "../../stores/share";
+import { FRAME_RATES, RESOLUTIONS, loadSources, setShareAudio, share, shareAudio, sharing, startShare, updateShare } from "../../stores/share";
 
 type Tab = "screen" | "window";
 
@@ -34,7 +34,6 @@ export default function ScreenSharePicker() {
     if (!live) onCleanup(() => void api.sharePreviewClose().catch(() => {}));
     const [tab, setTab] = createSignal<Tab>("screen");
     const [picked, setPicked] = createSignal<Record<Tab, string | null>>({ screen: null, window: null });
-    const [audio, setAudio] = createSignal<Record<Tab, boolean>>({ screen: false, window: false });
     const [step, setStep] = createSignal<"source" | "quality">(live ? "quality" : "source");
     const [res, setRes] = createSignal(share.resolution);
     const [fps, setFps] = createSignal(share.frameRate);
@@ -64,7 +63,7 @@ export default function ScreenSharePicker() {
         void updateShare(res(), fps());
       } else {
         const s = chosen(tab());
-        if (s) void startShare(s, res(), fps(), audio()[tab()]);
+        if (s) void startShare(s, res(), fps(), shareAudio[tab()]);
       }
       close();
     };
@@ -108,7 +107,6 @@ export default function ScreenSharePicker() {
                       {(s) => (
                         <button class="share-item" role="option" aria-selected={chosen(tab())?.id === s.id}
                           aria-description={s.kind === "screen" && s.primary ? "主屏幕" : undefined}
-                          data-tip={s.kind === "window" && s.application ? s.application : undefined}
                           onClick={() => setPicked((p) => ({ ...p, [tab()]: s.id }))}>
                           <Thumb source={s} />
                           <span class="share-name">{label(s)}</span>
@@ -122,10 +120,10 @@ export default function ScreenSharePicker() {
           </Show>
           <div class="share-foot">
             <Show when={step() === "source"} fallback={<span />}>
-              <button class="share-check" role="checkbox" aria-checked={audio()[tab()]}
-                onClick={() => setAudio((a) => ({ ...a, [tab()]: !a[tab()] }))}>
-                <span class="check-box" classList={{ on: audio()[tab()] }}>
-                  <Show when={audio()[tab()]}><Check size={12} stroke-width={3} /></Show>
+              <button class="share-check" role="checkbox" aria-checked={shareAudio[tab()]}
+                onClick={() => setShareAudio(tab(), !shareAudio[tab()])}>
+                <span class="check-box" classList={{ on: shareAudio[tab()] }}>
+                  <Show when={shareAudio[tab()]}><Check size={12} stroke-width={3} /></Show>
                 </span>
                 {tab() === "screen" ? "分享系统声音" : "分享程序声音"}
               </button>

@@ -213,10 +213,10 @@ async fn prepare() -> AppResult<PathBuf> {
     if want.is_empty() {
         return Ok(dir);
     }
-    log::info!("屏幕分享组件缺少 {} 个文件，开始下载", want.len());
+    log::info!("屏幕共享组件缺少 {} 个文件，开始下载", want.len());
     let http = reqwest::Client::builder().timeout(TIMEOUT).build()?;
     if let Err(e) = from_cdn(&http, &dir, &want).await {
-        log::warn!("屏幕分享组件从火山 CDN 下载失败：{e}");
+        log::warn!("屏幕共享组件从火山 CDN 下载失败：{e}");
         let d = dir.clone();
         let want = tauri::async_runtime::spawn_blocking(move || missing(&d))
             .await
@@ -245,11 +245,11 @@ pub async fn sync() -> Status {
     };
     let s = match result {
         Ok(version) => {
-            log::info!("屏幕分享组件已加载：{version}");
+            log::info!("屏幕共享组件已加载：{version}");
             Status::Ready { version }
         }
         Err(e) => {
-            log::warn!("屏幕分享组件不可用：{e}");
+            log::warn!("屏幕共享组件不可用：{e}");
             Status::Unavailable {
                 message: e.to_string(),
             }

@@ -1,6 +1,6 @@
 import { api } from "./api";
 
-export type AccountKey = "emojiRecent" | "openFolders" | "peerVolumes" | "peerDenoise" | "shareVolumes" | "shareBeforeMute";
+export type AccountKey = "emojiRecent" | "openFolders" | "peerVolumes" | "peerDenoise" | "shareVolumes" | "shareBeforeMute" | "shareAudio" | "stageCollapsed";
 
 const legacyKey: Partial<Record<AccountKey, (me: string) => string>> = {
   emojiRecent: (me) => `cdapp.emoji.recent.${me}`,

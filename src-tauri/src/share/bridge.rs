@@ -70,17 +70,17 @@ const ERR_VOLUME: i32 = -17;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum BridgeError {
-    #[error("屏幕分享线程未启动")]
+    #[error("屏幕共享线程未启动")]
     NotStarted,
-    #[error("屏幕分享线程启动失败")]
+    #[error("屏幕共享线程启动失败")]
     Thread,
-    #[error("屏幕分享组件加载失败：系统错误 {0}")]
+    #[error("屏幕共享组件加载失败：系统错误 {0}")]
     Load(u32),
-    #[error("屏幕分享引擎创建失败")]
+    #[error("屏幕共享引擎创建失败")]
     Engine,
     #[error("共享源不可用")]
     Source,
-    #[error("屏幕分享状态不符")]
+    #[error("屏幕共享状态不符")]
     State,
     #[error("进入分享房间失败：{0}")]
     Join(i32),
@@ -100,7 +100,7 @@ pub enum BridgeError {
     Volume(i32),
     #[error("参数包含空字符")]
     Nul,
-    #[error("屏幕分享组件返回未知错误 {0}")]
+    #[error("屏幕共享组件返回未知错误 {0}")]
     Unknown(i32),
 }
 

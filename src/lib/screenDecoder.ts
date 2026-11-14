@@ -243,6 +243,7 @@ export class ScreenDecoder {
   private waitingKey = true;
   private afterKey = false;
   private latest: VideoFrame | null = null;
+  private shown: VideoFrame | null = null;
   private raf = 0;
   private canvas: HTMLCanvasElement | null = null;
   private ctx: CanvasRenderingContext2D | null = null;
@@ -259,6 +260,7 @@ export class ScreenDecoder {
       canvas.width = this.width;
       canvas.height = this.height;
     }
+    if (this.ctx && this.canvas && this.shown) this.ctx.drawImage(this.shown, 0, 0, this.canvas.width, this.canvas.height);
   }
 
   push(buf: ArrayBuffer) {
@@ -321,7 +323,7 @@ export class ScreenDecoder {
       vf = new VideoFrame(f.data, { format: "I420", codedWidth: width, codedHeight: height, timestamp: f.ts });
     } catch (e) {
       this.stats.errors++;
-      console.warn("屏幕分享画面无法显示", e);
+      console.warn("屏幕共享画面无法显示", e);
       return;
     }
     this.stats.decoded++;
@@ -369,11 +371,12 @@ export class ScreenDecoder {
     this.latest = null;
     if (!vf) return;
     if (this.ctx && this.canvas) this.ctx.drawImage(vf, 0, 0, this.canvas.width, this.canvas.height);
-    vf.close();
+    this.shown?.close();
+    this.shown = vf;
   }
 
   private fail(e: unknown) {
-    console.warn("屏幕分享解码失败", e);
+    console.warn("屏幕共享解码失败", e);
     this.stats.errors++;
     try { this.decoder?.close(); } catch {}
     this.decoder = null;
@@ -388,6 +391,8 @@ export class ScreenDecoder {
     this.raf = 0;
     this.latest?.close();
     this.latest = null;
+    this.shown?.close();
+    this.shown = null;
     try { this.decoder?.close(); } catch {}
     this.decoder = null;
     this.canvas = null;

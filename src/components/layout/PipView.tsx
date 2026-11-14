@@ -2,58 +2,76 @@ import { Show, createSignal, onCleanup, onMount } from "solid-js";
 import { Channel } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Maximize2, X } from "lucide-solid";
+import Undo2 from "lucide-solid/icons/undo-2";
 import { api, type WatchEvent } from "../../lib/api";
 import { ScreenDecoder } from "../../lib/screenDecoder";
-import { notifyMain } from "../../stores/watch";
+import { notifyMain } from "../../lib/pip";
 import { TipLayer } from "../common/Tip";
 
-export default function PipView(p: { generation: number }) {
+export default function PipView() {
   let canvas!: HTMLCanvasElement;
   const [waiting, setWaiting] = createSignal(true);
   const [paused, setPaused] = createSignal(false);
+  const [id, setId] = createSignal<{ generation: number; seq: number } | null>(null);
   const win = getCurrentWindow();
   const close = () => void win.destroy().catch(() => {});
+  const back = () => {
+    const cur = id();
+    if (cur) void notifyMain(cur.generation, cur.seq, "back");
+  };
 
   onMount(() => {
-    const dec = new ScreenDecoder(
-      () => void api.watchKeyFrame(p.generation).catch(() => {}),
-      () => setWaiting(false),
-    );
-    dec.attach(canvas);
-    const ch = new Channel<ArrayBuffer>();
-    ch.onmessage = (buf) => dec.push(buf);
-    const off = listen<{ generation: number; state: WatchEvent }>("watch://event", ({ payload }) => {
-      if (payload.generation !== p.generation) return;
-      if (payload.state.kind === "ended") close();
-      else if (payload.state.kind === "paused") setPaused(payload.state.paused);
-    });
-    void off.then(() => api.watchRedirect(p.generation, ch)).catch(close);
+    let dec: ScreenDecoder | null = null;
+    let off: Promise<() => void> | null = null;
     onCleanup(() => {
-      dec.close();
-      void off.then((f) => f());
+      dec?.close();
+      void off?.then((f) => f());
     });
+    const start = async () => {
+      await win.show();
+      const cur = await api.watchPipCurrent();
+      if (!cur) return close();
+      setId(cur);
+      const { generation } = cur;
+      const d = new ScreenDecoder(
+        () => void api.watchKeyFrame(generation).catch(() => {}),
+        (width, height) => {
+          setWaiting(false);
+          void api.watchPipRatio(width, height).catch(() => {});
+        },
+      );
+      dec = d;
+      d.attach(canvas);
+      const ch = new Channel<ArrayBuffer>();
+      ch.onmessage = (buf) => d.push(buf);
+      off = listen<{ generation: number; state: WatchEvent }>("watch://event", ({ payload }) => {
+        if (payload.generation !== generation) return;
+        if (payload.state.kind === "ended") close();
+        else if (payload.state.kind === "paused") setPaused(payload.state.paused);
+      });
+      await off;
+      await notifyMain(generation, cur.seq, "ready");
+      await api.watchRedirect(generation, ch);
+    };
+    start().catch(close);
   });
 
   return (
-    <div class="pip" data-tauri-drag-region>
+    <div class={`pip ${waiting() ? "loading" : ""}`} data-tauri-drag-region="deep">
       <TipLayer />
-      <canvas ref={canvas} class="screen-canvas" data-tauri-drag-region />
+      <canvas ref={canvas} class="screen-canvas" />
       <Show when={paused()} fallback={
         <Show when={waiting()}>
           <div class="screen-wait" role="status" aria-label="正在连接" />
         </Show>
       }>
-        <div class="screen-paused" role="status" aria-label="屏幕分享已暂停">
-          <div class="screen-paused-title">屏幕分享已暂停</div>
+        <div class="screen-paused" role="status" aria-label="屏幕共享已暂停">
+          <div class="screen-paused-title">屏幕共享已暂停</div>
         </div>
       </Show>
       <div class="pip-bar">
-        <button class="screen-btn" aria-label="回到 stage" data-tip="回到 stage" onClick={() => void notifyMain(p.generation, "back")}>
-          <Maximize2 size={16} />
-        </button>
-        <button class="screen-btn" aria-label="停止观看" data-tip="停止观看" onClick={() => void notifyMain(p.generation, "stop")}>
-          <X size={16} />
+        <button class="screen-btn" aria-label="返回" data-tip="返回" onClick={back}>
+          <Undo2 size={16} />
         </button>
       </div>
     </div>

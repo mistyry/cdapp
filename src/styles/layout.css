@@ -106,9 +106,14 @@
 .voice-member > span[role="img"] { display: flex; color: var(--c-text-2); }
 .voice-member { cursor: default; }
 .voice-member:not(.elsewhere):hover { background: var(--c-hover); border-radius: 8px; margin-left: 32px; margin-right: 2px; padding: 0 6px; }
-.voice-member.speaking, .voice-member.speaking:hover { background: color-mix(in srgb, var(--c-good) 12%, transparent); border-radius: 8px; margin-left: 32px; margin-right: 2px; padding: 0 6px; }
-.voice-member > span.voice-speaking { color: var(--c-good); }
+.voice-member.speaking, .voice-member.speaking:hover { background: color-mix(in srgb, var(--c-brand) 12%, transparent); border-radius: 8px; margin-left: 32px; margin-right: 2px; padding: 0 6px; }
+.voice-member > span.voice-speaking { color: var(--c-brand); }
 .voice-member > span.live-mark { color: var(--c-brand); }
+.voice-member > button.live-watch {
+  display: flex; align-items: center; justify-content: center; padding: 2px; margin: -2px; border: 0; border-radius: 4px;
+  background: none; color: var(--c-brand); cursor: pointer;
+}
+.voice-member > button.live-watch:hover { background: var(--c-hover); }
 .voice-member > span.server-off { color: var(--c-danger); }
 .member-menu { position: fixed; z-index: 20; display: flex; flex-direction: column; width: 200px; padding: 4px; background: var(--c-float); border-radius: 10px; box-shadow: 0 4px 16px rgba(15, 23, 42, 0.12); }
 .member-menu .audio-head { padding: 4px 8px 2px; }
@@ -207,6 +212,7 @@
   position: relative; height: clamp(200px, 42vh, 460px); border-radius: 12px; overflow: hidden; background: #000;
 }
 .screen-canvas { width: 100%; height: 100%; object-fit: contain; display: block; }
+.stage-art .stage-kept { position: absolute; inset: 0; background: #000; }
 .screen-wait {
   position: absolute; inset: 0; margin: auto; width: 28px; height: 28px; border-radius: 50%;
   border: 3px solid rgba(255, 255, 255, .25); border-top-color: #fff; animation: screen-spin .9s linear infinite;
@@ -225,7 +231,12 @@
   background: linear-gradient(transparent, rgba(0, 0, 0, .6));
   opacity: 0; transition: opacity .15s;
 }
-.screen-view:hover .screen-bar, .screen-bar:focus-within { opacity: 1; }
+.screen-view:hover .screen-bar, .screen-bar:focus-within, .screen-bar.held { opacity: 1; }
+.screen-back {
+  position: absolute; top: 8px; left: 8px; background: rgba(0, 0, 0, .55); opacity: 0; transition: opacity .15s;
+}
+.screen-view:hover .screen-back, .screen-back:focus-visible { opacity: 1; }
+.screen-btn:disabled { opacity: .5; cursor: default; }
 .screen-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .screen-btn {
   width: 32px; height: 32px; border: 0; border-radius: 8px; background: none; color: #fff;
@@ -242,7 +253,7 @@
   position: absolute; top: 6px; right: 6px; display: flex; gap: 4px; padding: 2px; border-radius: 10px;
   background: rgba(0, 0, 0, .55); opacity: 0; transition: opacity .15s;
 }
-.pip:hover .pip-bar, .pip-bar:focus-within { opacity: 1; }
+.pip:hover .pip-bar, .pip-bar:focus-within, .pip.loading .pip-bar { opacity: 1; }
 .pip-bar .screen-btn { width: 28px; height: 28px; }
 .stage-ctrl { padding: 4px 5px 1px 7px; }
 .stage-name { font-size: 13px; font-weight: 600; line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -270,6 +281,7 @@
 .msg-small-time { position: absolute; left: 0; width: 60px; text-align: center; top: 2px; font-size: 12px; line-height: 24px;
   color: var(--c-text-3); display: none; }
 .msg-wrap:hover .msg-small-time { display: block; }
+.msg-system-mark { position: absolute; left: 0; top: 2px; width: 60px; height: 24px; display: flex; align-items: center; justify-content: center; color: var(--c-text-3); }
 .msg-infos { display: flex; align-items: center; height: 20px; }
 .msg-name { font-weight: 700; line-height: 20px; cursor: pointer; }
 .msg-name:hover { text-decoration: underline; }
@@ -422,12 +434,25 @@ button.quote:hover { background: var(--c-fill); }
 .new-tip { position: absolute; left: 50%; transform: translateX(-50%); bottom: 12px; z-index: 3; display: flex; align-items: center; gap: 4px;
   padding: 6px 12px; border: 0; border-radius: 16px; background: var(--c-brand); color: #fff; font-size: 13px; cursor: pointer;
   box-shadow: var(--shadow); }
+.to-bottom { position: absolute; right: 16px; bottom: 12px; z-index: 3; display: flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px; border: 0; border-radius: 50%; background: var(--c-float); color: var(--c-text-2); cursor: pointer; box-shadow: var(--shadow); }
+.to-bottom:hover { color: var(--c-text); background: var(--c-hover); }
 
 .conn-bar { position: absolute; top: 0; left: 50%; transform: translateX(-50%); border-radius: 0 0 8px 8px; white-space: nowrap; z-index: 5; padding: 4px 12px; font-size: 12px; line-height: 18px; text-align: center; background: var(--c-brand); color: #fff; }
 .conn-bar.warn { background: var(--c-danger); }
 .conn-bar.ok { background: var(--c-brand); }
 .conn-bar button { margin-left: 8px; padding: 0; border: 0; background: none; color: inherit; font-size: 12px; text-decoration: underline; cursor: pointer; }
 .member-note { padding: 12px 24px; font-size: 13px; color: var(--c-text-2); }
+.skel { pointer-events: none; }
+.skel .channel, .skel .member, .skel .dm { cursor: default; }
+.skel .bone { display: inline-block; vertical-align: middle; max-width: 100%; border-radius: 4px; background: var(--c-avatar); animation: skel-pulse 1.6s ease-in-out infinite; }
+.skel .bone.round { border-radius: 50%; }
+.skel .bone.avatar { display: block; }
+@keyframes skel-pulse { 50% { opacity: .5; } }
+@media (prefers-reduced-motion: reduce) { .skel .bone { animation: none; } }
+.message-box > .skel, .chat-empty > .skel { display: flex; flex-direction: column; justify-content: flex-end; overflow: hidden; }
+.message-box > .skel { height: calc(100% - 40px); }
+.chat-empty > .skel { align-self: stretch; flex: 1; padding-bottom: 84px; }
 .member .bot-tag { margin-left: 6px; padding: 0 4px; border-radius: 4px; font-size: 11px; line-height: 16px; background: var(--c-hover); color: var(--c-text-2); }
 
 .chat.dropping { outline: 2px dashed var(--c-mention); outline-offset: -6px; }

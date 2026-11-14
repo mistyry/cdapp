@@ -1,4 +1,5 @@
 import { createStore } from "solid-js/store";
+import { readAccount, writeAccount } from "../lib/accountState";
 
 export type Target =
   | { kind: "none" }
@@ -29,13 +30,28 @@ const initial = () => ({
   showMembers: true,
   atBottom: true,
   collapsed: {} as Record<string, boolean>,
+  stageCollapsed: false,
 });
 
 export const [ui, setUi] = createStore(initial());
 
 export function resetUi() {
   const { showMembers, collapsed } = ui;
+  stageOwner = "";
   setUi({ ...initial(), showMembers, collapsed: { ...collapsed } });
+}
+
+let stageOwner = "";
+
+export async function loadStageCollapsed(me: string) {
+  stageOwner = me;
+  const raw = await readAccount(me, "stageCollapsed");
+  if (stageOwner === me) setUi("stageCollapsed", raw === true);
+}
+
+export function setStageCollapsed(v: boolean) {
+  setUi("stageCollapsed", v);
+  if (stageOwner) writeAccount(stageOwner, "stageCollapsed", v);
 }
 
 export const currentKey = () => targetKey(ui.target);

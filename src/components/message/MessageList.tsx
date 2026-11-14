@@ -3,6 +3,7 @@ import { ArrowDown } from "lucide-solid";
 import type { Focus, History, Message } from "../../stores/types";
 import { indexAt, prefix, visibleRange } from "../../lib/virtual";
 import MessageItem from "./MessageItem";
+import { MessageSkeleton } from "../common/Skeleton";
 import { setUi } from "../../stores/ui";
 import { readCurrent } from "../../stores/session";
 
@@ -73,19 +74,23 @@ export default function MessageList(p: Props) {
     expected = box.scrollTop;
     setTop(expected);
   };
-  const toBottom = () => setScroll(box.scrollHeight);
+  const markBottom = (bottom: boolean) => {
+    if (bottom === atBottom()) return;
+    setAtBottom(bottom);
+    setUi("atBottom", bottom);
+    if (bottom) readCurrent();
+    else setSeen(p.messages[p.messages.length - 1]?.id);
+  };
+  const toBottom = () => {
+    setScroll(box.scrollHeight);
+    if (!fragment()) markBottom(true);
+  };
 
   const onScroll = () => {
     setTop(box.scrollTop);
     if (box.scrollTop === expected) return capture();
     expected = -1;
-    const bottom = bottomGap() <= BOTTOM_SLACK && !fragment();
-    if (bottom !== atBottom()) {
-      setAtBottom(bottom);
-      setUi("atBottom", bottom);
-      if (bottom) readCurrent();
-      if (!bottom) setSeen(p.messages[p.messages.length - 1]?.id);
-    }
+    markBottom(bottomGap() <= BOTTOM_SLACK && !fragment());
     capture();
     maybeOlder();
     maybeNewer();
@@ -162,9 +167,11 @@ export default function MessageList(p: Props) {
     onCleanup(() => observer.unobserve(el));
   };
 
+  const firstLoad = () => !p.messages.length && (!p.history || p.history.loading);
   const head = () => {
     const h = p.history;
     if (h?.failed) return <>历史消息加载失败 <button class="retry" onClick={() => (p.messages.length ? p.onOlder() : p.onRetry())}>重试</button></>;
+    if (firstLoad()) return "";
     if (!h || h.loading) return "加载中";
     if (h.end) return p.messages.length ? "已到达频道开头" : "还没有消息，发送第一条吧";
     return "";
@@ -174,6 +181,7 @@ export default function MessageList(p: Props) {
     <div class="message-wrap">
       <div class="message-box" ref={box} onScroll={onScroll}>
         <div class="history-head" style={{ height: `${HEAD}px` }}>{head()}</div>
+        <Show when={firstLoad()}><MessageSkeleton /></Show>
         <div class="vlist" style={{ height: `${offsets()[offsets().length - 1]}px` }}>
           <For each={rows()}>
             {(m, k) => {
@@ -196,6 +204,11 @@ export default function MessageList(p: Props) {
       <Show when={!fragment() && unseen() > 0}>
         <button class="new-tip" onClick={toBottom}>
           <ArrowDown size={14} /> {unseen()} 条新消息
+        </button>
+      </Show>
+      <Show when={!fragment() && !atBottom() && unseen() === 0}>
+        <button class="to-bottom" aria-label="回到底部" onClick={toBottom}>
+          <ArrowDown size={20} />
         </button>
       </Show>
     </div>

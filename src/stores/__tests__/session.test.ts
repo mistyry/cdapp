@@ -2971,7 +2971,7 @@ test("updated_guild 合并刷新角色依据与频道覆盖", async () => {
   expect(calls.filter((c) => c.cmd === "channels").length).toBe(1);
 });
 
-test("updated_guild 更新屏幕分享人数，缺少字段时保留原值", async () => {
+test("updated_guild 更新屏幕共享人数，缺少字段时保留原值", async () => {
   await selectGuild("A");
   sys("updated_guild", { id: "A", name: "A", live_count: 1 });
   expect(session.guilds.find((g) => g.id === "A")?.liveCount).toBe(1);
@@ -3112,7 +3112,7 @@ test("未加载服务器的进出事件被忽略", () => {
   expect(JSON.stringify(session.guilds)).toBe(before);
 });
 
-test("屏幕分享状态：频道列表初始值、开播改档停播事件、非成员与其他频道忽略", async () => {
+test("屏幕共享状态：频道列表初始值、开播改档停播事件、非成员与其他频道忽略", async () => {
   const live = { resolution: 720, frameRate: 30, startTime: 1, audienceCount: 0, audienceLimit: 20 };
   auto.channels = ({ guildId }) => [
     { ...raw(`${guildId}-voice`, "v", 2), users: [

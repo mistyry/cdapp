@@ -23,6 +23,8 @@ const ACCOUNT_KEYS: &[&str] = &[
     "peerDenoise",
     "shareVolumes",
     "shareBeforeMute",
+    "shareAudio",
+    "stageCollapsed",
 ];
 
 #[derive(Default, Serialize, Deserialize)]

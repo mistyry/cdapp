@@ -1,4 +1,4 @@
-import { For, type JSX, Show, createSignal, onCleanup, onMount } from "solid-js";
+import { For, type JSX, Show, createEffect, createSignal, onCleanup, onMount } from "solid-js";
 import { Portal } from "solid-js/web";
 import { setUi } from "../../stores/ui";
 import {
@@ -84,9 +84,11 @@ export function VolumeTrack(p: { label: string; value: () => number; set: (v: nu
   );
 }
 
-export function HoverVolume(p: { label: string; value: () => number; set: (v: number) => void; children: JSX.Element; onContextMenu?: (e: MouseEvent) => void }) {
+export function HoverVolume(p: { label: string; value: () => number; set: (v: number) => void; children: JSX.Element; onContextMenu?: (e: MouseEvent) => void; onOpen?: (open: boolean) => void }) {
   const [at, setAt] = createSignal<{ x: number; y: number } | null>(null);
   const [dragging, setDragging] = createSignal(false);
+  createEffect(() => p.onOpen?.(at() !== null));
+  onCleanup(() => p.onOpen?.(false));
   let wrap!: HTMLDivElement;
   let timer: ReturnType<typeof setTimeout> | undefined;
   onCleanup(() => clearTimeout(timer));

@@ -1,6 +1,6 @@
 import { For, Match, Show, Switch, createSignal, onCleanup } from "solid-js";
 import { Portal } from "solid-js/web";
-import { Ellipsis, Pencil, Reply, SmilePlus, Trash2 } from "lucide-solid";
+import { Ellipsis, MessageSquare, Pencil, Reply, SmilePlus, Trash2 } from "lucide-solid";
 import type { Message, Reaction } from "../../stores/types";
 import { emojiUrl, safeUrl } from "../../lib/kmarkdown";
 import { Kind, isText, label, parseCards, sizeText } from "../../lib/content";
@@ -166,7 +166,11 @@ export default function MessageItem(p: { msg: Message; first: boolean }) {
   return (
     <div class={`msg ${p.first && !plain() ? "first" : ""} ${plain() ? "system" : ""} ${p.msg.pending ? `pending ${p.msg.pending}` : ""}`} onMouseLeave={() => (menu() !== "picker" && setMenu(""), setConfirming(false))}>
       <div class="msg-wrap">
-        <Show when={p.first && !plain()} fallback={<span class="msg-small-time">{p.msg.short}</span>}>
+        <Show when={p.first && !plain()} fallback={
+          <Show when={plain()} fallback={<span class="msg-small-time">{p.msg.short}</span>}>
+            <span class="msg-system-mark" aria-hidden="true"><MessageSquare size={18} /></span>
+          </Show>
+        }>
           <Avatar user={author()} />
           <div class="msg-infos">
             <span class="msg-name" style={{ color: author().color }}>{author().name}</span>
@@ -212,7 +216,7 @@ export default function MessageItem(p: { msg: Message; first: boolean }) {
             </Show>
             <button class="icon-btn" data-tip="回复" aria-label="回复" onClick={reply}><Reply size={20} stroke-width={1.6} /></button>
             <Show when={canEdit(ch(), p.msg) || canDelete(ch(), p.msg)}>
-              <button class="icon-btn" data-tip="更多" aria-label="更多" onClick={() => setMenu(menu() === "more" ? "" : "more")}><Ellipsis size={20} /></button>
+              <button class="icon-btn" data-tip="更多" aria-label="更多" aria-haspopup="menu" aria-expanded={menu() === "more"} onClick={() => setMenu(menu() === "more" ? "" : "more")}><Ellipsis size={20} /></button>
             </Show>
             <Show when={menu() === "picker"}>
               <Portal><EmojiPicker class="react-picker" style={pickerPos()} trigger={() => reactBtn}

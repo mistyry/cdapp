@@ -1,12 +1,10 @@
 /* @refresh reload */
 import { render } from "solid-js/web";
-import App from "./App";
-import PipView from "./components/layout/PipView";
 import { hasBackdrop, platform } from "./lib/platform";
 import "./styles/theme.css";
 import "./styles/layout.css";
 
-const pip = Number(new URLSearchParams(location.search).get("pip") ?? 0);
+const pip = new URLSearchParams(location.search).has("pip");
 
 const isFileDrag = (e: DragEvent) => [...(e.dataTransfer?.types ?? [])].includes("Files");
 for (const type of ["dragover", "drop"] as const) {
@@ -20,11 +18,12 @@ void hasBackdrop().then((ok) => {
   if (ok) document.documentElement.dataset.backdrop = "";
 });
 
-if (pip > 0) {
+const root = document.getElementById("root") as HTMLElement;
+if (pip) {
   document.documentElement.dataset.pip = "";
-  render(() => <PipView generation={pip} />, document.getElementById("root") as HTMLElement);
+  void import("./components/layout/PipView").then(({ default: PipView }) => render(() => <PipView />, root));
 } else {
-  render(() => <App />, document.getElementById("root") as HTMLElement);
+  void import("./App").then(({ default: App }) => render(() => <App />, root));
 }
 
 document.addEventListener("dragstart", (e) => {

@@ -281,7 +281,7 @@ impl Session {
             )
             .await;
             let message = r.err().map(|e| {
-                log::warn!("观看屏幕分享结束：{e}");
+                log::warn!("观看屏幕共享结束：{e}");
                 e.to_string()
             });
             state(WatchState::Ended { message });
@@ -355,7 +355,7 @@ fn forwarder(
                 Ok(()) => failing = false,
                 Err(e) => {
                     if !failing {
-                        log::warn!("屏幕分享画面发送失败：{e}");
+                        log::warn!("屏幕共享画面发送失败：{e}");
                         failing = true;
                     }
                     let _ = need_key.send(());
@@ -411,7 +411,7 @@ async fn run(
 }
 
 fn own_vendor(live: Option<Vendor>) -> AppResult<Vendor> {
-    live.ok_or_else(|| AppError::Other("没有在屏幕分享".into()))
+    live.ok_or_else(|| AppError::Other("没有在屏幕共享".into()))
 }
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
@@ -450,15 +450,15 @@ async fn watch_once(
         None => own_vendor(super::push::live_vendor())?,
     };
     if own {
-        log::info!("观看自己的屏幕分享：{vendor:?}");
+        log::info!("观看自己的屏幕共享：{vendor:?}");
     } else {
         log::info!("观看厂商：{vendor:?}");
     }
     let (need_key_tx, mut need_key) = mpsc::unbounded_channel::<()>();
     let replay = own && vendor == Vendor::Volc;
     frames.cache(replay);
-    let (queue, forward) = forwarder(frames, need_key_tx.clone());
     let gate = std::sync::Arc::new(Gate::new());
+    let (queue, forward) = forwarder(frames, need_key_tx.clone());
     let g = gate.clone();
     let (seen_tx, mut seen) = mpsc::unbounded_channel::<()>();
     let on_frame = move |f: &Frame<'_>| {
@@ -546,9 +546,6 @@ async fn watch_once(
                         request_key(held, &mut last_key, Why::Decoder).await;
                     }
                     Some(Control::Redirected { complete }) => {
-                        if !replay {
-                            gate.need_key();
-                        }
                         if paused {
                             state(WatchState::Paused { paused });
                         }
@@ -605,7 +602,7 @@ async fn watch_once(
                     Some(WatchEvent::Paused(p)) => {
                         if p != paused {
                             paused = p;
-                            log::info!("分享者{}屏幕分享", if p { "暂停了" } else { "恢复了" });
+                            log::info!("分享者{}屏幕共享", if p { "暂停了" } else { "恢复了" });
                             state(WatchState::Paused { paused: p });
                         }
                         rearm(&gate, paused, waiting);
@@ -624,7 +621,7 @@ async fn watch_once(
                         log::warn!("应用屏幕共享音量 {volume} 失败：{raw}，{why}");
                     }
                     Some(WatchEvent::Ended) => {
-                        log::info!("屏幕分享已停止，结束观看自己");
+                        log::info!("屏幕共享已停止，结束观看自己");
                         return Ok(());
                     }
                     None => return Err(AppError::Other("观看已结束".into())),
@@ -746,7 +743,7 @@ mod tests {
     fn own_follows_live_vendor() {
         assert_eq!(own_vendor(Some(Vendor::Agora)).unwrap(), Vendor::Agora);
         assert_eq!(own_vendor(Some(Vendor::Volc)).unwrap(), Vendor::Volc);
-        assert_eq!(own_vendor(None).unwrap_err().to_string(), "没有在屏幕分享");
+        assert_eq!(own_vendor(None).unwrap_err().to_string(), "没有在屏幕共享");
     }
 
     #[test]
@@ -938,6 +935,29 @@ mod tests {
         g.want_frame(true);
         assert_eq!(g.pass(false), (false, false));
         assert_eq!(g.pass(true), (true, true));
+    }
+
+    #[test]
+    fn frames_keep_flowing_across_redirect() {
+        use std::sync::{Arc, Mutex};
+        let got = Arc::new(Mutex::new(Vec::new()));
+        let g = got.clone();
+        let frames = Frames::new(Box::new(move |m| {
+            g.lock().unwrap().push(m[1]);
+            Ok(())
+        }));
+        frames.send(vec![1, 1]).unwrap();
+        frames.send(vec![0, 2]).unwrap();
+        let g = got.clone();
+        assert!(!frames.replace(Box::new(move |m| {
+            g.lock().unwrap().push(m[1] + 10);
+            Ok(())
+        })));
+        frames.send(vec![0, 3]).unwrap();
+        assert_eq!(*got.lock().unwrap(), vec![1, 2, 13]);
+        let g = Gate::new();
+        assert_eq!(g.pass(true), (true, false));
+        assert_eq!(g.pass(false), (true, false));
     }
 
     #[test]

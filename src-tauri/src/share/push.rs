@@ -240,7 +240,7 @@ impl Session {
             .await;
             release(&mut push).await;
             let message = r.err().map(|e| {
-                log::warn!("屏幕分享结束：{e}");
+                log::warn!("屏幕共享结束：{e}");
                 e.to_string()
             });
             sink(ShareEvent::Ended { message });
@@ -379,7 +379,7 @@ async fn run(
         let go = resumes
             .recover(e, &mut rebuilt, &mut voice, &mut stop, |e, n| {
                 log::warn!(
-                    "语音重建期间屏幕分享中断：{e}；等待语音恢复后重新开播 {n}/{MAX_RESUMES}"
+                    "语音重建期间屏幕共享中断：{e}；等待语音恢复后重新开播 {n}/{MAX_RESUMES}"
                 );
             })
             .await?;
@@ -403,7 +403,7 @@ async fn live(
     };
     let (width, height) = push.size;
     log::info!(
-        "屏幕分享已发布：{width}x{height} {} 帧 {} kbps",
+        "屏幕共享已发布：{width}x{height} {} 帧 {} kbps",
         req.tier.frame_rate,
         push.kbps
     );
@@ -454,7 +454,7 @@ async fn renew(api: &Api, req: &Request, push: &mut Push) -> AppResult<()> {
     let vendor = push.vendor;
     let token = api.go_live_refresh(&req.channel_id, vendor).await?.token;
     push.call(move |l| l.token(&token)).await?;
-    log::info!("屏幕分享令牌已续期");
+    log::info!("屏幕共享令牌已续期");
     Ok(())
 }
 
@@ -468,7 +468,7 @@ async fn update(api: &Api, req: &mut Request, tier: Tier, push: &mut Push) -> Ap
         .await?;
     req.tier = tier;
     log::info!(
-        "屏幕分享改档：{}p {} 帧，源 {}x{}，编码 {}x{} {} kbps",
+        "屏幕共享改档：{}p {} 帧，源 {}x{}，编码 {}x{} {} kbps",
         tier.resolution,
         tier.frame_rate,
         source.0,
@@ -492,7 +492,7 @@ async fn on_event(
             let next = fit::fit(req.tier.resolution, push.read_source(req));
             if next != push.size {
                 push.encode(next, req.tier.frame_rate).await?;
-                log::info!("屏幕分享编码尺寸改为 {}x{}", next.0, next.1);
+                log::info!("屏幕共享编码尺寸改为 {}x{}", next.0, next.1);
             }
         }
         Some(Event::Stats {
@@ -513,11 +513,11 @@ async fn on_event(
         Some(Event::SourceGone) => return Err(AppError::Other("共享的窗口已关闭".into())),
         Some(Event::Paused(paused)) => {
             if let Err(e) = push.call(move |l| l.pause(paused)).await {
-                log::warn!("切换屏幕分享暂停状态失败：{e}");
+                log::warn!("切换屏幕共享暂停状态失败：{e}");
             } else if paused {
-                log::info!("共享的窗口已最小化，暂停屏幕分享");
+                log::info!("共享的窗口已最小化，暂停屏幕共享");
             } else {
-                log::info!("共享的窗口已恢复，继续屏幕分享");
+                log::info!("共享的窗口已恢复，继续屏幕共享");
             }
         }
         Some(Event::RoomState(code)) => match room_action(code) {
@@ -590,7 +590,7 @@ async fn begin(
     while !joined || frame.is_none() {
         tokio::select! {
             _ = &mut *stop => return Ok(None),
-            () = &mut deadline => return Err(AppError::Other("屏幕分享启动超时".into())),
+            () = &mut deadline => return Err(AppError::Other("屏幕共享启动超时".into())),
             e = events.recv() => match e {
                 Some(Event::RoomState(0)) => joined = true,
                 Some(Event::RoomState(code)) if room_action(code) != RoomAction::Ignore => {

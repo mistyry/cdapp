@@ -7,6 +7,7 @@ import EmojiInput, { type EmojiInputApi } from "../message/EmojiInput";
 import EmojiPicker from "../message/EmojiPicker";
 import Kmd from "../message/Kmd";
 import { KookHash } from "../common/icons";
+import { MessageSkeleton } from "../common/Skeleton";
 import { sizeText } from "../../lib/content";
 
 export default function ChatPane() {
@@ -29,12 +30,12 @@ export default function ChatPane() {
   const reply = () => ui.replies[currentKey()];
   const clearReply = () => currentKey() && setUi("replies", currentKey(), undefined);
   const empty = () => {
-    if (ui.view === DM_VIEW) return session.dmList.loaded && !session.dms.length ? "还没有私信" : "选择一个私信会话";
+    if (ui.view === DM_VIEW) return session.dmList.loaded && !session.dmList.loading && !session.dms.length ? "还没有私信" : "选择一个私信会话";
     const g = session.guilds.find((x) => x.id === ui.view);
     if (session.loadFailed) return <>服务器列表加载失败 <button class="retry" onClick={loadGuilds}>重试</button></>;
     if (!g) return session.guilds.length ? "" : "尚未加入任何服务器";
     if (g.failed) return <>频道加载失败 <button class="retry" onClick={() => selectGuild(g.id)}>重试</button></>;
-    return g.loaded ? "没有可用的文字频道" : "加载中";
+    return g.loaded ? "没有可用的文字频道" : <MessageSkeleton />;
   };
   const outbox = () => session.outbox[currentMsgKey()] ?? [];
   const submit = () => {

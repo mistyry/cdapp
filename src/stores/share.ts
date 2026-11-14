@@ -2,7 +2,34 @@ import { createStore } from "solid-js/store";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { api } from "../lib/api";
 import type { ShareEvent, ShareSource } from "../lib/api";
+import { readAccount, writeAccount } from "../lib/accountState";
 import { voice } from "./voice";
+
+export type AudioTab = "screen" | "window";
+const AUDIO_OFF: Record<AudioTab, boolean> = { screen: false, window: false };
+export const [shareAudio, setShareAudioState] = createStore<Record<AudioTab, boolean>>({ ...AUDIO_OFF });
+let audioOwner = "";
+
+export function parseShareAudio(v: unknown): Record<AudioTab, boolean> {
+  const o = v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+  return { screen: o.screen === true, window: o.window === true };
+}
+
+export async function loadShareAudio(me: string) {
+  audioOwner = me;
+  const raw = await readAccount(me, "shareAudio");
+  if (audioOwner === me) setShareAudioState(parseShareAudio(raw));
+}
+
+export function resetShareAudio() {
+  audioOwner = "";
+  setShareAudioState({ ...AUDIO_OFF });
+}
+
+export function setShareAudio(tab: AudioTab, on: boolean) {
+  setShareAudioState(tab, on);
+  if (audioOwner) writeAccount(audioOwner, "shareAudio", { ...shareAudio });
+}
 
 type Phase = "idle" | "starting" | "live";
 type State = {
@@ -23,7 +50,7 @@ type State = {
 
 const IDLE: State = {
   phase: "idle", generation: 0, channelId: "", source: null,
-  resolution: 720, frameRate: 30, audio: false,
+  resolution: 1080, frameRate: 60, audio: false,
   width: 0, height: 0, kbps: 0, fps: 0, updating: false, watchable: false,
 };
 
@@ -91,7 +118,7 @@ export async function startShare(source: ShareSource, resolution: number, frameR
     for (const p of buffered) onShareEvent(p);
   } catch (e) {
     early = [];
-    console.warn("屏幕分享开启失败", e);
+    console.warn("屏幕共享开启失败", e);
     setShare({ ...IDLE, resolution, frameRate });
   }
 }
@@ -112,7 +139,7 @@ export async function updateShare(resolution: number, frameRate: number) {
   try {
     await api.shareUpdate(share.generation, resolution, frameRate);
   } catch (e) {
-    console.warn("屏幕分享改档失败", e);
+    console.warn("屏幕共享改档失败", e);
   } finally {
     setShare("updating", false);
   }

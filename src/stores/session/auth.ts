@@ -1,7 +1,8 @@
 import { api, errorText, setUnauthorizedHandler, type Raw } from "../../lib/api";
 import { forgetAccountCache } from "../../lib/accountState";
 import { loadPeerVolumes, resetVoice } from "../voice";
-import { resetUi } from "../ui";
+import { loadShareAudio, resetShareAudio } from "../share";
+import { loadStageCollapsed, resetUi } from "../ui";
 import { resetAccess } from "./access";
 import { remember, toUser } from "./convert";
 import { loadDms, resetDm } from "./dm";
@@ -36,6 +37,8 @@ export async function enter(meRaw?: Raw) {
     remember(me);
     setSession({ me, phase: "ready", notice: null, error: null });
     void loadPeerVolumes(me.id);
+    void loadShareAudio(me.id);
+    void loadStageCollapsed(me.id);
     await startGateway(gen);
   } catch (e) {
     if (gen !== st.account) return;
@@ -65,6 +68,7 @@ export function reset(phase: "login" | "boot", notice: string | null = null) {
   resetEdit();
   resetUi();
   resetVoice();
+  resetShareAudio();
 }
 
 export async function logout() {

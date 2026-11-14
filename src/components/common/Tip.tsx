@@ -18,6 +18,7 @@ window.addEventListener("blur", onPointer);
 export const keyboardFocus = (el: Element) => keyboard && el.matches(":focus-visible, :has(:focus-visible)");
 const MARGIN = 8;
 const GAP = 8;
+const menuOpen = (el: Element) => el.closest('[aria-haspopup][aria-expanded="true"]') !== null;
 
 export function TipLayer() {
   let anchor: HTMLElement | null = null;
@@ -38,7 +39,7 @@ export function TipLayer() {
     byFocus = false;
     setTip(null);
     const text = el.dataset[key];
-    if (!el.isConnected || !text) return;
+    if (!el.isConnected || !text || menuOpen(el)) return;
     const r = el.getBoundingClientRect();
     if (el.dataset.tipSide === "right") {
       setTip({ text, x: r.right + GAP, y: r.top + r.height / 2, side: "right" });
@@ -94,9 +95,9 @@ export function TipLayer() {
     if (anchor && (e.target === document || (e.target instanceof Node && e.target.contains(anchor)))) hide();
   };
   const mo = new MutationObserver(() => {
-    if (anchor && (!anchor.isConnected || !anchor.checkVisibility())) hide();
+    if (anchor && (!anchor.isConnected || !anchor.checkVisibility() || menuOpen(anchor))) hide();
   });
-  mo.observe(document.body, { childList: true, subtree: true });
+  mo.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["aria-expanded"] });
 
   document.addEventListener("pointerover", over);
   document.addEventListener("pointermove", pointerMove, { passive: true });

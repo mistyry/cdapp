@@ -5,6 +5,8 @@ mod devshot;
 pub mod error;
 pub mod kook;
 #[cfg(windows)]
+mod pipsize;
+#[cfg(windows)]
 pub mod share;
 pub mod storage;
 mod window_state;
@@ -105,6 +107,8 @@ pub fn run() {
             app.manage(commands::ShareState::default());
             #[cfg(windows)]
             app.manage(commands::WatchState::default());
+            #[cfg(windows)]
+            app.manage(commands::PipState::default());
             let handle = app.handle().clone();
             audio::watch::start(move |input, output| {
                 use tauri::Emitter;
@@ -164,6 +168,10 @@ pub fn run() {
             commands::watch_redirect,
             #[cfg(windows)]
             commands::watch_pip_open,
+            #[cfg(windows)]
+            commands::watch_pip_ratio,
+            #[cfg(windows)]
+            commands::watch_pip_current,
             #[cfg(windows)]
             commands::watch_pip_close,
             commands::effect_play,

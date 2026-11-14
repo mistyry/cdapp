@@ -2,17 +2,18 @@ import { For, type JSX, Show, createEffect, createSignal, on, onCleanup, onMount
 import { anyMod, banFromGuild, kickFromGuild, kickFromVoice, modPerms, moveTargets, moveToVoice, setServerMute } from "../../stores/moderation";
 import { Portal } from "solid-js/web";
 import { AudioLines, Check, ChevronRight, Volume2, CircleHelp, Headphones, HeadphoneOff, Menu, Mic, MicOff, Monitor, PhoneOff, ScreenShare, Settings, UserPlus, X } from "lucide-solid";
-import type { Channel } from "../../stores/types";
+import type { Channel, Guild } from "../../stores/types";
 import { accessState, dropSelfFromVoice, enterVoice, liveOf, loadDms, permsOf, retryAccess, selectChannel, selectDm, session, visible, voiceBlock } from "../../stores/session";
 import { canGoLive, canRejoin, denoise, setDenoise, dismissVoice, isSpeaking, disconnectVoice, latencyLevel, mic, micFailed, output, peerDenoised, setPeerDenoise, setPeerVolume, shareVolumeOf, toggleDeafen, togglePeerMute, toggleMic, voice, voiceActive, voiceStatusText, volumeOf, type VoicePeer } from "../../stores/voice";
 import { shareSdkReady } from "../../stores/sounds";
 import { share, sharing, stopShare } from "../../stores/share";
-import { setShareVolume, toggleShareMute } from "../../stores/watch";
+import { selfWatchable, setShareVolume, toggleShareMute, watchFromList } from "../../stores/watch";
 
 const shareStatus = () => (share.phase === "live" && share.fps ? `${share.width}×${share.height}，${share.fps} 帧` : undefined);
 import { DM_VIEW, currentChannelId, currentChatCode, ui, setUi } from "../../stores/ui";
 import RangeSlider from "../common/RangeSlider";
 import Avatar from "../common/Avatar";
+import { ChannelSkeleton, DmSkeleton } from "../common/Skeleton";
 import { DenoiseMenu, DeviceMenu, VolumePop, type AudioKind } from "./AudioPanel";
 import { openSharePicker } from "./ScreenSharePicker";
 import { Caret, DenoiseOff, HeadphoneOffIcon, MicOffIcon, SpeakerOffMark, KookHash, LockIcon, VoiceIcon } from "../common/icons";
@@ -183,8 +184,16 @@ function ModSection(p: { peer: VoicePeer; onDone: () => void; toggleItem: Toggle
   );
 }
 
-function LiveMark() {
-  return <span class="voice-speaking live-mark" data-tip="正在屏幕共享" aria-label="正在屏幕共享" role="img"><ScreenShare size={14} /></span>;
+function LiveMark(p: { watch?: () => void }) {
+  return (
+    <Show when={p.watch} fallback={<span class="voice-speaking live-mark" data-tip="正在屏幕共享" aria-label="正在屏幕共享" role="img"><ScreenShare size={14} /></span>}>
+      {(go) => (
+        <button type="button" class="voice-speaking live-mark live-watch" data-tip="观看屏幕共享" aria-label="观看屏幕共享" onClick={(e) => { e.stopPropagation(); go()(); }}>
+          <ScreenShare size={14} />
+        </button>
+      )}
+    </Show>
+  );
 }
 
 function RoomMember(p: { peer: VoicePeer }) {
@@ -199,11 +208,13 @@ function RoomMember(p: { peer: VoicePeer }) {
   };
   return (
     <>
-      <div class={`voice-member ${isSpeaking(p.peer.id) ? "speaking" : ""}`} onContextMenu={open} aria-haspopup="menu">
+      <div class={`voice-member ${isSpeaking(p.peer.id) ? "speaking" : ""}`} onContextMenu={open} aria-haspopup="menu" aria-expanded={menu() !== null}>
         <Avatar user={user()} size={24} />
         <span class="voice-name">{user().name}</span>
         <Show when={isSpeaking(p.peer.id) && !micOff() && !p.peer.serverMute}><span class="voice-speaking" aria-label="正在说话" role="img"><Mic size={14} /></span></Show>
-        <Show when={self() ? share.phase === "live" : liveOf(voice.channelId, p.peer.id)}><LiveMark /></Show>
+        <Show when={self() ? share.phase === "live" : liveOf(voice.channelId, p.peer.id)}>
+          <LiveMark watch={!self() || selfWatchable() ? () => void watchFromList(p.peer.id) : undefined} />
+        </Show>
         <Show when={p.peer.serverMute} fallback={<Show when={micOff()}><span data-tip="已关闭麦克风" aria-label="已关闭麦克风" role="img"><MicOff size={14} /></span></Show>}>
           <span class="server-off" data-tip="已被服务器闭麦" aria-label="已被服务器闭麦" role="img"><MicOff size={14} /></span>
         </Show>
@@ -315,7 +326,9 @@ function DmList() {
           );
         }}
       </For>
-      <Show when={l().loading}><div class="member-note">加载中</div></Show>
+      <Show when={l().loading}>
+        <Show when={session.dms.length} fallback={<DmSkeleton />}><div class="member-note">加载中</div></Show>
+      </Show>
       <Show when={l().failed}><div class="member-note">私信加载失败 <button class="retry" onClick={() => loadDms(l().loaded)}>重试</button></div></Show>
       <Show when={l().loaded && !l().loading && !l().failed && !session.dms.length}><div class="member-note">还没有私信</div></Show>
     </div>
@@ -421,6 +434,7 @@ function VoiceBox() {
             class="icon-btn"
             aria-pressed={denoise()}
             aria-haspopup="menu"
+            aria-expanded={menu()?.kind === "denoise"}
             onContextMenu={(e) => openMenu(e, "denoise")}
             data-tip={denoise() ? "关闭降噪" : "开启降噪"}
             aria-label={denoise() ? "关闭降噪" : "开启降噪"}
@@ -435,6 +449,7 @@ function VoiceBox() {
               aria-busy={mic.busy}
               aria-pressed={mic.muted}
               aria-haspopup="menu"
+              aria-expanded={menu()?.kind === "input"}
               aria-label={mic.muted ? "取消静音" : "静音"}
               onClick={() => !mic.busy && void toggleMic()}
             >
@@ -449,6 +464,7 @@ function VoiceBox() {
               aria-busy={output.busy}
               aria-pressed={output.deafened}
               aria-haspopup="menu"
+              aria-expanded={menu()?.kind === "output"}
               aria-label={output.deafened ? "打开耳机" : "关闭耳机"}
               onClick={() => !output.busy && void toggleDeafen()}
             >
@@ -475,7 +491,7 @@ function VoiceBox() {
 }
 
 export default function ChannelSidebar() {
-  const guild = () => session.guilds.find((g) => g.id === ui.view) ?? { id: "", name: "", groups: [] };
+  const guild = (): Guild => session.guilds.find((g) => g.id === ui.view) ?? { id: "", name: "", groups: [] };
   return (
     <aside class="sidebar">
       <div class="sidebar-top">
@@ -494,6 +510,9 @@ export default function ChannelSidebar() {
         </div>
       </Show>
       <div class="channel-list" hidden={ui.view === DM_VIEW}>
+        <Show when={guild().id && !guild().loaded && !guild().failed && !guild().groups.length}>
+          <ChannelSkeleton />
+        </Show>
         <For each={guild().groups}>
           {(grp) => {
             const key = () => `${guild().id}/${grp.id}`;

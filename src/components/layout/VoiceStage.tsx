@@ -1,9 +1,10 @@
-import { For, Show, createSignal } from "solid-js";
+import { For, Show, createSignal, onCleanup, onMount } from "solid-js";
 import { Portal } from "solid-js/web";
-import { ChevronDown, ChevronUp, Headphones, LogOut, Mic, MonitorPlay, ScreenShare, Volume2 } from "lucide-solid";
+import { ChevronDown, ChevronUp, Headphones, LogOut, Mic, MonitorPlay, ScreenShare, Undo2, Volume2 } from "lucide-solid";
 import { dropSelfFromVoice, liveOf, session } from "../../stores/session";
 import { share } from "../../stores/share";
-import { selfWatchable, startWatch, watch, watching } from "../../stores/watch";
+import { setStageCollapsed, ui } from "../../stores/ui";
+import { attachCanvas, detachCanvas, selfWatchable, startWatch, watch, watching } from "../../stores/watch";
 import ScreenView from "./ScreenView";
 import { disconnectVoice, isSpeaking, mic, micFailed, output, setPeerVolume, toggleDeafen, toggleMic, togglePeerMute, voice, voiceActive, volumeOf as peerVolume, type VoicePeer } from "../../stores/voice";
 import { HeadphoneOffIcon, MicOffIcon, SpeakerOffMark, VoiceIcon } from "../common/icons";
@@ -16,6 +17,13 @@ function channelOf(id: string) {
   return undefined;
 }
 
+function KeptScreen() {
+  let canvas!: HTMLCanvasElement;
+  onMount(() => attachCanvas(canvas));
+  onCleanup(() => detachCanvas(canvas));
+  return <canvas ref={canvas} class="screen-canvas stage-kept" aria-hidden="true" />;
+}
+
 function Card(p: { peer: VoicePeer }) {
   const self = () => p.peer.id === voice.me?.id;
   const name = () => p.peer.name || "未知用户";
@@ -24,6 +32,8 @@ function Card(p: { peer: VoicePeer }) {
   const headsetOff = () => Boolean(p.peer.serverDeafen) || output.deafened;
   const speaking = () => isSpeaking(p.peer.id) && !p.peer.serverMute && !(self() ? mic.muted : p.peer.micOff);
   const peerMuted = () => peerVolume(p.peer.id) === 0;
+  const watched = () => watching() && watch.userId === p.peer.id && watch.channelId === voice.channelId;
+  const watchLabel = () => (watched() && watch.mode === "pip" ? "关闭悬浮窗" : watched() && watch.mode === "kept" ? "返回观看" : "观看屏幕共享");
   const [menu, setMenu] = createSignal<{ kind: AudioKind; x: number; y: number } | null>(null);
   const openMenu = (kind: AudioKind) => (e: MouseEvent) => {
     e.preventDefault();
@@ -38,12 +48,15 @@ function Card(p: { peer: VoicePeer }) {
         <Show when={p.peer.avatar} fallback={<span class="stage-initial">{name().slice(0, 1)}</span>}>
           {(src) => <img src={src()} alt="" draggable={false} referrerPolicy="no-referrer" />}
         </Show>
+        <Show when={live() && watched() && watch.mode === "kept"}>
+          <KeptScreen />
+        </Show>
         <Show when={live()}>
           <span class="stage-live">LIVE</span>
           <span class="stage-sharing">正在屏幕共享</span>
           <Show when={self() ? selfWatchable() : true}>
             <button class="stage-watch" onClick={() => void startWatch(voice.channelId, p.peer.id)}>
-              <MonitorPlay size={18} />观看屏幕共享
+              {watched() && (watch.mode === "pip" || watch.mode === "kept") ? <Undo2 size={18} /> : <MonitorPlay size={18} />}{watchLabel()}
             </button>
           </Show>
         </Show>
@@ -53,7 +66,7 @@ function Card(p: { peer: VoicePeer }) {
         <div class="stage-bar">
           <Show when={self()}>
             <HoverVolume label="麦克风音量" value={() => volumeOf("input")} set={(v) => setVolumeOf("input", v)} onContextMenu={openMenu("input")}>
-              <button class="stage-btn" aria-busy={mic.busy} aria-pressed={mic.muted} aria-haspopup="menu" aria-label={mic.muted ? "取消静音" : "静音"} onClick={() => !mic.busy && void toggleMic()}>
+              <button class="stage-btn" aria-busy={mic.busy} aria-pressed={mic.muted} aria-haspopup="menu" aria-expanded={menu()?.kind === "input"} aria-label={mic.muted ? "取消静音" : "静音"} onClick={() => !mic.busy && void toggleMic()}>
                 {micOff() ? <MicOffIcon size={18} /> : <Mic size={18} />}
               </button>
             </HoverVolume>
@@ -67,7 +80,7 @@ function Card(p: { peer: VoicePeer }) {
             </HoverVolume>
           }>
             <HoverVolume label="扬声器音量" value={() => volumeOf("output")} set={(v) => setVolumeOf("output", v)} onContextMenu={openMenu("output")}>
-              <button class="stage-btn" aria-busy={output.busy} aria-pressed={output.deafened} aria-haspopup="menu" aria-label={output.deafened ? "打开耳机" : "关闭耳机"} onClick={() => !output.busy && void toggleDeafen()}>
+              <button class="stage-btn" aria-busy={output.busy} aria-pressed={output.deafened} aria-haspopup="menu" aria-expanded={menu()?.kind === "output"} aria-label={output.deafened ? "打开耳机" : "关闭耳机"} onClick={() => !output.busy && void toggleDeafen()}>
                 {headsetOff() ? <HeadphoneOffIcon size={18} /> : <Headphones size={18} />}
               </button>
             </HoverVolume>
@@ -93,19 +106,19 @@ function Card(p: { peer: VoicePeer }) {
 export default function VoiceStage() {
   const peers = () => (voice.me ? [voice.me, ...voice.peers] : voice.peers);
   const ch = () => channelOf(voice.channelId);
-  const [collapsed, setCollapsed] = createSignal(false);
-  const anyLive = () => share.phase === "live" || voice.peers.some((p) => liveOf(voice.channelId, p.id));
+  const collapsed = () => ui.stageCollapsed;
+  const liveCount = () => (share.phase === "live" && share.channelId === voice.channelId ? 1 : 0) + voice.peers.filter((p) => liveOf(voice.channelId, p.id)).length;
   return (
     <section class={`voice-stage ${watching() && watch.mode === "stage" ? "watching" : ""} ${collapsed() ? "collapsed" : ""}`} aria-label="语音频道">
       <div class="stage-head">
         <span class="stage-icon"><VoiceIcon /></span>
         <span class="stage-title">{ch()?.name ?? "语音频道"}</span>
         <span class="stage-count">{peers().length}{ch()?.limit ? ` / ${ch()!.limit}` : ""}</span>
-        <Show when={anyLive()}>
-          <span class="stage-live-mark" data-tip="正在屏幕共享" aria-label="正在屏幕共享" role="img"><ScreenShare size={16} /></span>
+        <Show when={liveCount() > 0}>
+          <span class="stage-live-mark" data-tip={`${liveCount()}人正在屏幕共享`} aria-label={`${liveCount()}人正在屏幕共享`} role="img"><ScreenShare size={16} /></span>
         </Show>
         <span class="stage-gap" />
-        <button class="icon-btn stage-fold" aria-expanded={!collapsed()} data-tip={collapsed() ? "展开" : "折叠"} aria-label={collapsed() ? "展开" : "折叠"} onClick={() => setCollapsed(!collapsed())}>
+        <button class="icon-btn stage-fold" aria-expanded={!collapsed()} data-tip={collapsed() ? "展开" : "折叠"} aria-label={collapsed() ? "展开" : "折叠"} onClick={() => setStageCollapsed(!collapsed())}>
           {collapsed() ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
         </button>
       </div>

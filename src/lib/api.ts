@@ -125,8 +125,10 @@ export const api = {
   watchVolume: (generation: number, percent: number) => invoke<void>("watch_volume", { generation, percent }),
   watchRedirect: (generation: number, frames: Channel<ArrayBuffer>) =>
     invoke<void>("watch_redirect", { generation, frames }),
-  watchPipOpen: (generation: number) => invoke<void>("watch_pip_open", { generation }),
+  watchPipOpen: (generation: number, seq: number) => invoke<void>("watch_pip_open", { generation, seq }),
+  watchPipRatio: (width: number, height: number) => invoke<void>("watch_pip_ratio", { width, height }),
   watchPipClose: () => invoke<void>("watch_pip_close"),
+  watchPipCurrent: () => invoke<{ generation: number; seq: number } | null>("watch_pip_current"),
   loginQrCode: () => invoke<string>("login_qr_code"),
   loginQrPoll: (content: string) => invoke<QrStatus>("login_qr_poll", { content }),
   loginQrCancel: (content: string) => invoke<void>("login_qr_cancel", { content }),

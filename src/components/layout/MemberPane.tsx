@@ -3,6 +3,7 @@ import type { MemberDto } from "../../lib/api";
 import { closeMembers, ensureMembers, openDmWith, loadMoreMembers, refreshMembers, session } from "../../stores/session";
 import { ui } from "../../stores/ui";
 import Avatar from "../common/Avatar";
+import { MemberSkeleton } from "../common/Skeleton";
 
 const hex = (c: number) => (c ? `#${c.toString(16).padStart(6, "0")}` : undefined);
 
@@ -29,9 +30,10 @@ export default function MemberPane() {
     const el = e.currentTarget as HTMLElement;
     if (el.scrollHeight - el.scrollTop - el.clientHeight < 200) void loadMoreMembers();
   };
+  const pending = () => !list() || (!list()!.items.length && !list()!.failed && (list()!.loading || list()!.page === 0));
   return (
     <aside class="members" onScroll={onScroll}>
-      <Show when={list()}>
+      <Show when={!pending() && list()} fallback={<MemberSkeleton />}>
         {(l) => (
           <>
             <Show when={online().length}>

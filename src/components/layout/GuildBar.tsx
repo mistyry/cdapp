@@ -23,7 +23,7 @@ function guildMark(ids: string[]): Mark {
   if (vg && ids.includes(vg)) return sharing() ? "self-share" : "voice";
   return ids.some((id) => (session.guilds.find((g) => g.id === id)?.liveCount ?? 0) > 0) ? "screen" : null;
 }
-const MARK_NAME = { "self-share": "正在屏幕分享", voice: "正在语音", screen: "有人在屏幕分享" } as const;
+const MARK_NAME = { "self-share": "正在屏幕共享", voice: "正在语音", screen: "有人在屏幕共享" } as const;
 
 function StatusMark(p: { mark: Mark }) {
   return (
